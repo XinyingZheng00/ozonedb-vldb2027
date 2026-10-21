@@ -1,0 +1,398 @@
+#ifndef OZONEDB_CACHE_H
+#define OZONEDB_CACHE_H
+#include "sstable/block_handler.h"
+#include "sstable/table_reader.h"
+#include "storage.h"
+#include <atomic>
+#include <chrono>
+#include <condition_variable>
+#include <cstdint>
+#include <deque>
+#include <functional>
+#include <future>
+#include <list>
+#include <memory>
+#include <shared_mutex>
+#include <string>
+#include <thread>
+#include <unordered_map>
+#include <unordered_set>
+#include <vector>
+#include <mutex>
+namespace ozonedb {
+
+class View;
+class FileMutexManager;
+class LRUCache {
+ private:
+  struct CacheEntry {
+    // Log + SSTable block records: shared_ptr ownership so concurrent
+    // readers (DB::get fast path, LogHandler::tryIndexLookup, the
+    // multi-file scan in readRecord, Table::get) keep the Record
+    // alive past invalidateLogFile, putLogRecordSingle overwrites,
+    // and LRU eviction. The cache holds the canonical reference; any
+    // borrower keeps an additional refcount until they release.
+    std::unordered_map<std::string, std::shared_ptr<Record>> records;
+    std::unordered_map<std::string, std::unordered_map<std::string, std::shared_ptr<Record>>*> block_records;  // index_value_for_block -> records
+    std::unordered_map<std::string, size_t> block_size;                                       // index_value_for_block -> tail
+    std::unordered_map<std::string, std::list<std::pair<std::string, std::string>>::iterator> lru_itr;
+    // Blocks published by the warm worker (part B of
+    // bench/PLAN-compaction-cache.md) that no reader has touched yet. A
+    // get() on a marked block counts one warm hit and clears the mark, so
+    // warm_hits_ / warm_blocks_ is the fraction of warmed blocks that
+    // were worth the read. Evict and invalidate drop the mark with the
+    // block.
+    std::unordered_set<std::string> warmed_blocks;
+    // Set by TableBuilder::finish through markSSTableComplete: every
+    // block of this file went through the write-through, so the warm
+    // worker has nothing to add.
+    bool complete = false;
+
+    Table* table = nullptr;
+    size_t offset = 0;    // Offset indicating the cached records until this offset
+    bool sealed = false;  // Indicates whether the file is sealed (fully cached)
+    // Default constructor
+    CacheEntry() {}
+
+    // contructor for records
+    CacheEntry(std::unordered_map<std::string, std::shared_ptr<Record>> records, size_t offset, bool sealed)
+        : records(std::move(records)), table(nullptr), offset(offset), sealed(sealed) {}
+    // contructor for table
+    CacheEntry(Table* table) : table(table), offset(), sealed(true) {}
+  };
+  // Separate pointers for log vs sstable files. In a backward-compat
+  // single-backend configuration the two pointers alias; in a split
+  // configuration (e.g. Corfu log + S3 sstables) they point at different
+  // Storage instances and the per-method routing below keeps reads on the
+  // right backend. Paper §3.5 motivation.
+  Storage* log_storage_ = nullptr;
+  Storage* sstable_storage_ = nullptr;
+  size_t capacity = 33554432;
+  size_t current_size = 0;
+  std::shared_mutex mutex;  // this is to protect file_to_records_map and lru_list
+  std::unordered_map<std::string, CacheEntry> file_to_entry_map;
+  std::list<std::pair<std::string, std::string>> lru_list;
+  // std::unordered_map<std::string, std::shared_mutex> file_to_mutex_map;
+  // std::shared_mutex map_mutex;
+  FileMutexManager* file_mutex_manager = nullptr;
+  View const* latest_view = nullptr;
+
+  // Memoized fenced size of each SEALED log file.
+  //
+  // The read bound for a sealed log used to come from the View, whose
+  // file_size for that file is whatever the rolling writer stamped into
+  // OperationRecord::sealed_input_bytes — a number that writer read from
+  // its own UNFENCED view. Peer records appended just before the seal sit
+  // above that bound and stay unreadable forever, in default mode and
+  // under linearizable_reads alike. The bound has to come from a fenced
+  // storage->size().
+  //
+  // Memoized because a sealed file never grows, so one fence per file per
+  // process is enough. Guarded by its own mutex, never by `mutex`: the
+  // storage->size() call fences on the Corfu tailer, and the tailer's
+  // listener takes `mutex` — holding it across the fence is the lock
+  // inversion that checkReadMoreLog documents.
+  std::mutex sealed_size_mtx_;
+  std::unordered_map<std::string, size_t> sealed_size_;
+  size_t sealedLogSize(std::string const& file_name);
+
+  // Singleflight for concurrent block/table loads. Without these, N
+  // readers that race on the same cold block each issue an S3 GET and
+  // each call putSSTableRecords — double-counting current_size, leaking
+  // the parsed records map, and triggering spurious eviction that
+  // kicks out hot blocks. See putSSTableRecords docstring below.
+  std::unordered_map<std::string, std::shared_future<void>> block_inflight_;
+  std::unordered_map<std::string, std::shared_future<void>> table_inflight_;
+
+  // Tables of removed files, kept alive for a grace period. getSSTable
+  // hands out raw Table* and Table::get runs on them without holding
+  // `mutex`, so invalidateLogFile (a peer compaction's REMOVE, applied
+  // by the tailer) must not delete the object under a reader in
+  // flight: that was a use-after-free whose visible symptom was a null
+  // `table` in readDataBlocks (SIGSEGV, one crash per compaction that
+  // removed a file being read). A read finishes in milliseconds; the
+  // grace period is seconds. Entries older than kRetiredTableGraceMs
+  // are freed on the next invalidateLogFile and in the destructor.
+  static constexpr int64_t kRetiredTableGraceMs = 30000;
+  std::deque<std::pair<std::chrono::steady_clock::time_point, Table*>> retired_tables_;
+  // Delete the retired Tables whose grace period has passed. Caller
+  // holds `mutex` exclusively.
+  void freeRetiredLocked(std::chrono::steady_clock::time_point now);
+
+  // Steady-state counters for diagnosing cache behavior. Printed at
+  // LRUCache destruction. A healthy zipfian workload should show
+  // hits >> misses once the hot set fits in `capacity`.
+  std::atomic<uint64_t> sstable_cache_hits_{0};
+  std::atomic<uint64_t> sstable_cache_misses_{0};
+  // Reads of a file the View listed that failed at the storage layer: a
+  // log read (readDataLog), a table open (getSSTable) or a block read
+  // (readDataBlocks). The one cause in normal operation is a peer's
+  // compaction that removed the file after the reader took its View
+  // snapshot; DB::get samples this counter around its scan and retries
+  // against a fresh view when it moved (see db.cpp). A per-call flag
+  // would not do: a single-flight follower never sees the leader's
+  // failure.
+  std::atomic<uint64_t> read_failures_{0};
+  // The same hits and misses split by SSTable level (slot = the level
+  // parsed from "sstable<L>/<name>", slot 0 = any other name). Which
+  // level misses is what tells a write-heavy cell apart from a
+  // read-only one (bench/PLAN-compaction-cache.md, part C).
+  static constexpr int kLevelSlots = 16;
+  std::atomic<uint64_t> level_hits_[kLevelSlots] = {};
+  std::atomic<uint64_t> level_misses_[kLevelSlots] = {};
+  // Probe outcomes per level (Table::get, one probe per candidate file
+  // of a get): pruned = a bloom filter said no before any block was
+  // touched; absent = a block was looked up (cache hit or GET) and the
+  // key was not in it. probes - pruned - absent = found. Campaign
+  // cost2-20260828 saw 1.35 block fetches per read on workload a
+  // against 1.02 on c; these say which level fetches for nothing.
+  std::atomic<uint64_t> level_probes_[kLevelSlots] = {};
+  std::atomic<uint64_t> level_pruned_[kLevelSlots] = {};
+  std::atomic<uint64_t> level_absent_[kLevelSlots] = {};
+  // Warm-worker counters (part B). All zero until the worker exists.
+  std::atomic<uint64_t> warm_files_{0};
+  std::atomic<uint64_t> warm_blocks_{0};
+  std::atomic<uint64_t> warm_bytes_{0};
+  std::atomic<uint64_t> warm_hits_{0};
+  std::atomic<uint64_t> warm_skipped_disabled_{0};
+  std::atomic<uint64_t> warm_skipped_level_{0};
+  std::atomic<uint64_t> warm_skipped_budget_{0};
+  std::atomic<uint64_t> warm_skipped_affinity_{0};
+  std::atomic<uint64_t> warm_skipped_gone_{0};
+  std::atomic<uint64_t> warm_skipped_built_{0};
+  std::atomic<uint64_t> warm_dropped_{0};
+
+  // Function to move a key to the front of the LRU list
+  void updateLRU(std::string const& file_name, std::string const& index_value);
+
+  // Function to evict the least recently used item
+  void evict();
+
+ public:
+  // Level of an SSTable name "sstable<L>/<name>", 0 for any other name
+  // or a level outside [1, kLevelSlots). A plain scan, not std::regex:
+  // needReadBlock runs on every read and getSSTLayerNumber builds a
+  // regex per call.
+  static int levelSlot(std::string const& file_name);
+
+  // Number of failed file reads so far (see read_failures_).
+  uint64_t readFailures() const { return read_failures_.load(std::memory_order_acquire); }
+
+  // ---- Warm worker (bench/PLAN-compaction-cache.md, part B) ----
+  //
+  // When a COMPACT is applied to this process's view, the outputs are
+  // offered to one worker thread that reads each accepted file in
+  // ranged chunks (Table::warm) and publishes its blocks, so the peers
+  // of the compactor stop paying one GET per block for the newest
+  // versions of the hot keys. The policy is evaluated at enqueue time
+  // and every rule has a counter, so a cell's `[lru_cache] levels` line
+  // says which rule to change.
+  //
+  // Lock order: the worker takes `mutex` (getSSTable, putSSTableRecords)
+  // and warm_mtx_ separately, never nested, and onCompactionApplied is
+  // called with no cache lock held (MetadataLogHandler::drainCacheEvents,
+  // outside view_mutex).
+  struct WarmPolicy {
+    bool enabled = false;
+    int max_level = 1;               // warm outputs of level <= this
+    double max_fraction = 0.25;      // output bytes <= max_fraction * capacity
+    size_t min_input_blocks = 1;     // cached input blocks needed (affinity)
+    size_t read_bytes = 64u << 20;   // ranged-read chunk (compaction_read_bytes)
+    size_t max_queue = 64;           // oldest entries beyond this are dropped
+  };
+  enum class WarmSkip { kNone, kDisabled, kLevel, kBudget, kAffinity };
+  // The policy as a pure function, rule order: enabled, level, budget,
+  // affinity.
+  static WarmSkip warmDecision(WarmPolicy const& policy, int level, size_t bytes, size_t capacity, size_t input_blocks);
+  // Set before startWarmWorker; not re-read under a lock afterwards.
+  void setWarmPolicy(WarmPolicy const& policy);
+  WarmPolicy const& warmPolicy() const { return warm_policy_; }
+  // Tells the worker whether a queued file is still in the View when
+  // it reaches the front (a later compaction may have replaced it).
+  // Unset means every file is live.
+  void setLiveFileCheck(std::function<bool(std::string const&)> check);
+  // COMPACT outputs, with the sizes the record carries and the number
+  // of the inputs' blocks that were cached here (invalidateSSTable's
+  // return values, summed). Applies the policy and queues the accepted
+  // outputs. Before startWarmWorker every output counts as disabled.
+  //
+  // log_inputs: the compaction's inputs are log files (log -> L1), so no
+  // SSTable block of theirs was ever cached and cached_input_blocks is 0
+  // by construction. The affinity signal is then the number of lookups
+  // this process made on the destination level since the previous such
+  // event: zero during a pure load, hundreds per second under a read
+  // mix. Without this every L1 output was refused by the affinity rule
+  // (cost-20260828-cache: warm files 0, skipped_affinity 248).
+  void onCompactionApplied(std::vector<std::string> const& outputs, std::vector<size_t> const& output_bytes, int dest_level, size_t cached_input_blocks, bool log_inputs = false);
+  void startWarmWorker();
+  // Joins the worker; queued files are dropped. Idempotent; the
+  // destructor calls it.
+  void stopWarmWorker();
+  // Testing: block until the queue is empty and no file is in flight.
+  void waitWarmIdle();
+  // TableBuilder::finish: every block of the file is already published.
+  void markSSTableComplete(std::string const& file_name);
+
+  // One consistent reading of every counter, taken under the cache
+  // mutex. dead_* cover blocks whose file is not in latest_view (a
+  // compacted-away SSTable that nobody dropped); after part A they must
+  // be 0. printCacheStats formats exactly this.
+  struct Stats {
+    uint64_t hits = 0;
+    uint64_t misses = 0;
+    uint64_t level_hits[kLevelSlots] = {};
+    uint64_t level_misses[kLevelSlots] = {};
+    uint64_t level_probes[kLevelSlots] = {};
+    uint64_t level_pruned[kLevelSlots] = {};
+    uint64_t level_absent[kLevelSlots] = {};
+    size_t capacity = 0;
+    size_t current_size = 0;
+    size_t files = 0;
+    size_t sstable_files = 0;  // entries that hold a Table* or blocks
+    size_t dead_bytes = 0;
+    size_t dead_blocks = 0;
+    size_t dead_files = 0;
+    size_t retired_tables = 0;
+    uint64_t warm_files = 0;
+    uint64_t warm_blocks = 0;
+    uint64_t warm_bytes = 0;
+    uint64_t warm_hits = 0;
+    uint64_t warm_skipped_disabled = 0;
+    uint64_t warm_skipped_level = 0;
+    uint64_t warm_skipped_budget = 0;
+    uint64_t warm_skipped_affinity = 0;
+    uint64_t warm_skipped_gone = 0;
+    uint64_t warm_skipped_built = 0;
+    uint64_t warm_dropped = 0;
+  };
+  Stats stats();
+
+  // Legacy single-storage constructor — both log and sstable reads go
+  // through the same backend. Kept for backward-compat with tests and
+  // configs that don't split storage.
+  LRUCache(size_t capacity, Storage* storage)
+      : log_storage_(storage), sstable_storage_(storage), capacity(capacity) {}
+
+  // Split-storage constructor — log reads go through log_storage and
+  // sstable reads go through sstable_storage. Used when the config sets
+  // sstable_backend separately from the main backend.
+  LRUCache(size_t capacity, Storage* log_storage, Storage* sstable_storage)
+      : log_storage_(log_storage),
+        sstable_storage_(sstable_storage),
+        capacity(capacity) {}
+
+  ~LRUCache() {
+    stopWarmWorker();
+    for (auto& entry : file_to_entry_map) {
+      // Log + block records are shared_ptr — destructors handle them.
+      // Each block_records entry is a heap-allocated map we still own.
+      for (auto block : entry.second.block_records) {
+        delete block.second;
+      }
+      if (entry.second.table != nullptr) {
+        delete entry.second.table;
+      }
+    }
+    for (auto& retired : retired_tables_) {
+      delete retired.second;
+    }
+  }
+  // only for testing
+  std::unordered_map<std::string, CacheEntry> getCacheMap() {
+    return file_to_entry_map;
+  }
+
+  // set file_mutex_manager
+  void setFileMutexManager(FileMutexManager* file_mutex_manager) {
+    this->file_mutex_manager = file_mutex_manager;
+  }
+
+  void checkReadMoreLog(std::string const& file_name, bool& read_more, size_t& cached_offset, size_t& size);
+  void readDataLog(std::string const& file_name, size_t cached_offset, size_t size);
+  void getSSTable(std::string const& file_name, Table*& table);
+  void needReadBlock(std::string const& file_name, bool& read_more, std::string const& index_value);
+  // Probe accounting for Table::get: kind 0 = a probe of this file
+  // started, 1 = a filter pruned it, 2 = a block was consulted and the
+  // key was not in it. See level_probes_.
+  void noteProbe(std::string const& file_name, int kind);
+  // caller_table: the Table the caller is already reading through
+  // (Table::get passes `this`). Used when the file's cache entry has
+  // no Table* — populated by the compaction write-through before any
+  // reader opened the file, or erased by a REMOVE applied between
+  // needReadBlock and this call. A block that cannot be read is a
+  // miss (get() then returns no record), never a crash.
+  void readDataBlocks(std::string const& file_name, std::string const& index_value, Table* caller_table = nullptr);
+
+  // SSTable variant — returns a shared_ptr so the Record stays alive
+  // past a concurrent evict(). Updates LRU order on hit.
+  void get(std::string const& file_name, std::string const& key, std::shared_ptr<Record>& record, std::string const& index_value = "");
+  // Log variant — returns a shared_ptr so the Record stays alive past
+  // a concurrent invalidateLogFile or a same-key overwrite from
+  // putLogRecordSingle. Used by LogHandler reads and the LogKeyIndex.
+  void getLog(std::string const& file_name, std::string const& key, std::shared_ptr<Record>& record);
+  // Function to update the cache with a file_name, records, offset, and sealed status
+  void putLogRecords(std::string const& key, std::unordered_map<std::string, std::shared_ptr<Record>> records, size_t offset, bool sealed);
+  // Insert or overwrite a single Record for a log file. Cache takes
+  // shared ownership of the Record. If a prior Record existed at the
+  // same key+file, its shared_ptr is dropped (the Record only frees
+  // when the last borrower releases it). Used by LogHandler to push
+  // freshly-written records into the cache so LogKeyIndex can safely
+  // share the pointer.
+  void putLogRecordSingle(std::string const& file_name, std::shared_ptr<Record> record);
+  // Drop a log file's cache entry. Records are released via shared_ptr —
+  // they only deallocate once every borrower (readers, the LogKeyIndex)
+  // has released them. Called when a log file is compacted away.
+  void invalidateLogFile(std::string const& file_name);
+  // Drop an SSTable that a COMPACT removed from the View: every cached
+  // block leaves the LRU list and the byte budget, the Table* is
+  // retired (a reader may still hold it, see retired_tables_), the entry
+  // is erased. Returns the number of blocks that were cached, which is
+  // what the warm policy reads as this process's interest in the region
+  // (bench/PLAN-compaction-cache.md, parts A and B). A log entry (records
+  // only) is left alone: LogHandler::invalidateCompactedLog owns those.
+  // Never call this under view_mutex; MetadataLogHandler queues the
+  // event and drains it after the lock.
+  size_t invalidateSSTable(std::string const& file_name);
+  // Copy the per-file records map into `out`. Cache and `out` co-own
+  // each Record via shared_ptr. Used by LogKeyIndex::warm to seed
+  // itself from already-cached log files on startup.
+  void snapshotLogFileRecords(std::string const& file_name,
+                              std::unordered_map<std::string, std::shared_ptr<Record>>& out);
+  void putSSTableMeta(std::string const& key, Table* table);
+  // Publish one block (the cache takes ownership of `records`; a
+  // duplicate is dropped). `warmed` marks the block for the warm-hit
+  // counter; TableBuilder::flush and readDataBlocks leave it false.
+  void putSSTableRecords(std::string const& key, std::unordered_map<std::string, std::shared_ptr<Record>>* records, std::string const& index_value, size_t size, bool warmed = false);
+
+  // set latest view
+  void setLatestView(View const* view) {
+    latest_view = view;
+  }
+
+  // Dump the counters to stderr at DB close. Two lines: the original
+  // `[lru_cache] sstable hits=…` line, unchanged because the extractor
+  // (bench/scripts/extract_cost_coefficients.py) parses it, and a
+  // `[lru_cache] levels …` line with the per-level, dead-block and warm
+  // counters.
+  void printCacheStats();
+
+ private:
+  // Warm worker state (see the public block above; declared after it
+  // because WarmPolicy is a nested type).
+  WarmPolicy warm_policy_;
+  std::function<bool(std::string const&)> live_file_check_;
+  std::mutex warm_mtx_;
+  std::condition_variable warm_cv_;
+  std::deque<std::string> warm_queue_;
+  bool warm_started_ = false;
+  bool warm_stop_ = false;
+  bool warm_busy_ = false;
+  // Per-level lookup count at the previous log-input compaction event
+  // (guarded by warm_mtx_); see onCompactionApplied.
+  uint64_t level_lookups_at_last_log_event_[kLevelSlots] = {};
+  std::thread warm_thread_;
+  void warmLoop();
+  void warmOne(std::string const& file_name);
+};
+}  // namespace ozonedb
+#endif

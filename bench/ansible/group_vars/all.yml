@@ -1,0 +1,50 @@
+---
+# Shared by sync.yml and bootstrap.yml. These are playbook group_vars, so a
+# play's own `vars:` and anything passed with -e both override them.
+
+# Where the tree lands. Empty means "probe the remote for OZONEDB_HOME and fall
+# back to $HOME/<repo_dest_name>".
+remote_repo_path: ""
+repo_dest_name: ozonedb
+
+# --------------------------------------------------------------- exclusions
+#
+# Never useful on a bench node, in any mode: build output, results, editor and
+# agent scratch, and compiled objects that must be produced on the target.
+rsync_excludes_base:
+  - --exclude=build/
+  - --exclude=**/build/
+  - --exclude=target/
+  - --exclude=**/target/
+  - --exclude=**/__pycache__/
+  # The node clones its own vcpkg (bench/scripts/setup.sh) at the baseline
+  # pinned in vcpkg.json; a laptop's checkout holds a Mach-O binary and
+  # platform-specific build output.
+  - --exclude=/vcpkg/
+  # Anchored, and only the node-generated files. The old unanchored
+  # "ycsb/workloads/" also matched the *Java package directory*
+  # ycsb/core/src/main/java/site/ycsb/workloads/ -- rsync matches
+  # inner-slash patterns against the END of the path -- which silently
+  # dropped CoreWorkload et al. and broke the core build on freshly
+  # bootstrapped nodes. The workload template files are needed on nodes
+  # by generate_workload.py, so only generated_workloads/ stays local.
+  - --exclude=/ycsb/workloads/generated_workloads/
+  - --exclude=bench/results/
+  - --exclude=src/include/ozonedb/protobuf/
+  - --exclude=.claude/
+  - --exclude=.DS_Store
+  - --exclude=.idea/
+  - --exclude=.vscode/
+  - --exclude=.env
+  - --exclude=tmp/
+  - --exclude=*.pyc
+  - --exclude=*.so
+  - --exclude=*.o
+  - --exclude=*.a
+  - --exclude=CLAUDE.md
+
+# Incremental (sync.yml): the node already has .git from the bootstrap.
+rsync_excludes_incremental: "{{ rsync_excludes_base + ['--exclude=.git'] }}"
+
+# Bootstrap (bootstrap.yml): everything the build needs, nothing platform-local.
+rsync_excludes_bootstrap: "{{ rsync_excludes_base }}"
