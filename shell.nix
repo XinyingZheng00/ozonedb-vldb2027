@@ -3,7 +3,8 @@
 #   nix-shell --run 'cmake -B build -G Ninja -DOZONEDB_USE_VCPKG=OFF -DOZONEDB_ENABLE_CORFU=ON && cmake --build build'
 #
 # Every dependency of vcpkg.json comes from nixpkgs instead. The JDK and
-# Maven are for the JNI shim and the YCSB binding.
+# Maven are for the JNI shim and the YCSB binding. Servers for the tests that
+# need one: corfu-server.nix (CorfuDB) and minio.nix (MinIO).
 { pkgs ? import <nixpkgs> { } }:
 let
   awsSdk = pkgs.aws-sdk-cpp.override {

@@ -16,7 +16,7 @@ for every figure lives in the artifact repository, which pins this one at the ta
 ## Backends
 
 | Backend | Config value | Use |
-|---|---|---|
+| --- | --- | --- |
 | local filesystem | `local` | tests, single-machine runs |
 | S3-compatible object store (MinIO, S3, R2, Wasabi) | `s3` | SSTables (`sstable_backend`) |
 | CorfuDB shared log | `corfu` | the log layer for multi-writer runs (`backend`) |
@@ -25,9 +25,6 @@ The paper's configuration is `backend = corfu` for the three logs and `sstable_b
 SSTables. An optional local SSD tier (`disk_cache_dir`) sits in front of the object store.
 
 ## 1. Set up a machine
-
-The build targets Ubuntu. It is not set up to build on macOS. One idempotent, role-based script
-provisions every kind of node:
 
 ```bash
 bash bench/scripts/setup.sh --role client         # the bench / YCSB machine
@@ -77,7 +74,24 @@ cd build && ctest --output-on-failure
 
 Run the tests from `build/`. They reference configs by relative path. They write under
 `OZONEDB_TEST_ROOT` (default `/tank/test/`), so set it to any writable directory. `CorfuStorageTest.*` skip themselves unless `CORFU_TEST_ENDPOINT` names a fresh Corfu
-server. The Corfu smoke binaries exercise the full multi-writer path:
+server. `bench/scripts/corfu_local.sh` builds CorfuDB at the pinned commit and runs them against a
+fresh single-node server on this machine, without apt or sudo. On NixOS, `corfu-server.nix`
+provides its JDK and Maven:
+
+```bash
+nix-shell corfu-server.nix --run 'bash bench/scripts/corfu_local.sh build'   # once
+nix-shell corfu-server.nix --run 'bash bench/scripts/corfu_local.sh test'    # CorfuStorageTest.*
+```
+
+`S3StorageTest.*` and `S3DBTest.*` likewise skip unless `S3_TEST_ENDPOINT` is set.
+`bench/scripts/minio_local.sh` runs them against a fresh MinIO on `127.0.0.1:9000`, and on NixOS
+`minio.nix` provides MinIO and `mc`:
+
+```bash
+nix-shell minio.nix --run 'bash bench/scripts/minio_local.sh test'           # S3StorageTest.*, S3DBTest.*
+```
+
+The Corfu smoke binaries exercise the full multi-writer path:
 
 ```bash
 ./corfu_smoke <shared-config.json> [num_keys]
@@ -112,7 +126,7 @@ One flat JSON file per process. Every value is a string. The base files in `src/
 the full set. The ones you will touch:
 
 | Key | Meaning |
-|---|---|
+| --- | --- |
 | `backend` | `local` or `corfu` for the logs |
 | `corfu_endpoint`, `corfu_stream_name` | the Corfu server and stream |
 | `sstable_backend`, `s3_*`, `sstable_dir` | where SSTables live |

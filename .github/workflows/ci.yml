@@ -42,7 +42,8 @@ jobs:
       - name: Build
         run: cmake --build build
 
-      # CorfuStorageTest.* self-skip without CORFU_TEST_ENDPOINT.
+      # CorfuStorageTest.* self-skip without CORFU_TEST_ENDPOINT, S3StorageTest.*
+      # and S3DBTest.* without S3_TEST_ENDPOINT.
       - name: Test
         run: cd build && ctest --output-on-failure
         env:

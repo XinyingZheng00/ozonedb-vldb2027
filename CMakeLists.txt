@@ -217,8 +217,9 @@ if (OZONEDB_BUILD_JNI)
     target_link_libraries(ozonedb_jni PRIVATE OzoneDB)
 endif()
 
-# Unit tests. CorfuStorageTest.* self-skip without CORFU_TEST_ENDPOINT, so
-# `ctest` is green on a box with no Corfu server.
+# Unit tests. CorfuStorageTest.* self-skip without CORFU_TEST_ENDPOINT, and
+# S3StorageTest.* / S3DBTest.* without S3_TEST_ENDPOINT, so `ctest` is green
+# on a box with neither server.
 set(OZONEDB_TEST_SOURCES
     tests/test_all.cpp
     tests/test_tool.cpp
@@ -232,6 +233,9 @@ set(OZONEDB_TEST_SOURCES
     tests/test_disk_cache_storage.cpp
     tests/test_frequency_sketch.cpp
 )
+if (OZONEDB_ENABLE_S3)
+    list(APPEND OZONEDB_TEST_SOURCES tests/test_s3_storage.cpp)
+endif()
 if (OZONEDB_ENABLE_CORFU)
     list(APPEND OZONEDB_TEST_SOURCES
         tests/test_corfu_storage.cpp

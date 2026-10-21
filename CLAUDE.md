@@ -94,7 +94,24 @@ cd build && ctest --output-on-failure                     # all (one gtest binar
 - The tests write under `OZONEDB_TEST_ROOT` (`tests/test_env.h`, default `/tank/test/`); set it to
   any writable directory. `DBTest` rewrites `test_db.json` with a `db_path` under that root.
 - `CorfuStorageTest.*` self-skip unless `CORFU_TEST_ENDPOINT` is set, and need a **fresh** server
-  (they fail-stop on a trimmed log).
+  (they fail-stop on a trimmed log). `bench/scripts/corfu_local.sh {build|start|stop|test}` is the
+  local, sudo-free path: `build` clones CorfuDB at `setup.sh`'s `CORFU_COMMIT` into `~/CorfuDB`,
+  `start` wipes the log dir and starts a single-node server on `127.0.0.1:9090`, and `test` wraps
+  start → `runUnitTests --gtest_filter=CorfuStorageTest.*` → stop (`GTEST_FILTER='*'` for the whole
+  suite). On NixOS run it under `nix-shell corfu-server.nix`. CorfuDB's Maven build executes
+  downloaded `protoc`/`protoc-gen-grpc-java` binaries that NixOS's stub loader refuses, so the JDK
+  25 and Maven live in a `buildFHSEnv` (`corfu-fhs`) and the script re-execs itself inside it.
+  `bin/corfu_server` forks java rather than exec'ing it, so `stop` signals the process group.
+- `S3StorageTest.*` / `S3DBTest.*` (`tests/test_s3_storage.cpp`, built with `OZONEDB_ENABLE_S3`)
+  self-skip unless `S3_TEST_ENDPOINT` is set (`S3_TEST_BUCKET`, default `ozonedb-sstables`, must
+  exist). `bench/scripts/minio_local.sh {start|stop|test}` runs a fresh MinIO on `127.0.0.1:9000`
+  (minioadmin/minioadmin, the shipped configs' values) and creates the bucket; on NixOS run it
+  under `nix-shell minio.nix`, which has to permit MinIO explicitly (nixpkgs flags it as abandoned
+  with open CVEs). Set `AWS_EC2_METADATA_DISABLED=true` off EC2: otherwise every `S3Client` the SDK
+  builds probes the instance-metadata endpoint first, about 6 s per `S3Storage`. `S3DBTest` puts
+  in rounds because the data log rolls on a tail size the view refreshes every 100 ms, so a burst
+  of puts never leaves two log files to compact. With both servers up,
+  `S3_TEST_ENDPOINT=http://127.0.0.1:9000 GTEST_FILTER='*' corfu_local.sh test` runs everything.
 - Corfu end-to-end smoke binaries (only built with `OZONEDB_ENABLE_CORFU=ON`) are the practical way
   to exercise the shared-log path:
   ```bash
