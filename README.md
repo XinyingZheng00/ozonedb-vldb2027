@@ -45,6 +45,14 @@ marker-guarded include into `~/.profile` and `~/.bashrc`. Open a new shell after
 
 ## 2. Build
 
+On NixOS, or with nix installed, `shell.nix` provides every dependency without vcpkg:
+
+```bash
+nix-shell --run 'cmake -B build -G Ninja -DOZONEDB_USE_VCPKG=OFF -DOZONEDB_ENABLE_CORFU=ON && cmake --build build'
+```
+
+Everywhere else:
+
 ```bash
 cmake -B build                           && cmake --build build -j$(nproc)  # local FS + S3
 cmake -B build -DOZONEDB_ENABLE_CORFU=ON && cmake --build build -j$(nproc)  # adds CorfuDB

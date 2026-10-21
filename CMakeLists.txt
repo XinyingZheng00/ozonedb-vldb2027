@@ -1,16 +1,20 @@
 cmake_minimum_required(VERSION 3.16)
 
-# vcpkg toolchain. vcpkg is NOT vendored: bench/scripts/setup.sh clones it
-# at the builtin-baseline in vcpkg.json. Precedence: an explicitly supplied
-# CMAKE_TOOLCHAIN_FILE (preset or -D) > $VCPKG_ROOT > a vcpkg/ checkout
-# inside the repo (gitignored; what setup.sh creates).
-if (NOT DEFINED CMAKE_TOOLCHAIN_FILE)
+# Dependencies come from vcpkg by default. vcpkg is NOT vendored:
+# bench/scripts/setup.sh clones it at the builtin-baseline in vcpkg.json.
+# Precedence: an explicitly supplied CMAKE_TOOLCHAIN_FILE (preset or -D) >
+# $VCPKG_ROOT > a vcpkg/ checkout inside the repo (gitignored; what setup.sh
+# creates). -DOZONEDB_USE_VCPKG=OFF skips all of that and takes the
+# dependencies from the system (shell.nix, a distro with cmake config files
+# for protobuf, gtest, boost, openssl and aws-sdk-cpp).
+option(OZONEDB_USE_VCPKG "Resolve dependencies through the vcpkg toolchain" ON)
+if (OZONEDB_USE_VCPKG AND NOT DEFINED CMAKE_TOOLCHAIN_FILE)
     if (DEFINED ENV{VCPKG_ROOT})
         set(CMAKE_TOOLCHAIN_FILE "$ENV{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake" CACHE STRING "vcpkg toolchain")
     elseif (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/vcpkg/scripts/buildsystems/vcpkg.cmake")
         set(CMAKE_TOOLCHAIN_FILE "${CMAKE_CURRENT_SOURCE_DIR}/vcpkg/scripts/buildsystems/vcpkg.cmake" CACHE STRING "vcpkg toolchain")
     else()
-        message(FATAL_ERROR "No vcpkg toolchain found. Run `bash bench/scripts/setup.sh --role client`, or export VCPKG_ROOT, or pass -DCMAKE_TOOLCHAIN_FILE=<vcpkg>/scripts/buildsystems/vcpkg.cmake")
+        message(FATAL_ERROR "No vcpkg toolchain found. Run `bash bench/scripts/setup.sh --role client`, export VCPKG_ROOT, pass -DCMAKE_TOOLCHAIN_FILE=<vcpkg>/scripts/buildsystems/vcpkg.cmake, or build with -DOZONEDB_USE_VCPKG=OFF against system packages")
     endif()
 endif()
 
@@ -47,8 +51,11 @@ option(OZONEDB_BUILD_JNI "Build libozonedb.so, the JNI shim the YCSB binding loa
 # own link information.
 find_package(Protobuf CONFIG REQUIRED)
 find_package(GTest CONFIG REQUIRED)
-find_package(Boost 1.70 REQUIRED COMPONENTS uuid)
-find_package(OpenSSL CONFIG REQUIRED)
+# boost-uuid is header-only, so no COMPONENTS: a system Boost has no
+# libboost_uuid to find. OpenSSL in module mode for the same reason -- only
+# vcpkg ships a CMake config for it.
+find_package(Boost 1.70 REQUIRED)
+find_package(OpenSSL REQUIRED)
 
 # The shim only needs jni.h, so it degrades to a skip rather than failing a
 # build that never wanted a JDK in the first place.
