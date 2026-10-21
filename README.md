@@ -75,8 +75,8 @@ cd build && ctest --output-on-failure
 ./runUnitTests --gtest_filter='StorageTest.*'       # one suite
 ```
 
-Run the tests from `build/`. They reference configs by relative path. `/tank` must exist and be
-writable. `CorfuStorageTest.*` skip themselves unless `CORFU_TEST_ENDPOINT` names a fresh Corfu
+Run the tests from `build/`. They reference configs by relative path. They write under
+`OZONEDB_TEST_ROOT` (default `/tank/test/`), so set it to any writable directory. `CorfuStorageTest.*` skip themselves unless `CORFU_TEST_ENDPOINT` names a fresh Corfu
 server. The Corfu smoke binaries exercise the full multi-writer path:
 
 ```bash

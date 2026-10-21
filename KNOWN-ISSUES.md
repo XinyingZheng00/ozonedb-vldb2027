@@ -95,4 +95,3 @@ Fixed already: `SIGPIPE` on a Corfu restart (every non-JVM process died with
 - The batched-write mode of `CorfuDBStorage` (`commit_interval_ > 0`) has no
   config key and is never reached; its bookkeeping still runs on every
   append.
-- The tests hard-code `/tank/test/` as their data root.

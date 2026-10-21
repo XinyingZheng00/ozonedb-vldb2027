@@ -262,7 +262,8 @@ if (OZONEDB_ENABLE_CORFU)
 endif()
 
 # `ctest` runs the whole gtest binary from the build directory, which is
-# where the tests expect to find ../src/config/.
+# where the tests expect to find ../src/config/. The tests write under
+# OZONEDB_TEST_ROOT (default /tank/test/, see tests/test_env.h).
 enable_testing()
 add_test(NAME runUnitTests COMMAND runUnitTests WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 

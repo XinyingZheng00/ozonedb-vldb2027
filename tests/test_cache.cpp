@@ -1,7 +1,8 @@
 // LRUCache tests for bench/PLAN-compaction-cache.md: per-level counters,
 // dead blocks of files that left the View, drop on REMOVE, and the warm
-// worker. Everything runs on FileStorage under /tank/test/cache_test/.
+// worker. Everything runs on FileStorage under <OZONEDB_TEST_ROOT>/cache_test/.
 #include "cache.h"
+#include "test_env.h"
 #include "db.h"
 #include "gtest/gtest.h"
 #include "metadata_log_handler.h"
@@ -23,7 +24,7 @@
 using namespace ozonedb;
 
 namespace {
-std::string const kDir = "/tank/test/cache_test/";
+std::string const kDir = testenv::path("cache_test/");
 
 // Builds an SSTable of n records with value_bytes-long values (600 bytes
 // and the 4 KiB block target give about 6 records per block) and returns

@@ -42,9 +42,8 @@ jobs:
       - name: Build
         run: cmake --build build
 
-      - name: Create the data root
-        run: sudo mkdir -p /tank && sudo chmod 777 /tank
-
       # CorfuStorageTest.* self-skip without CORFU_TEST_ENDPOINT.
       - name: Test
         run: cd build && ctest --output-on-failure
+        env:
+          OZONEDB_TEST_ROOT: ${{ runner.temp }}/ozonedb-test

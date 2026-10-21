@@ -1,5 +1,6 @@
 // tests/test_disk_cache_storage.cpp
 #include <gtest/gtest.h>
+#include "test_env.h"
 
 #include <chrono>
 #include <condition_variable>
@@ -23,7 +24,7 @@ using namespace ozonedb;
 
 namespace {
 
-std::string const kRoot = "/tank/test/disk_cache/";
+std::string const kRoot = testenv::path("disk_cache/");
 
 using Mode = DiskCacheStorage::Mode;
 using Adm = DiskCacheStorage::Admission;

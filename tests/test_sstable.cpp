@@ -1,4 +1,5 @@
 #include "db.h"
+#include "test_env.h"
 #include "gtest/gtest.h"
 #include "sstable/comparator.h"
 #include "sstable/sstable_handler.h"
@@ -9,7 +10,7 @@
 #include <map>
 using namespace ozonedb;
 TEST(SSTableTest, BuildTableTest) {
-  Storage* storage = new FileStorage("/tank/test/ss_table_test/");
+  Storage* storage = new FileStorage(testenv::path("ss_table_test/"));
   std::string fileName = "buildTableTest" + std::to_string(time(0));
   TableBuilder* tb = new TableBuilder(storage, fileName);
 
@@ -33,7 +34,7 @@ TEST(SSTableTest, BuildTableTest) {
 }
 
 TEST(SSTableTest, ReadTableTest) {
-  Storage* storage = new FileStorage("/tank/test/ss_table_test/");
+  Storage* storage = new FileStorage(testenv::path("ss_table_test/"));
   std::string fileName = "ReadTableTest" + std::to_string(time(0));
   TableBuilder* tb = new TableBuilder(storage, fileName);
   std::vector<std::string> keys;
@@ -74,7 +75,7 @@ TEST(SSTableTest, ReadTableTest) {
 }
 
 TEST(SSTableTest, SSTableReadWholeTableTest) {
-  Storage* storage = new FileStorage("/tank/test/ss_table_test/");
+  Storage* storage = new FileStorage(testenv::path("ss_table_test/"));
   std::string fileName = "SSTableReadWholeTableTest" + std::to_string(time(0));
   TableBuilder* tb = new TableBuilder(storage, fileName);
 
@@ -116,7 +117,7 @@ TEST(SSTableTest, SSTableReadWholeTableTest) {
 }
 
 TEST(SSTableTest, ReadTableWithFilterTest) {
-  Storage* storage = new FileStorage("/tank/test/ss_table_test/");
+  Storage* storage = new FileStorage(testenv::path("ss_table_test/"));
   std::string fileName = "ReadTableWithFilterTest" + std::to_string(time(0));
   TableBuilder* tb = new TableBuilder(storage, fileName);
   std::vector<std::string> keys;
@@ -219,7 +220,7 @@ void expectSameRecords(std::map<std::string, std::string> const& expected,
 // per read (1 byte forces that, so does exactly one block), 2.5 blocks per
 // read (chunks end on block boundaries), and the whole file in one read.
 TEST(SSTableTest, GetAllChunkSizesTest) {
-  Storage* storage = new FileStorage("/tank/test/ss_table_test/");
+  Storage* storage = new FileStorage(testenv::path("ss_table_test/"));
   std::string fileName = "GetAllChunkSizesTest" + std::to_string(time(0));
   auto expected = buildTableForScan(storage, fileName, 800, 600);
 
@@ -240,7 +241,7 @@ TEST(SSTableTest, GetAllChunkSizesTest) {
 // An index entry that points past the end of the file is a corrupt
 // index: getAll must fail before it reads anything, and leave `out` empty.
 TEST(SSTableTest, GetAllBadIndexTest) {
-  Storage* storage = new FileStorage("/tank/test/ss_table_test/");
+  Storage* storage = new FileStorage(testenv::path("ss_table_test/"));
   std::string fileName = "GetAllBadIndexTest" + std::to_string(time(0));
   auto expected = buildTableForScan(storage, fileName, 100, 600);
 
@@ -263,14 +264,14 @@ TEST(SSTableTest, GetAllBadIndexTest) {
 // A file that shrinks under an open Table (a partial upload, or a peer's
 // REMOVE on a backend that truncates) is a failed read, not a crash.
 TEST(SSTableTest, GetAllTruncatedFileTest) {
-  Storage* storage = new FileStorage("/tank/test/ss_table_test/");
+  Storage* storage = new FileStorage(testenv::path("ss_table_test/"));
   std::string fileName = "GetAllTruncatedFileTest" + std::to_string(time(0));
   buildTableForScan(storage, fileName, 100, 600);
 
   Table* table = nullptr;
   ASSERT_EQ(Table::open(storage, fileName, table), Status::kSuccess);
   size_t const file_size = storage->size(fileName);
-  std::filesystem::resize_file("/tank/test/ss_table_test/" + fileName, file_size / 2);
+  std::filesystem::resize_file(testenv::path("ss_table_test/") + fileName, file_size / 2);
 
   std::unordered_map<std::string, std::shared_ptr<Record>> out;
   ASSERT_NE(table->getAll(out), Status::kSuccess);

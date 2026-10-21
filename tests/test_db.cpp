@@ -1,4 +1,6 @@
 #include "db.h"
+#include "test_env.h"
+#include <filesystem>
 #include "gtest/gtest.h"
 #include <chrono>
 using namespace ozonedb;
@@ -7,7 +9,7 @@ class DBTest : public ::testing::Test {
  protected:
   void SetUp() override {
     // This will run before each test
-    system("rm -rf /tank/test/db/");
+    std::filesystem::remove_all(testenv::path("db/"));
   }
 
   // You can also add a TearDown method if needed
@@ -19,7 +21,7 @@ class DBTest : public ::testing::Test {
 TEST_F(DBTest, open) {
   DB* db = nullptr;
 
-  std::string shared_config_path = "../src/config/local/test_db.json";
+  std::string shared_config_path = testenv::dbConfig();
 
   Status status = DB::openDB(db, shared_config_path);
   EXPECT_EQ(Status::kSuccess, status);
@@ -30,7 +32,7 @@ TEST_F(DBTest, open) {
 TEST_F(DBTest, single_put_get) {
   DB* db = nullptr;
 
-  std::string shared_config_path = "../src/config/local/test_db.json";
+  std::string shared_config_path = testenv::dbConfig();
 
   Status status = DB::openDB(db, shared_config_path);
   EXPECT_EQ(Status::kSuccess, status);
@@ -52,7 +54,7 @@ TEST_F(DBTest, single_put_get) {
 TEST_F(DBTest, multiple_put_get) {
   DB* db = nullptr;
 
-  std::string shared_config_path = "../src/config/local/test_db.json";
+  std::string shared_config_path = testenv::dbConfig();
 
   Status status = DB::openDB(db, shared_config_path);
   EXPECT_EQ(Status::kSuccess, status);
@@ -81,7 +83,7 @@ TEST_F(DBTest, multiple_put_get) {
 TEST_F(DBTest, put_after_put_return_new_value) {
   DB* db = nullptr;
 
-  std::string shared_config_path = "../src/config/local/test_db.json";
+  std::string shared_config_path = testenv::dbConfig();
 
   Status status = DB::openDB(db, shared_config_path);
   EXPECT_EQ(Status::kSuccess, status);
@@ -106,7 +108,7 @@ TEST_F(DBTest, put_after_put_return_new_value) {
 TEST_F(DBTest, delete_after_put) {
   DB* db = nullptr;
 
-  std::string shared_config_path = "../src/config/local/test_db.json";
+  std::string shared_config_path = testenv::dbConfig();
 
   Status status = DB::openDB(db, shared_config_path);
   EXPECT_EQ(Status::kSuccess, status);
@@ -129,7 +131,7 @@ TEST_F(DBTest, delete_after_put) {
 TEST_F(DBTest, large_put) {
   DB* db = nullptr;
 
-  std::string shared_config_path = "../src/config/local/test_db.json";
+  std::string shared_config_path = testenv::dbConfig();
 
   Status status = DB::openDB(db, shared_config_path);
   EXPECT_EQ(Status::kSuccess, status);
@@ -144,7 +146,7 @@ TEST_F(DBTest, large_put) {
 TEST_F(DBTest, values_survive_reopen) {
   DB* db = nullptr;
 
-  std::string shared_config_path = "../src/config/local/test_db.json";
+  std::string shared_config_path = testenv::dbConfig();
 
   Status status = DB::openDB(db, shared_config_path);
   EXPECT_EQ(Status::kSuccess, status);
@@ -188,7 +190,7 @@ TEST_F(DBTest, values_survive_reopen) {
 TEST_F(DBTest, reopen_read_latency) {
   DB* db = nullptr;
 
-  std::string shared_config_path = "../src/config/local/test_db.json";
+  std::string shared_config_path = testenv::dbConfig();
 
   Status status = DB::openDB(db, shared_config_path);
   EXPECT_EQ(Status::kSuccess, status);

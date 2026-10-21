@@ -91,7 +91,8 @@ cd build && ctest --output-on-failure                     # all (one gtest binar
 ```
 
 - **Run from `build/`** — tests reference configs by relative path (`../src/config/...`).
-- `/tank` must exist and be writable: `sudo mkdir -p /tank && sudo chmod 777 /tank`.
+- The tests write under `OZONEDB_TEST_ROOT` (`tests/test_env.h`, default `/tank/test/`); set it to
+  any writable directory. `DBTest` rewrites `test_db.json` with a `db_path` under that root.
 - `CorfuStorageTest.*` self-skip unless `CORFU_TEST_ENDPOINT` is set, and need a **fresh** server
   (they fail-stop on a trimmed log).
 - Corfu end-to-end smoke binaries (only built with `OZONEDB_ENABLE_CORFU=ON`) are the practical way
