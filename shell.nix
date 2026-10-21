@@ -22,6 +22,7 @@ pkgs.mkShell {
     gtest
     boost
     openssl
+    zlib
     awsSdk
     jdk17
     maven

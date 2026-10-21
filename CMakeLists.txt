@@ -49,6 +49,8 @@ option(OZONEDB_BUILD_JNI "Build libozonedb.so, the JNI shim the YCSB binding loa
 #
 # No link_directories() here: vcpkg's imported targets already carry their
 # own link information.
+# protobuf >= 22 ships protobuf_generate_cpp only behind this switch.
+set(protobuf_MODULE_COMPATIBLE ON)
 find_package(Protobuf CONFIG REQUIRED)
 find_package(GTest CONFIG REQUIRED)
 # boost-uuid is header-only, so no COMPONENTS: a system Boost has no
