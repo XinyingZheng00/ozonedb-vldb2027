@@ -40,7 +40,8 @@ ROCKSDB_PREFIX = Path(os.environ.get("ROCKSDB_PREFIX", ""))
 TMPFS_ROOT = Path("/dev/shm/ycsb_tmpfs_load")
 RESULTS_DIR = OZONEDB_HOME / "bench" / "results" / "local" / "fig1-single-writer-local"
 RECORD_COUNT = 1_000_000
-TIME_BIN = "/usr/bin/time"
+# GNU time (for max RSS): wherever PATH has it; /usr/bin/time on the Ubuntu nodes.
+TIME_BIN = shutil.which("time") or "/usr/bin/time"
 
 THROUGHPUT_RE = re.compile(
     r"(?:Load throughput\(ops/sec\):\s*|^\[OVERALL\],\s+Throughput\(ops/sec\),\s+)"

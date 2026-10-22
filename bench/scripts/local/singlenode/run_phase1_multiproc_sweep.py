@@ -82,7 +82,8 @@ DEFAULT_RUN_DURATION = 120
 DEFAULT_REPEATS = 3
 DEFAULT_VARIANCE_PCT = 10.0
 PER_RUN_TIMEOUT_S = 60 * 30
-TIME_BIN = "/usr/bin/time"
+# GNU time (for max RSS): wherever PATH has it; /usr/bin/time on the Ubuntu nodes.
+TIME_BIN = shutil.which("time") or "/usr/bin/time"
 
 CONFIG_TMP_ROOT = Path("/tmp/phase1_ozonedb_configs")
 

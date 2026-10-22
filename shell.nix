@@ -30,6 +30,7 @@ pkgs.mkShell {
     python3
     python3Packages.pyyaml
     python3Packages.protobuf  # bench/scripts/local/churn_experiment/task_log_parser.py
+    time  # GNU time, for the max-RSS column of the single-node sweeps
   ];
   JAVA_HOME = pkgs.jdk17.home;
   shellHook = ''
