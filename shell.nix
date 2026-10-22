@@ -29,6 +29,7 @@ pkgs.mkShell {
     maven
     python3
     python3Packages.pyyaml
+    python3Packages.protobuf  # bench/scripts/local/churn_experiment/task_log_parser.py
   ];
   JAVA_HOME = pkgs.jdk17.home;
   shellHook = ''
