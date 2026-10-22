@@ -153,7 +153,9 @@ DB::DB(std::string const& shared_config_path) {
   this->watcher = new CompactionWatcher(this->metadata, this->log_storage, this->log_handler, metadata_log, this->sstable_handler, fingerprint);
   this->watcher->setSSTableStorage(this->sstable_storage);
   this->watcher->setLRUCache(this->lru_cache);
-  this->watcher->setTaskLogHandler(new TaskLogHandler(this->metadata->task_log, this->log_storage));
+  auto* task_log_handler = new TaskLogHandler(this->metadata->task_log, this->log_storage);
+  task_log_handler->setHeartbeatThreshold(this->metadata->task_heartbeat_threshold_ticks);
+  this->watcher->setTaskLogHandler(task_log_handler);
   this->watcher->setMode(this->mode);
   this->file_mutex_manager = new FileMutexManager();
   this->lru_cache->setFileMutexManager(this->file_mutex_manager);

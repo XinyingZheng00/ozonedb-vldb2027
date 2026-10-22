@@ -58,7 +58,11 @@ class TaskLogHandler {
   std::shared_mutex task_map_mutex;
 
   std::unordered_map<TaskRecord::TaskIdentifier, int, TaskIdentifierHash, TaskIdentifierEqual> dead_tasks;  // the value here is used to store the owner generation
-  int task_heartbeat_threshold = 10000000;
+  // In 100 ms ticks (updateHeartbeats). Set from Metadata's
+  // task_heartbeat_threshold_ticks by DB::DB; the default matches it. The
+  // original literal was 10,000,000 (11.6 days), which left the dead-task
+  // path unreachable.
+  int task_heartbeat_threshold = 30;
   std::shared_mutex dead_tasks_mutex;
   std::shared_mutex task_log_mutex;
 
@@ -84,6 +88,11 @@ class TaskLogHandler {
   };
 
   void rollForwardTaskLog();
+
+  // Ticks without a heartbeat after which a task counts as dead. Call
+  // before the first rollForwardTaskLog.
+  void setHeartbeatThreshold(int ticks) { this->task_heartbeat_threshold = ticks; }
+  int heartbeatThreshold() const { return this->task_heartbeat_threshold; }
 
   bool isFirstWriterForTask(TaskRecord::TaskIdentifier* task_id, std::string const& client, int owner_generation);
   bool worthAppend(TaskRecord const& record);
