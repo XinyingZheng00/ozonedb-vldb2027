@@ -36,8 +36,7 @@ class LRUCache {
     std::unordered_map<std::string, std::unordered_map<std::string, std::shared_ptr<Record>>*> block_records;  // index_value_for_block -> records
     std::unordered_map<std::string, size_t> block_size;                                       // index_value_for_block -> tail
     std::unordered_map<std::string, std::list<std::pair<std::string, std::string>>::iterator> lru_itr;
-    // Blocks published by the warm worker (part B of
-    // bench/PLAN-compaction-cache.md) that no reader has touched yet. A
+    // Blocks published by the warm worker that no reader has touched yet. A
     // get() on a marked block counts one warm hit and clears the mark, so
     // warm_hits_ / warm_blocks_ is the fraction of warmed blocks that
     // were worth the read. Evict and invalidate drop the mark with the
@@ -79,9 +78,8 @@ class LRUCache {
 
   // Memoized fenced size of each SEALED log file.
   //
-  // The read bound for a sealed log used to come from the View, whose
-  // file_size for that file is whatever the rolling writer stamped into
-  // OperationRecord::sealed_input_bytes — a number that writer read from
+  // The View's file_size for a sealed log is whatever the rolling writer
+  // stamped into OperationRecord::sealed_input_bytes — a number that writer read from
   // its own UNFENCED view. Peer records appended just before the seal sit
   // above that bound and stay unreadable forever, in default mode and
   // under linearizable_reads alike. The bound has to come from a fenced
@@ -136,20 +134,19 @@ class LRUCache {
   // The same hits and misses split by SSTable level (slot = the level
   // parsed from "sstable<L>/<name>", slot 0 = any other name). Which
   // level misses is what tells a write-heavy cell apart from a
-  // read-only one (bench/PLAN-compaction-cache.md, part C).
+  // read-only one.
   static constexpr int kLevelSlots = 16;
   std::atomic<uint64_t> level_hits_[kLevelSlots] = {};
   std::atomic<uint64_t> level_misses_[kLevelSlots] = {};
   // Probe outcomes per level (Table::get, one probe per candidate file
   // of a get): pruned = a bloom filter said no before any block was
   // touched; absent = a block was looked up (cache hit or GET) and the
-  // key was not in it. probes - pruned - absent = found. Campaign
-  // cost2-20260828 saw 1.35 block fetches per read on workload a
-  // against 1.02 on c; these say which level fetches for nothing.
+  // key was not in it. probes - pruned - absent = found. These say which
+  // level fetches blocks for nothing.
   std::atomic<uint64_t> level_probes_[kLevelSlots] = {};
   std::atomic<uint64_t> level_pruned_[kLevelSlots] = {};
   std::atomic<uint64_t> level_absent_[kLevelSlots] = {};
-  // Warm-worker counters (part B). All zero until the worker exists.
+  // Warm-worker counters. All zero until the worker exists.
   std::atomic<uint64_t> warm_files_{0};
   std::atomic<uint64_t> warm_blocks_{0};
   std::atomic<uint64_t> warm_bytes_{0};
@@ -178,7 +175,7 @@ class LRUCache {
   // Number of failed file reads so far (see read_failures_).
   uint64_t readFailures() const { return read_failures_.load(std::memory_order_acquire); }
 
-  // ---- Warm worker (bench/PLAN-compaction-cache.md, part B) ----
+  // ---- Warm worker ----
   //
   // When a COMPACT is applied to this process's view, the outputs are
   // offered to one worker thread that reads each accepted file in
@@ -221,8 +218,7 @@ class LRUCache {
   // by construction. The affinity signal is then the number of lookups
   // this process made on the destination level since the previous such
   // event: zero during a pure load, hundreds per second under a read
-  // mix. Without this every L1 output was refused by the affinity rule
-  // (cost-20260828-cache: warm files 0, skipped_affinity 248).
+  // mix.
   void onCompactionApplied(std::vector<std::string> const& outputs, std::vector<size_t> const& output_bytes, int dest_level, size_t cached_input_blocks, bool log_inputs = false);
   void startWarmWorker();
   // Joins the worker; queued files are dropped. Idempotent; the
@@ -235,7 +231,7 @@ class LRUCache {
 
   // One consistent reading of every counter, taken under the cache
   // mutex. dead_* cover blocks whose file is not in latest_view (a
-  // compacted-away SSTable that nobody dropped); after part A they must
+  // compacted-away SSTable that nobody dropped); they must
   // be 0. printCacheStats formats exactly this.
   struct Stats {
     uint64_t hits = 0;
@@ -347,8 +343,7 @@ class LRUCache {
   // block leaves the LRU list and the byte budget, the Table* is
   // retired (a reader may still hold it, see retired_tables_), the entry
   // is erased. Returns the number of blocks that were cached, which is
-  // what the warm policy reads as this process's interest in the region
-  // (bench/PLAN-compaction-cache.md, parts A and B). A log entry (records
+  // what the warm policy reads as this process's interest in the region. A log entry (records
   // only) is left alone: LogHandler::invalidateCompactedLog owns those.
   // Never call this under view_mutex; MetadataLogHandler queues the
   // event and drains it after the lock.

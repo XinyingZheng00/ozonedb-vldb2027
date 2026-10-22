@@ -174,7 +174,7 @@ NATIVE_LABEL_SUFFIX = "-native"
 def lru_cache_corfu_settings(corfu_settings, lru_cache_bytes):
     """Copy of `corfu_settings` with the per-process block cache pinned.
 
-    The cost experiment (bench/PLAN-cost.md, phase 2) sweeps the cache
+    The cost experiment sweeps the cache
     size to reach the cache-to-dataset ratios of a 10 TB deployment on a
     1 GB dataset. Before this the size was read only from
     src/config/corfu/shared_config_base.json (`lru_cache_bytes`, 512 MB),
@@ -192,7 +192,7 @@ def lru_cache_corfu_settings(corfu_settings, lru_cache_bytes):
 def cache_warm_corfu_settings(corfu_settings, max_level=None, max_fraction=None):
     """Copy of `corfu_settings` with the compaction-aware block cache on.
 
-    bench/PLAN-compaction-cache.md part B: every generated shared_config
+    Every generated shared_config
     gets cache_warm_enabled=true and result files get a `-warm` token, so
     the A/B cells of one tag never overwrite each other. The two policy
     knobs the campaign sweeps ride along when given (cache_warm_max_level,
@@ -226,8 +226,7 @@ def cache_warm_label_token(corfu_settings):
 DEFAULT_DISK_CACHE_DIR = "/tank/cache"
 # The engine defaults, mirrored so the label names what actually ran even when
 # the caller passes no --disk-cache-mode / --disk-cache-admission. Keep these in
-# step with DiskCacheStorage::Options and Metadata (bench/PLAN-disk-cache-2.md,
-# Task 8; flipped on the evidence of campaign disk2-20260828).
+# step with DiskCacheStorage::Options and Metadata.
 DEFAULT_DISK_CACHE_MODE = "chunk"
 DEFAULT_DISK_CACHE_ADMISSION = "frequency"
 
@@ -256,8 +255,7 @@ def disk_cache_corfu_settings(corfu_settings, disk_cache_bytes, disk_cache_dir=N
     """`--disk-cache-bytes N [--disk-cache-dir DIR] [--disk-cache-keep-pages]
     [--disk-cache-mode file|chunk] [--disk-cache-entry-bytes N]
     [--disk-cache-admission always|frequency]` as corfu settings. Every writer
-    gets `<DIR>/w{i}/`, wiped before each phase (bench/PLAN-disk-cache.md, Task 8;
-    the round-2 keys are bench/PLAN-disk-cache-2.md, Task 6)."""
+    gets `<DIR>/w{i}/`, wiped before each phase."""
     n = int(disk_cache_bytes)
     if n <= 0:
         raise ValueError("--disk-cache-bytes must be a positive byte count")
@@ -271,7 +269,7 @@ def disk_cache_corfu_settings(corfu_settings, disk_cache_bytes, disk_cache_dir=N
         raise ValueError("--disk-cache-mode must be file or chunk")
     # Always written, never left to the engine default: the label token is
     # derived from these keys, and a run whose label does not name its mode and
-    # its admission policy cannot be told apart from a round-1 run.
+    # its admission policy cannot be told apart from a file-mode, evict-to-fit run.
     s["disk_cache_mode"] = mode
     if admission is None:
         admission = s.get("disk_cache_admission") or DEFAULT_DISK_CACHE_ADMISSION
@@ -496,7 +494,7 @@ def _make_corfu_config_per_writer(writer_idx, db_path, corfu_settings, s3_settin
         for k in ("cache_warm_max_level", "cache_warm_max_fraction", "cache_warm_min_input_blocks"):
             if corfu_settings.get(k) is not None:
                 data[k] = str(corfu_settings[k])
-        # Disk-cache tier (--disk-cache-bytes; bench/PLAN-disk-cache.md).
+        # Disk-cache tier (--disk-cache-bytes).
         dc_bytes = int(corfu_settings.get("disk_cache_bytes") or 0)
         if dc_bytes > 0:
             # One directory per writer process, cold at every phase: the
@@ -517,7 +515,7 @@ def _make_corfu_config_per_writer(writer_idx, db_path, corfu_settings, s3_settin
             for key in ("disk_cache_dir", "disk_cache_bytes", "disk_cache_drop_pages", "disk_cache_chunk_bytes", "disk_cache_fill_queue",
                         "disk_cache_mode", "disk_cache_entry_bytes", "disk_cache_admission", "disk_cache_admit_window"):
                 data.pop(key, None)
-        # Log trimming (PLAN-trimming.md): exactly one trimmer per cluster,
+        # Log trimming: exactly one trimmer per cluster,
         # global writer 0. writer_idx is global (offset + local index), so
         # on a multi-host run only the first host's first writer trims.
         # Every writer still loads the newest checkpoint at open.
@@ -609,7 +607,7 @@ def _time_wrapper():
     """GNU time, when present: `/usr/bin/time -v` prefixes the writer command
     so `User time`, `System time` and `Maximum resident set size` land at the
     end of every per-writer .result file (stderr is the same file). That is
-    the client-CPU cost line of bench/PLAN-cost.md (P0.3), measured the same
+    the client-CPU cost line, measured the same
     way for every backend. Absent (macOS, or no `time` package) the writer
     runs bare and the extractor reports the CPU columns empty.
     """
@@ -1001,7 +999,7 @@ if __name__ == "__main__":
         action="store_true",
         help="ozonedb-corfu only: warm compaction outputs into every writer's block "
              "cache when a COMPACT is applied (cache_warm_enabled=true in each "
-             "generated shared_config; bench/PLAN-compaction-cache.md). Result "
+             "generated shared_config). Result "
              "files get a -warm token.",
     )
     parser.add_argument(
@@ -1015,7 +1013,7 @@ if __name__ == "__main__":
              "fraction of lru_cache_bytes (engine default 0.25); label token -wf<percent>.",
     )
     parser.add_argument("--disk-cache-bytes", type=int, default=None,
-                        help="Disk-cache tier capacity per writer in bytes (bench/PLAN-disk-cache.md); off when absent")
+                        help="Disk-cache tier capacity per writer in bytes; off when absent")
     parser.add_argument("--disk-cache-dir", default=None,
                         help=f"Root of the per-writer disk-cache dirs (default {DEFAULT_DISK_CACHE_DIR}, the SSD mounted by setup_disk_cache.sh)")
     parser.add_argument("--disk-cache-keep-pages", action="store_true",

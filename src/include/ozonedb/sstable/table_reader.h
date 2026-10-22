@@ -46,7 +46,7 @@ class Table {
   // split across two reads; a block larger than the limit gets its own
   // read. With the default, one SSTable is one read. Reading one block
   // per storage call cost 16,384 GETs per 64 MiB file of 4 KiB blocks on
-  // S3 (bench/PLAN-compaction-range-read.md).
+  // S3.
   //
   // The index is validated before the first read: offsets ascending and
   // non-overlapping, every block inside the file. A bad index, a failed
@@ -67,7 +67,6 @@ class Table {
   // whatever was published so far still in the cache (each block is
   // complete or absent). Safe on a Table that readers share: the scan
   // iterates a private copy of the index block, never rep_->index_iter.
-  // Part B of bench/PLAN-compaction-cache.md.
   Status warm(LRUCache* cache, size_t max_read_bytes, size_t& blocks, size_t& bytes);
 
   ~Table();

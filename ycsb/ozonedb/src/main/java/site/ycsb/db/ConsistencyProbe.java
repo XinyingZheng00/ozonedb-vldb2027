@@ -764,7 +764,7 @@ public final class ConsistencyProbe {
     // threads attach to this JVM as non-daemon threads, so simply
     // returning from main -- or letting an exception propagate out of it
     // -- leaves the process alive with nothing to do, and consistency.py
-    // blocks in proc.wait() forever. Only the success path used to exit.
+    // blocks in proc.wait() forever. The exit below covers every path.
     int code = 0;
     try {
       Map<String, String> flags = parseFlags(args, 1);

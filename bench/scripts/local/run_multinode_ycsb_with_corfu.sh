@@ -133,16 +133,15 @@ Usage: $(basename "$0") [options]
   --log-trim                log trimming: global writer 0 checkpoints the
                             Corfu stream to the bucket and trims behind the
                             checkpoint; every writer opens from the newest
-                            checkpoint (PLAN-trimming.md). Forwarded to each
+                            checkpoint. Forwarded to each
                             client as --log-trim.
   --lru-cache-bytes N       per-process SSTable block cache in bytes, written
                             into every writer's generated shared_config and
-                            appended to the result label (-lru64m). The
-                            cache sweep of bench/PLAN-cost.md phase 2.
+                            appended to the result label (-lru64m).
   --cache-warm              compaction-aware block cache: every writer warms
                             the outputs of an applied COMPACT into its cache
                             (cache_warm_enabled=true in each generated
-                            shared_config; bench/PLAN-compaction-cache.md).
+                            shared_config).
                             Result label gets -warm. Forwarded to each
                             client as --cache-warm.
   --cache-warm-max-level N  with --cache-warm: warm outputs of levels up to
@@ -270,9 +269,8 @@ fi
 
 # ---------------------------------------------------------------------------
 # Resolve the corfu node from ycsb.yaml's `nodes:` block instead of a hardcoded
-# constant. This default used to say 10.10.1.2 while corfu.endpoint said
-# 10.10.1.3 -- which would start the server on the MinIO node, bound to an
-# address no client was configured to dial.
+# constant: a default that disagrees with corfu.endpoint would start the
+# server on the wrong node, bound to an address no client dials.
 #
 # The two addresses are deliberately separate:
 #   BIND  nodes.log.lan -- what corfu_server -a binds, and what clients dial
@@ -302,9 +300,8 @@ port_open() {
   corfu_sh "bash -c '(exec 3<>/dev/tcp/$1/$2) >/dev/null 2>&1'" >/dev/null 2>&1
 }
 
-# The SSTable bucket must be restored together with the log (PLAN-trimming.md
-# §5): the log references SSTables by name, and with --log-trim the checkpoint
-# in the bucket must match the trim mark in the log dir. A cell's compactions
+# The SSTable bucket must be restored together with the log: the log references SSTables by
+# name, and with --log-trim the checkpoint in the bucket must match the trim mark in the log dir. A cell's compactions
 # and checkpoints change the bucket, so the next cell would otherwise open a
 # restored log against a bucket that is ahead of it (bootstrap throws) or that
 # lost files the log still names. load_corfu_dataset.sh writes the snapshot to

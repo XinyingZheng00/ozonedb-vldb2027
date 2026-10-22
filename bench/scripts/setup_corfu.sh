@@ -4,9 +4,8 @@
 #
 #   bash bench/scripts/setup.sh --role corfu-server
 #
-# Beyond what this script used to do (apt deps + clone + mvn install), the role
-# also creates $CORFU_DATA_DIR/{load,run_batch}, which run_ycsb_with_corfu.sh
-# has always assumed exists and which nothing previously created.
+# Besides apt deps + clone + mvn install, the role also creates
+# $CORFU_DATA_DIR/{load,run_batch}, which run_ycsb_with_corfu.sh assumes exist.
 #
 # CLONE_DIR is still honoured.
 

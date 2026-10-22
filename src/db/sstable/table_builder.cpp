@@ -13,7 +13,7 @@
 #include <utility>
 #include <vector>
 namespace ozonedb {
-#define BLOCK_SIZE 4096  // approximate size of a data block (was 65536; see bench/RESULTS-cost.md)
+#define BLOCK_SIZE 4096  // approximate size of a data block
 
 struct TableBuilder::Rep {
   Storage* storage;
@@ -193,7 +193,7 @@ Status TableBuilder::finish() {
   r->closed = true;
   // Every data block went through the write-through in flush(): tell the
   // cache, so its warm worker does not read this file back into the
-  // process that built it (bench/PLAN-compaction-cache.md, part B).
+  // process that built it.
   if (r->lru_cache != nullptr && ok()) {
     r->lru_cache->markSSTableComplete(r->fileName);
   }

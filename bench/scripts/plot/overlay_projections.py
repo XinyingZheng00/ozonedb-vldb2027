@@ -7,8 +7,7 @@
 The Cassandra lines are drawn once, from the first table (they do not depend
 on the OzoneDB request distribution). The OzoneDB lines are drawn twice: solid
 for the first table (YCSB's scrambled zipfian, the main corpus) and dashed
-for the second (the zipfian over the key space; bench/PLAN-cost-2.md, Task 0b
-and Task 7b). The tables hold one row per decade, so the lines join the
+for the second (the zipfian over the key space). The tables hold one row per decade, so the lines join the
 decades; the full-grid curve of either corpus is in that corpus's own
 cost_model.pdf.
 """

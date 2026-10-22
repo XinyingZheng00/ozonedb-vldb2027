@@ -103,8 +103,7 @@ class MetadataLogHandler {
   // latest_view. Caller must hold view_mutex as a unique_lock.
   void publishSnapshotLocked();
 
-  // Cache work owed for COMPACT records applied to the view
-  // (bench/PLAN-compaction-cache.md, parts A and B). The apply runs under
+  // Cache work owed for COMPACT records applied to the view. The apply runs under
   // unique_lock<view_mutex>, and the cache mutex must never be taken
   // there: the Corfu tailer's listener takes the cache mutex, and a
   // foreground thread may hold it while fencing on the tailer. So both

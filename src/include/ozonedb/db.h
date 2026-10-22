@@ -63,7 +63,7 @@ class DB {
   CompactionWatcher* watcher = nullptr;
   // Only when Metadata::log_trim_enabled and the log backend is Corfu:
   // this process checkpoints the log to sstable_storage and trims behind
-  // the checkpoint (PLAN-trimming.md). Stopped in closeDB, which also runs
+  // the checkpoint. Stopped in closeDB, which also runs
   // its final cycle, and deleted first in ~DB because it uses both stores.
   LogTrimmer* trimmer = nullptr;
   std::string fingerprint;

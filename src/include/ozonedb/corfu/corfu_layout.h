@@ -4,7 +4,7 @@
 // The Corfu layout: fetched as Gson JSON (LayoutMsg.layout_json) and
 // parsed with protobuf's json_util into a google.protobuf.Struct, so no
 // JSON library is added. Only the single-node shape the bench uses is
-// accepted (PLAN-native-corfu.md §2, §4.3).
+// accepted.
 #include "corfu/corfu_codec.h"
 #include <cstdint>
 #include <string>

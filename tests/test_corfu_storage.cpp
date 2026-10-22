@@ -153,13 +153,13 @@ TEST(CorfuStorageTest, remove_clears_file) {
   delete storage;
 }
 
-// Regression for the multi-writer read miss: an append that a peer's SEAL
+// Multi-writer read miss: an append that a peer's SEAL
 // outran must not be acked. Writer A appends in a tight loop while B seals
 // the same file a few milliseconds in. Whatever A got kSuccess for must be
 // exactly what B (and everyone else) holds for the file — no more, no
-// less. Before the ack waited for the tailer, A acked appends that were
+// less. If the ack did not wait for the tailer, A would ack appends that were
 // sequenced above B's SEAL whenever A's tailer had not applied the SEAL
-// yet, and every other process dropped those bytes.
+// yet, and every other process would drop those bytes.
 TEST(CorfuStorageTest, ack_never_outruns_a_peer_seal) {
   SKIP_IF_NO_CORFU();
   std::string stream = CorfuStorageEnv::uniqueStream("corfu_seal_race");
@@ -226,7 +226,7 @@ std::vector<unsigned char> readAllFenced(CorfuDBStorage* s, std::string const& f
 }
 }  // namespace
 
-// The fast path (PLAN-trimming.md §0): a data append is acked on the
+// The fast path: a data append is acked on the
 // sequencer's answer, not after the tailer applied it, because its token
 // request carries the file's conflict key. Checks that the fast path is
 // taken on a warm stream, that a peer's SEAL turns the next append into
@@ -273,7 +273,7 @@ TEST(CorfuStorageTest, fast_ack_taken_and_refused_by_a_peer_seal) {
 }
 
 // ---------------------------------------------------------------------------
-// Checkpoints and trimming (PLAN-trimming.md). These trim the shared test
+// Checkpoints and trimming. These trim the shared test
 // server's log, so they sit at the end of the file: a later test on a
 // fresh stream is unaffected (the sequencer's per-stream mark for a new
 // stream is empty), but a reopen of an EARLIER stream would not be.

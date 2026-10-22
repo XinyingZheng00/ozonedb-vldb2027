@@ -261,7 +261,7 @@ def build_remote_command(remote_home, run_tag, host_offset, host_writers,
 
 
 # --------------------------------------------------------------------------
-# Server-side sampling (bench/PLAN-cost.md P0.2). The orchestrator is the
+# Server-side sampling. The orchestrator is the
 # one place that knows the cell's label, writer count and trial, and it
 # already SSHes and scps, so the sampler is driven from here rather than
 # from the two shell wrappers. Every failure here is a warning: a cell
@@ -423,7 +423,7 @@ def cross_node_aggregate(results_root, total_writers, wall_ms, trial_filter=None
 
     Validates per-group file count matches total_writers and prints
     missing writer indices loudly — silent under-reporting (e.g. when scp
-    drops a host's files) was previously how this produced wrong totals.
+    drops a host's files) would otherwise produce wrong totals.
     """
     if not os.path.isdir(results_root):
         print(f"[aggregate] {results_root} missing; nothing to do")
@@ -560,7 +560,7 @@ def main():
     )
     parser.add_argument("--disk-cache-bytes", type=int, default=None,
                         help="Pass-through to per-host runner: disk-cache tier capacity per "
-                             "writer in bytes (bench/PLAN-disk-cache.md); off when absent")
+                             "writer in bytes; off when absent")
     parser.add_argument("--disk-cache-dir", default=None,
                         help="Pass-through to per-host runner: root of the per-writer "
                              "disk-cache dirs (default /tank/cache)")
@@ -608,7 +608,7 @@ def main():
         help="Do not run bench/scripts/server_sampler.sh on the server node(s) "
              "around this cell. By default the Corfu/MinIO node (ozonedb-corfu) or "
              "the Cassandra nodes are sampled and the files land in "
-             "<results>/_server/<host>/ (bench/PLAN-cost.md P0.2).",
+             "<results>/_server/<host>/.",
     )
     parser.add_argument(
         "--cell_timeout",

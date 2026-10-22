@@ -409,7 +409,7 @@ if __name__ == "__main__":
         action="store_true",
         help="ozonedb-corfu only: warm compaction outputs into every writer's block "
              "cache when a COMPACT is applied (cache_warm_enabled=true in each "
-             "generated shared_config; bench/PLAN-compaction-cache.md). Result "
+             "generated shared_config). Result "
              "files get a -warm token.",
     )
     parser.add_argument(
@@ -423,7 +423,7 @@ if __name__ == "__main__":
              "fraction of lru_cache_bytes (engine default 0.25); label token -wf<percent>.",
     )
     parser.add_argument("--disk-cache-bytes", type=int, default=None,
-                        help="Disk-cache tier capacity per writer in bytes (bench/PLAN-disk-cache.md); off when absent")
+                        help="Disk-cache tier capacity per writer in bytes; off when absent")
     parser.add_argument("--disk-cache-dir", default=None,
                         help="Root of the per-writer disk-cache dirs (default /tank/cache, the SSD mounted by setup_disk_cache.sh)")
     parser.add_argument("--disk-cache-keep-pages", action="store_true",
@@ -455,7 +455,7 @@ if __name__ == "__main__":
         default=None,
         help="ozonedb / ozonedb-corfu: per-process block cache in bytes, written as "
              "lru_cache_bytes into every generated shared_config; result files get a "
-             "-lru64m style token (bench/PLAN-cost.md phase 2). Default: the base "
+             "-lru64m style token. Default: the base "
              "config's 512 MB, no token.",
     )
     parser.add_argument(

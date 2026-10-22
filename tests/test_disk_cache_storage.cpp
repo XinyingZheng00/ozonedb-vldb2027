@@ -61,7 +61,7 @@ class CountingStorage : public FileStorage {
 
 // A CountingStorage whose ranged read deletes a path (the fill's private
 // temp file, by construction) after its Nth call, to exercise a part
-// vanishing mid-fill (review finding, PLAN-disk-cache T3 fix 1).
+// vanishing mid-fill.
 class PartVanishingStorage : public CountingStorage {
  public:
   PartVanishingStorage(std::string const& path, std::string vanish_path, int vanish_on_call)
@@ -79,15 +79,12 @@ class PartVanishingStorage : public CountingStorage {
 // A CountingStorage whose ranged read counts its own calls -- so a test can
 // deterministically know the worker has begun a *specific* call instead of
 // guessing from a fixed delay -- and then sleeps before delegating, so the
-// test can reliably land on "the worker is mid-fill" (review finding,
-// PLAN-disk-cache T3 fix 2; the counter is PLAN-disk-cache T4's fix for the
-// carried-over review item: a bare sleep before start is not synchronization
-// and can race the worker's first dequeue). A one-shot "entered" bool is not
+// test can reliably land on "the worker is mid-fill" (a bare sleep before
+// start is not synchronization and can race the worker's first dequeue). A one-shot "entered" bool is not
 // enough here: in the test below, the setup misses call this same read()
 // directly on the main thread, before the worker thread exists, so a
 // one-shot latch would already be tripped by the time the worker starts and
-// would provide no synchronisation at all (PLAN-disk-cache T4 review round
-// 1). Counting lets the test snapshot the count immediately before starting
+// would provide no synchronisation at all. Counting lets the test snapshot the count immediately before starting
 // the worker and then wait for the worker's own call to advance it.
 class SlowStorage : public CountingStorage {
  public:
@@ -108,7 +105,7 @@ class SlowStorage : public CountingStorage {
   // Blocks, bounded by `timeout`, until at least `n` calls to read() above
   // have begun; false on timeout instead of hanging forever (e.g. if the
   // worker skips the read entirely via fillOne's present/gone/budget
-  // early-outs -- PLAN-disk-cache T4 review round 1, finding 2).
+  // early-outs).
   bool waitForReadsAtLeast(int n, std::chrono::milliseconds timeout) {
     std::unique_lock<std::mutex> lk(reads_mtx_);
     return reads_cv_.wait_for(lk, timeout, [this, n] { return reads_ >= n; });
@@ -468,7 +465,7 @@ TEST(DiskCacheStorageTest, StopIsSerialisedAcrossTheJoinAndWaitFillIdleIsNeverSt
   ASSERT_TRUE(slow->waitForReadsAtLeast(reads_before + 1, std::chrono::seconds(5)));
   std::thread waiter([&f] { f.tier->waitFillIdle(); });
   f.tier->stopFillWorker();
-  waiter.join();  // must return promptly: this is the regression under test
+  waiter.join();  // must return promptly: this is the behaviour under test
 
   EXPECT_TRUE(f.local(name1));   // the in-flight fill was allowed to finish
   EXPECT_FALSE(f.local(name2));  // never started; still sitting in the queue
@@ -549,8 +546,7 @@ TEST(DiskCacheStorageTest, InvalidateDropsOnlyTheCopy) {
 TEST(DiskCacheStorageTest, InvalidateMidWriteThroughPoisonsThePart) {
   // A peer's COMPACT drops the file while the builder is still appending it.
   // discardPart poisons the name, so the appends that follow cannot be
-  // reopened with `trunc` and published as a complete copy of the tail
-  // (final review of PLAN-disk-cache, finding 7).
+  // reopened with `trunc` and published as a complete copy of the tail.
   TierFixture f(1u << 20);
   std::string const name = "sstable1/" + stamp() + ".sst";
   std::vector<unsigned char> head(3000, 'a'), tail(2000, 'b');
@@ -579,8 +575,7 @@ TEST(DiskCacheStorageTest, InvalidateMidWriteThroughPoisonsThePart) {
 
 TEST(DiskCacheStorageTest, UnwritableDirThrows) {
   // A tier configured onto a path it cannot use must fail the open, not
-  // degrade into a silent pass-through (final review of PLAN-disk-cache,
-  // finding 4b). Both cases run as an ordinary user.
+  // degrade into a silent pass-through. Both cases run as an ordinary user.
   std::string const base = kRoot + "unusable_" + stamp() + "/";
   std::filesystem::create_directories(base + "backing/sstable1");
   auto make = [&](std::string const& dir) {

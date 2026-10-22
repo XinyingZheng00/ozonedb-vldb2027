@@ -320,7 +320,7 @@ Status CompactionWatcher::doCompactionWork(Compaction* compaction) {
       std::shared_lock file_lock(file_mutex);
 
       // One ranged read per compaction_read_bytes of the input instead of
-      // one GET per block (bench/PLAN-compaction-range-read.md).
+      // one GET per block.
       std::unordered_map<std::string, std::shared_ptr<Record>> records_tmp;
       Status read_status = Table::open(this->sstable_storage, input, table);
       if (read_status == Status::kSuccess && table == nullptr) read_status = Status::kFailure;

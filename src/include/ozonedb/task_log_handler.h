@@ -94,9 +94,3 @@ class TaskLogHandler {
 };
 }  // namespace ozonedb
 #endif
-
-/*
- todo:
- . optimize code to ramdomly select a layer to detect the compaction task.
- . consider other cases.
- */

@@ -7,10 +7,10 @@
 // (W0: key_0..key_{N-1}, W1: key_{N}..key_{2N-1}) to the same
 // Corfu stream. After both children exit, the parent reopens the DB
 // and verifies all 2N keys are readable. Exercises:
-//   - Phase 1: concurrent LOGCREATE / tail rollover
-//   - Phase 2: cross-writer read fencing (parent sees both writers' data)
-//   - Phase 4: distributed compaction claim (if compaction fires)
-//   - Phase 0.5: SSTable split to S3 (if sstable_backend is set)
+//   - concurrent LOGCREATE / tail rollover
+//   - cross-writer read fencing (parent sees both writers' data)
+//   - distributed compaction claim (if compaction fires)
+//   - SSTable split to S3 (if sstable_backend is set)
 //
 // Exits non-zero on any failure. Not a gtest — this is a minimal probe
 // you can run by hand or from a script against a live corfu_server +

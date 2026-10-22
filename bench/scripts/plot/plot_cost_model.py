@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Projected monthly cost against dataset size (bench/PLAN-cost.md P0.7).
+"""Projected monthly cost against dataset size.
 
   plot_cost_model.py coefficients.tsv prices.json [--space space.json]
                      [--out-dir DIR] [--table out.tsv] [--h-workload c]
@@ -8,12 +8,12 @@
 
 coefficients.tsv is what extract_cost_coefficients.py writes. prices.json
 holds the list prices, the instance roles and the projection parameters.
-space.json holds the phase 1 space measurements (sC, sO, L_gb, ...); see
+space.json holds the space measurements (sC, sO, L_gb, ...); see
 space.example.json. Anything the TSV or space.json does not provide falls
 back to the pre-measurement estimate and is printed as ASSUMED, so the
 figure never silently mixes measured and guessed inputs.
 
-The model (bench/PLAN-cost.md, "The model"), per month:
+The model, per month:
 
   Cassandra(D) = N(D) * p_node + clients_C * p_client_C
     N(D) = max(min_nodes, ceil(RF * sC * D / (disk_node * fill)),
@@ -27,8 +27,7 @@ The model (bench/PLAN-cost.md, "The model"), per month:
                + clients_O * disk_gb * p_disk
     clients_X  = max(min_clients, ceil(ops * cpu_s_per_op_X / (vcpu * util)))
 
-With a disk-cache tier of `disk_gb` per client (bench/PLAN-disk-cache.md), the
-tier answers what the RAM cache missed, so the two hit rates compose:
+With a disk-cache tier of `disk_gb` per client, the tier answers what the RAM cache missed, so the two hit rates compose:
 
   h = 1 - (1 - h(c / D)) * (1 - disk_h(disk_gb / D))
 
@@ -94,7 +93,7 @@ def median(xs):
 def tier_variant(label):
     """`ozonedb-corfu-lru8m-dc512m-ch64k-adm-kp` -> `ch64k-adm`: the tokens after
     `-dc<size>`, without `-kp` (the page-cache A/B is not a variant). `` for a
-    round-1 label and for a label without a tier."""
+    file-mode label and for a label without a tier."""
     m = re.search(r"-dc\d+[gmkb](.*)$", label)
     if not m:
         return ""
@@ -119,10 +118,9 @@ class Coefficients:
         # after the backing PUT) and the checkpoint objects. Anything derived
         # from the S3 request rate -- h_steady, g, the client CPU per op -- is
         # taken from the S3-path cells only.
-        # Only one disk-cache variant may feed the tier coefficients: round-1
-        # file-mode rows and round-2 chunk/admission rows measure different
-        # engines, so mixing their ratios would interpolate across two curves
-        # (bench/PLAN-disk-cache-2.md, Task 6).
+        # Only one disk-cache variant may feed the tier coefficients:
+        # file-mode rows and chunk-mode chunk/admission rows measure different
+        # engines, so mixing their ratios would interpolate across two curves.
         tier = [r for r in ozone if fnum(r.get("disk_capacity"))
                 and tier_variant(r["label"]) == tier_variant_filter]
         if not tier and any(fnum(r.get("disk_capacity")) for r in ozone):
@@ -151,7 +149,7 @@ class Coefficients:
             # A writer's cache fills at that writer's own miss rate (about
             # 1.9 MB/s at 10 GB), so a large cache can close a cell far from
             # full and its hit rate is that of a smaller cache. cache_fill is
-            # the LRU's bytes at close over its capacity (PLAN-cost-2 Task 5);
+            # the LRU's bytes at close over its capacity;
             # a cell below 0.9 is not a point on the curve. Older TSVs have
             # no column and keep every cell.
             fill = fnum(r.get("cache_fill"))
@@ -227,8 +225,7 @@ class Coefficients:
         # OzoneDB client 2-4x the CPU of workload c (compaction, log tailing),
         # so a median over both would answer neither question. --cpu-workload
         # overrides the rule for a corpus whose workloads carry another name
-        # (the key-space zipfian cells are `az` and `cz`; PLAN-cost-2.md
-        # Task 0b), so that corpus is read with --h-workload cz --cpu-workload az.
+        # (the key-space zipfian cells are `az` and `cz`), so that corpus is read with --h-workload cz --cpu-workload az.
         cpu_wl = cpu_workload or ("c" if self.read_fraction >= 0.95 else "a")
         self.cpu_workload = cpu_wl
         self.cpu_O = pick("cpu_s_per_op_O", [fnum(r["client_cpu_s_per_op"]) for r in ozone_s3
@@ -250,7 +247,7 @@ class Coefficients:
         if self.src["ops_node_C"] != "ASSUMED":
             self.src["ops_node_C"] += f", cassandra-{cassandra_mode}, best of {len(caps)} cells"
 
-        # Disk-cache tier (bench/PLAN-disk-cache.md, campaign disk-20260829).
+        # Disk-cache tier.
         # disk_h(ratio) is the *tier's own* hit rate against the tier budget
         # over the dataset, so the model can compose it with whatever RAM
         # cache the projection buys; h_disk(ratio) is the combined h_total of
@@ -270,7 +267,7 @@ class Coefficients:
             # points at one ratio and _interp would pick whichever sorted
             # first.
             # On a tie (a rerun of the same cell), the fuller tier: a longer
-            # cell that reached more of its budget (PLAN-cost-2 Task 6).
+            # cell that reached more of its budget.
             cap = fnum(r.get("cache_capacity")) or 0.0
             held = fnum(r.get("disk_bytes")) or 0.0
             if ratio not in dpts or (cap, -held) < (dpts[ratio][0], -dpts[ratio][3]):
@@ -531,7 +528,7 @@ def main():
     ap.add_argument("--table", help="write the projection table as TSV")
     ap.add_argument("--tier-variant", default="",
                     help="which disk-cache variant's rows feed the tier coefficients: the label tokens after -dc<size>, "
-                         "e.g. ch64k-adm (default: the round-1 file-mode rows, whose labels carry no variant tokens)")
+                         "e.g. ch64k-adm (default: the file-mode rows, whose labels carry no variant tokens)")
     args = ap.parse_args()
 
     rows = load_rows(args.coefficients_tsv)
@@ -600,7 +597,7 @@ def main():
         cse = model.cassandra(d, "ebs")
         print(f"{fmt_gb(d):>10} {cn:>11,.0f} {ce:>11,.0f} {oh:>11,.0f} {ol:>11,.0f} {ot:>11,.0f} "
               f"{od:>11,.0f} {oz['h']:>6.3f} {ozd['h']:>6.3f} {cs['nodes']:>5}")
-        # Totals first, then the cost lines of bench/PLAN-cost.md's projection
+        # Totals first, then the cost lines of the projection
         # table (all USD per month, rounded to the dollar).
         r1 = lambda v: round(v)
         lines.append((fmt_gb(d), r1(cn), r1(ce), r1(oh), r1(ol), r1(ot), round(oz["h"], 4), cs["nodes"], cs["bound"],

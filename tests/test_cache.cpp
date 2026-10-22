@@ -1,4 +1,4 @@
-// LRUCache tests for bench/PLAN-compaction-cache.md: per-level counters,
+// LRUCache tests: per-level counters,
 // dead blocks of files that left the View, drop on REMOVE, and the warm
 // worker. Everything runs on FileStorage under <OZONEDB_TEST_ROOT>/cache_test/.
 #include "cache.h"
@@ -313,7 +313,7 @@ TEST(LRUCacheTest, WarmDecisionRules) {
   EXPECT_EQ(LRUCache::warmDecision(p, 1, 999, cap, 0), Skip::kBudget);
   p.min_input_blocks = 0;
   EXPECT_EQ(LRUCache::warmDecision(p, 1, 250, cap, 0), Skip::kNone);
-  // The engine defaults are the plan's: off, L1, a quarter, one block.
+  // The engine defaults: off, L1, a quarter, one block.
   LRUCache::WarmPolicy d;
   EXPECT_FALSE(d.enabled);
   EXPECT_EQ(d.max_level, 1);

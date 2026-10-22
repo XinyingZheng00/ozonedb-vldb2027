@@ -1,8 +1,7 @@
 #ifndef OZONEDB_CORFU_RPC_H
 #define OZONEDB_CORFU_RPC_H
 #ifdef OZONEDB_ENABLE_CORFU
-// Typed Corfu RPCs over two connections, with the retry policy of
-// PLAN-native-corfu.md §4.2:
+// Typed Corfu RPCs over two connections, with this retry policy:
 //   wrong_epoch_error       -> refetch the layout, retry once
 //   not_ready / not_bootstrapped -> sleep 1 s, retry, up to 20 times
 //   no reply / dead socket  -> reconnect, refetch the layout, retry once

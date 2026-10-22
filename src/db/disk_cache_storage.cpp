@@ -333,8 +333,7 @@ void DiskCacheStorage::discardPart(std::string const& name) {
   // Poison rather than forget, whenever a write-through was actually in
   // flight. The builder may still be appending: without the poison the next
   // writePart would reopen the .part with `trunc` and the following flush
-  // would publish the tail of the file as a complete copy (final review of
-  // PLAN-disk-cache, finding 7). publishPart clears the poison and publishes
+  // would publish the tail of the file as a complete copy. publishPart clears the poison and publishes
   // nothing, so the set only ever holds the write-throughs that were
   // interrupted and is emptied by their own flush. Discarding a name with no
   // part in flight -- which is what invalidate() does on every peer COMPACT
@@ -526,7 +525,7 @@ void DiskCacheStorage::fillOne(std::string const& name) {
   // The fill owns this stream outright: it never touches parts_/writePart/
   // discardPart, so a concurrent write-through or a peer invalidate() (which
   // only ever acts on partPath(name)) can neither truncate nor interleave
-  // into it (review finding, PLAN-disk-cache T3).
+  // into it.
   std::string const tmp = fillPartPath(name);
   std::error_code ec;
   fs::create_directories(fs::path(tmp).parent_path(), ec);
@@ -607,7 +606,7 @@ size_t DiskCacheStorage::reconcile(std::function<bool(std::string const&, size_t
     if (ec) continue;
     // Both the write-through's ".part" and the fill's own ".fillpart" are
     // in-progress leftovers from before the last close and are dropped
-    // unconditionally, without asking `live` (Task 3 review decision).
+    // unconditionally, without asking `live`.
     bool const is_part = ends_with(rel, ".part") || ends_with(rel, ".fillpart");
     size_t const bytes = static_cast<size_t>(it->file_size(ec));
     if (is_part || !cacheable(rel) || !live(rel, bytes)) {

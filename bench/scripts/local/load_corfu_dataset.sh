@@ -48,12 +48,12 @@ Usage: $(basename "$0") [options]
   --load-host HOST  client that runs the loader (default: first cloudlab.hosts)
   --log-trim        forward --log-trim to the loader: writer 0 checkpoints
                     the stream to the bucket and trims behind it, so the
-                    snapshot holds one trim interval, not the whole load
-                    (bench/PLAN-cost.md phase 1). The checkpoint lives in the
+                    snapshot holds one trim interval, not the whole load.
+                    The checkpoint lives in the
                     bucket: snapshot the bucket together with /mnt/corfu/load.
   --cache-warm      forward --cache-warm to the loader: every writer warms
-                    the outputs of an applied COMPACT into its block cache
-                    (bench/PLAN-compaction-cache.md). Result label gets -warm.
+                    the outputs of an applied COMPACT into its block cache.
+                    Result label gets -warm.
   --record-cnt N    dataset size in records, forwarded as --record_cnt
   --corfu-dir PATH  corfu repo on the log node (default: $CORFU_DIR)
   --dry-run         print the plan; no ssh
@@ -103,7 +103,7 @@ stop_corfu() {
   echo "[corfu] ERROR: still reachable after SIGKILL" >&2; return 1
 }
 
-# The SSTable bucket and the log dir are one unit (PLAN-trimming.md §5): the
+# The SSTable bucket and the log dir are one unit: the
 # log references SSTables by name, and with --log-trim the checkpoint in the
 # bucket must match the trim mark in the log. So the load starts from an EMPTY
 # bucket, and the snapshot copies the bucket to /mnt/corfu/load-bucket next
@@ -128,8 +128,7 @@ snapshot() {
   corfu_sh "rm -rf $BUCKET_SNAPSHOT && mkdir -p $BUCKET_SNAPSHOT && mc mirror --overwrite --quiet $MC_ALIAS/$S3_BUCKET $BUCKET_SNAPSHOT >/dev/null && echo \"[bucket] snapshot: \$(du -sh $BUCKET_SNAPSHOT | cut -f1) (\$(find $BUCKET_SNAPSHOT -type f | wc -l) objects); checkpoint/: \$(du -sh $BUCKET_SNAPSHOT/*/checkpoint 2>/dev/null | cut -f1 || echo none)\""
 }
 
-# Server sample around the load (bench/PLAN-cost.md phase 1: write
-# amplification, checkpoint bytes, log bytes). Same sampler and cell naming
+# Server sample around the load. Same sampler and cell naming
 # as run_multinode_ycsb.py; the files land in bench/results/local/_server/,
 # next to the per-writer insert files, where extract_cost_coefficients.py
 # joins them as the "load" workload. Best effort: a failure here never

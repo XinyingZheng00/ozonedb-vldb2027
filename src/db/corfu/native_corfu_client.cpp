@@ -1,4 +1,4 @@
-// The native C++ CorfuClient (PLAN-native-corfu.md): tokens and writes
+// The native C++ CorfuClient: tokens and writes
 // on the `ctl` connection, the sequential tailer on `tail`, no JVM.
 #ifdef OZONEDB_ENABLE_CORFU
 #include "corfu/corfu_codec.h"

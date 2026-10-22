@@ -8,10 +8,10 @@ as dicts over the union of their headers rather than concatenated as lines, and
 duplicate cells (same tag/label/workload/writers/trial/record_cnt) are dropped,
 first source winning.
 
-    disk2-<date>             the round-2 tier cells (chunk mode / TinyLFU
+    disk2-<date>             the chunk-mode tier cells (chunk mode / TinyLFU
                              admission), from --disk2 PATH; skipped when the
-                             file is absent (bench/PLAN-disk-cache-2.md)
-  + disk-20260829            the round-1 tier cells (the stale 10 GB load and
+                             file is absent
+  + disk-20260829            the file-mode tier cells (the stale 10 GB load and
                              the cassandra rows dropped)
   + cost-20260829-rr         the no-tier controls the tier is read against
   + cost-20260828-4k         the 4 KiB workload-c cache sweep, i.e. h(c / D)
@@ -25,7 +25,7 @@ Usage (from the repo root):
         --table bench/results-disk-20260829-projection.tsv
 
 Both tier sources are kept in one corpus: `plot_cost_model.py --tier-variant`
-selects which of them feeds the tier coefficients, so a round-1 and a round-2
+selects which of them feeds the tier coefficients, so a file-mode and a chunk-mode
 projection are two runs over the same file.
 
 `--no-disk` drops the tier rows, which exercises the model's "no disk-cache
@@ -67,8 +67,8 @@ def main():
     no_disk = "--no-disk" in argv
     out_path = args[0] if args else "-"
     sources = list(SOURCES)
-    # First source wins on a duplicate key, and the round-2 tags never collide
-    # with the round-1 ones, so the order only decides the column order.
+    # First source wins on a duplicate key, and the chunk-mode tags never collide
+    # with the file-mode ones, so the order only decides the column order.
     if os.path.exists(os.path.join(ROOT, disk2)):
         sources.insert(0, (disk2,
                            lambda r, nd: not r["label"].startswith("cassandra") and r["record_cnt"] != "10000000"

@@ -65,7 +65,7 @@ message CorfuEntry {
 // A checkpoint of the shared log: the exact live state after every entry
 // with global address <= covered_addr. Written to the object store by
 // LogTrimmer, read by CorfuDBStorage::bootstrap so a joining process
-// replays only the entries above covered_addr. See PLAN-trimming.md §3.
+// replays only the entries above covered_addr.
 message CheckpointManifest {
   required int64 covered_addr = 1;       // every entry <= this address is applied
   required int64 prev_covered_addr = 2;  // covered_addr of the previous checkpoint, -1 if none

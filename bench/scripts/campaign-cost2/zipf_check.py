@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""PLAN-cost-2 Task 0b functional check: the first cz cell must hit far above the
+"""Functional check: the first cz cell must hit far above the
 scrambled-zipfian cell at the same cache (0.14 at 100 MiB / 10 GB). Exit 1 stops
 the chain."""
 import csv

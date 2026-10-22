@@ -89,7 +89,7 @@ class CorfuDBStorage : public Storage {
 
   long lastAppendAddressForThread() const override { return last_append_addr_; }
 
-  // --- checkpoints and trimming (PLAN-trimming.md §3) ---
+  // --- checkpoints and trimming ---
   //
   // The exact live state at one address, for LogTrimmer. Takes write_gate_
   // exclusively, waits until the tailer has passed this process's own last

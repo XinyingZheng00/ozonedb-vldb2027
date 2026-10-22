@@ -9,7 +9,7 @@
 #   server_sampler.sh stop  DIR CELL   snapshot -> DIR/CELL.after.txt, kill both
 #   server_sampler.sh snapshot         print one snapshot to stdout
 #
-# Why: the cost model of bench/PLAN-cost.md needs, per cell, the object-store
+# Why: the cost model needs, per cell, the object-store
 # request counts (GET, PUT, DELETE), the bytes in and out, the bytes on disk of
 # every stateful directory, and the server CPU per process. MinIO's counters
 # are cumulative since the process started, so a cell has a request count

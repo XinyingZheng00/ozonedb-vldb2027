@@ -1,5 +1,4 @@
 // Unit tests of the native Corfu client's codecs: no server needed.
-// PLAN-native-corfu.md phase 1, item 4.
 #ifdef OZONEDB_ENABLE_CORFU
 #include "corfu/corfu_codec.h"
 #include "corfu/corfu_layout.h"

@@ -25,7 +25,7 @@ Modes:
   scaling:           SumWriterThroughput vs total writers, per workload,
                      plus fenced-read barrier p50/p99 vs writer count.
 
-Engine pairing (PLAN-syncread.md): cr-sqlite <-> ozonedb default (both
+Engine pairing: cr-sqlite <-> ozonedb default (both
 eventually-visible reads); cr-sqlite-syncread <-> ozonedb --linearizable
 (both freshness-guaranteed reads).
 

@@ -61,7 +61,7 @@ void MetadataLogHandler::appendToMetadataLog(OperationRecord const& record) {
   // No lock: active_unit is set once in the constructor and not mutated;
   // the storage layer (e.g. CorfuDBStorage::append) handles its own
   // concurrency and returns a globally ordered address from Corfu. Holding
-  // read_mutex here used to block every concurrent readMetadataLog() on
+  // read_mutex here would block every concurrent readMetadataLog() on
   // peer writers across the Corfu round-trip.
   this->storage->append(this->active_unit, buffer, buffer_size);
   delete[] buffer;
@@ -120,9 +120,9 @@ void MetadataLogHandler::markAppliedLocked(size_t start, size_t end) {
 
 // Deserialize FileRecords from a file.
 //
-// read_mutex used to be held exclusively across storage->size() +
-// storage->read(), which for Corfu fences the tailer and can stall for
-// seconds under concurrent writer load. We now snapshot the offset,
+// read_mutex is not held across storage->size() + storage->read(), which
+// for Corfu fences the tailer and can stall for seconds under concurrent
+// writer load. Instead we snapshot the offset,
 // do the I/O lock-free, then take the lock only long enough to commit
 // the new offset — and only if nobody else advanced it in the meantime.
 // Loser of a race discards its records and the caller catches up on
@@ -317,7 +317,7 @@ void MetadataLogHandler::drainCacheEvents() {
       if (this->sstable_removed_listener_) this->sstable_removed_listener_(input);
       if (LRUCache::levelSlot(input) != 0) log_inputs = false;
     }
-    // Part B: the outputs go to the warm worker, which applies the
+    // The outputs go to the warm worker, which applies the
     // policy (enabled, level, budget, affinity = the blocks just dropped,
     // or the destination level's lookups when the inputs are log files).
     this->lru_cache->onCompactionApplied(ev.outputs, ev.output_bytes, ev.dest_level, cached_input_blocks, log_inputs);
@@ -326,10 +326,9 @@ void MetadataLogHandler::drainCacheEvents() {
 
 // Roll forward the metadata log to get the latest view.
 //
-// The periodic tail-size refresh used to call storage->size() while holding
-// unique_lock<view_mutex>, which stalls all foreground reads/writes during
-// Corfu tailer catch-up (matches the multi-second plateaus observed under
-// concurrent writers). We now sample the tail name under a brief shared_lock,
+// The periodic tail-size refresh must not call storage->size() while holding
+// unique_lock<view_mutex>, which would stall all foreground reads/writes
+// during Corfu tailer catch-up. Instead it samples the tail name under a brief shared_lock,
 // call storage->size() with no lock held, then apply the result under a
 // brief unique_lock — but only if the tail hasn't rotated in the meantime.
 void MetadataLogHandler::rollForwardMetadataLogPeriodically(std::atomic<bool> const* active) {

@@ -15,7 +15,7 @@
 #   cassandra_ctl.sh compact [KS]   nodetool compact, then wait until no compaction is pending
 #   cassandra_ctl.sh cqlsh ...      cqlsh against this node
 #
-# space / compact are the phase 1 measurements of bench/PLAN-cost.md: `space`
+# space / compact are the on-disk footprint measurements: `space`
 # before `compact` is the transient peak, after it is the steady footprint
 # (sC, the Cassandra bytes on disk per logical byte).
 #
@@ -101,7 +101,7 @@ do_start() {
   # `nodetool drain` in do_stop leaves its JMX connection in TIME_WAIT on 7199
   # for up to 60 s, and the RMI registry of the next JVM cannot bind over it
   # ("Port already in use: 7199"). restore-load spends that minute copying;
-  # wipe does not, and its start died this way (PLAN-cost-2 Task 2). Wait.
+  # wipe does not, and its start died this way. Wait.
   local i
   for i in $(seq 1 90); do
     ss -tan 2>/dev/null | grep -q ":${JMX_PORT:-7199} " || break

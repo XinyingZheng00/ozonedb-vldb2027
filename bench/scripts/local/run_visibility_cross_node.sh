@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 #
-# Cross-node visibility experiment (bench/PLAN-visibility.md phase 2, now
-# multi-writer): N writers on clients[0], reader ALONE on clients[1], ack
+# Cross-node visibility experiment: N writers on clients[0], reader ALONE on clients[1], ack
 # notifications over TCP (reader listens on its LAN address; writers
 # connect, then block on the "go" line the reader sends once all N are in
 # -- the start barrier). The miss count is clock-free -- every first get

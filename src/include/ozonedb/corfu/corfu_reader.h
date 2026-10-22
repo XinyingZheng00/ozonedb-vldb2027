@@ -1,7 +1,7 @@
 #ifndef OZONEDB_CORFU_READER_H
 #define OZONEDB_CORFU_READER_H
 #ifdef OZONEDB_ENABLE_CORFU
-// The sequential tailer of PLAN-native-corfu.md §4.5. It reads the
+// The sequential tailer. It reads the
 // GLOBAL address space in order, [next_, tail_], in batches of
 // read_batch addresses, and classifies every address:
 //
@@ -12,7 +12,7 @@
 //   TRIMMED, or trimmed_error                -> Poll::kTrimmed
 //
 // That is correct only while every entry in the log belongs to this one
-// stream; the phase-1 probe verifies it on the loaded datasets. It needs
+// stream; corfu_native_probe verifies it on the loaded datasets. It needs
 // no address map and no Roaring bitmap.
 #include "corfu/corfu_codec.h"
 #include "corfu/corfu_rpc.h"

@@ -107,8 +107,7 @@ LOAD_CMD="python3 \$OZONEDB_HOME/bench/scripts/local/load_local_ycsb_multiproc.p
 [[ -n "$CONSISTENCY" ]] && LOAD_CMD="$LOAD_CMD --cassandra_consistency $CONSISTENCY"
 [[ -n "$RECORD_CNT" ]] && LOAD_CMD="$LOAD_CMD --record_cnt $RECORD_CNT"
 
-# Server sample around the load on the first server (bench/PLAN-cost.md
-# phase 1: server CPU and bytes on disk during the load). Same sampler and
+# Server sample around the load on the first server. Same sampler and
 # cell naming as run_multinode_ycsb.py; the files land in
 # bench/results/local/_server/ next to the per-writer insert files, where
 # extract_cost_coefficients.py joins them as the "load" workload. Best effort.

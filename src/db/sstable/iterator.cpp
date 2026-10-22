@@ -102,7 +102,7 @@ void BlockIter::seek(std::string const& target) {
     } else {
       // Key at "mid" is >= "target".  Therefore all blocks at or
       // after "mid" are uninteresting.
-      // if key at mid is equal to target, the linear search will find it, todo: change it.
+      // if key at mid is equal to target, the linear search will find it.
       right = mid - 1;
     }
   }

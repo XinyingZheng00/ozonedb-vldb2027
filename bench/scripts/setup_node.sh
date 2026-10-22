@@ -5,8 +5,8 @@
 #
 #   bash bench/scripts/setup.sh --role client
 #
-# This wrapper stays because older docs and muscle memory say `. setup_node.sh`.
-# Sourcing is no longer required -- setup.sh writes ~/.ozonedb.env and wires it
+# This wrapper stays for compatibility with `. setup_node.sh`.
+# Sourcing is not required -- setup.sh writes ~/.ozonedb.env and wires it
 # into ~/.profile and ~/.bashrc -- but sourcing still works and additionally
 # loads the environment into the current shell.
 

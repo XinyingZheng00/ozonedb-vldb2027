@@ -70,7 +70,7 @@ bool filterBlockReader::keyMayMatch(uint64_t block_offset, std::string const& ke
     // of the file, ~10 bits per key: 712 KB for a 570 MB SSTable, and
     // Table::get probes it for every candidate file of every get. A copy
     // here was an mmap + memcpy + munmap per probe, ~6 ms of client CPU
-    // per get at 100 GB (campaign cost2-20260828, perf on a client node).
+    // per get at 100 GB.
     std::string const& filter = block_->filters(index);
     return policy_->keyMayMatch(key, filter);
   }

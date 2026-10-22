@@ -195,20 +195,18 @@ bool CorfuDBStorage::applyEntry(long addr, unsigned char const* data, size_t len
     switch (entry.op()) {
       case ::CorfuEntry_Op_APPEND: {
         // The tailer is the ONLY writer of file_buffers_, for our own
-        // APPENDs as much as for peers'. Own entries used to be skipped
-        // here because the writer thread spliced its bytes itself, right
-        // after the client append returned. That put every file buffer in
-        // ARRIVAL order rather than address order, and the two differ
-        // whenever a peer's earlier entry reaches the tailer after our
-        // later one was spliced. Two things broke on that: the seal rule
-        // below was applied to own entries against a sealed_at_addr_ that
-        // could not yet contain a peer SEAL sequenced just before (the
-        // writer acked bytes every peer dropped), and the task-log election
-        // read "first claim in the file" as "my claim" in every claimant
-        // at once (duplicate compactions, diverging Views). Applying own
-        // entries here, in address order, makes file_buffers_ the same
-        // byte sequence in every process; submitBatch just waits for the
-        // tailer to pass its address and reads the outcome.
+        // APPENDs as much as for peers'. Splicing own bytes from the writer
+        // thread would put the file buffer in ARRIVAL order rather than
+        // address order, and the two differ whenever a peer's earlier entry
+        // reaches the tailer after our later one. The seal rule below would
+        // then be applied to own entries against a sealed_at_addr_ that
+        // cannot yet contain a peer SEAL sequenced just before (the writer
+        // would ack bytes every peer drops), and the task-log election
+        // would read "first claim in the file" as "my claim" in every
+        // claimant at once (duplicate compactions, diverging Views).
+        // Applying own entries here, in address order, makes file_buffers_
+        // the same byte sequence in every process; submitBatch just waits
+        // for the tailer to pass its address and reads the outcome.
         bool const own = entry.has_client_id() && entry.client_id() == client_id_;
         // An APPEND sequenced ABOVE this file's SEAL arrived after the
         // seal closed the file. It belongs to no file. Every process
@@ -431,7 +429,7 @@ bool CorfuDBStorage::seekPollView(long addr) {
   return client_->seek(addr);
 }
 
-// Constructor-time replay (PLAN-trimming.md §3.5).
+// Constructor-time replay.
 //
 // 1. Load the newest checkpoint C from the store, when there is one, and
 //    seek the poll view to C + 1. Without a store, or without a
@@ -872,7 +870,7 @@ void CorfuDBStorage::finishBatchLocked(std::string const& fileName,
   }
 }
 
-// FAST PATH (PLAN-trimming.md §0, "fast path"). The slow path below waits
+// FAST PATH. The slow path below waits
 // for the tailer to pass the batch's address because that is the first
 // moment it knows whether a SEAL of fileName was sequenced BELOW the
 // address. The sequencer can answer that at token time: the token request

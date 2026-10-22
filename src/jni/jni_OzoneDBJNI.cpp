@@ -1,6 +1,5 @@
 #include "jni_OzoneDBJNI.h"
 #include "db.h"
-// These were previously pulled in transitively by the log4cxx headers.
 // getCurrentTimestamp() below needs all four, so include them directly.
 #include <chrono>
 #include <ctime>
@@ -59,7 +58,7 @@ namespace {
 // An exception that escapes a JNI entry point does not unwind into Java —
 // it terminates the whole JVM, with no Java stack trace and no way for the
 // caller to react. Metadata's constructor throws on a bad config value, so
-// a single typo in shared_config.json used to abort the entire YCSB
+// a single typo in shared_config.json would abort the entire YCSB
 // process. Every entry point below converts instead.
 void throwJavaRuntime(JNIEnv* env, char const* what) {
   if (env->ExceptionCheck()) return;  // a pending Java exception wins

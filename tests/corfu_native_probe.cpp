@@ -1,4 +1,4 @@
-// Phase-1 probe of the native Corfu client (PLAN-native-corfu.md §5).
+// Probe of the native Corfu client.
 //
 // Usage:
 //   corfu_native_probe <host:port> <stream-name> [--from A] [--to B] [--batch N]
@@ -7,10 +7,10 @@
 // JSON, the epoch, the server's source version, the global tail, the
 // stream tail and the trim mark, then reads every address in
 // [max(trim mark, --from), min(tail, --to)] and prints a histogram by
-// DataType and by stream membership. The plan's phase-1 gate is
-// "0 foreign entries" on the loaded datasets: every DATA entry carries
-// this stream in its BACKPOINTER_MAP. It also reports the payload
-// codecs seen, so a dataset written with ZSTD is caught before phase 2.
+// DataType and by stream membership. The gate is "0 foreign
+// entries" on the loaded datasets: every DATA entry carries this stream
+// in its BACKPOINTER_MAP. It also reports the payload
+// codecs seen, so a dataset written with ZSTD is caught.
 #include "corfu/corfu_codec.h"
 #include "corfu/corfu_layout.h"
 #include "corfu/corfu_rpc.h"
@@ -158,6 +158,6 @@ int main(int argc, char** argv) {
   }
   bool const gate = foreign == 0 && corfu_payload == 0 && decode_errors == 0 && by_codec.size() <= 1 &&
                     (by_codec.empty() || by_codec.count("0") == 1);
-  std::cout << "[probe] phase-1 gate (0 foreign, codec NONE only): " << (gate ? "PASS" : "FAIL") << "\n";
+  std::cout << "[probe] gate (0 foreign, codec NONE only): " << (gate ? "PASS" : "FAIL") << "\n";
   return gate ? 0 : 3;
 }

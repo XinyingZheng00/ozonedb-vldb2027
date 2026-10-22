@@ -23,14 +23,13 @@
 namespace ozonedb {
 
 // A read-through tier for immutable SSTable objects on a local disk, in
-// front of the object store that holds them (bench/PLAN-disk-cache.md).
+// front of the object store that holds them.
 //
 // Entries are whole files: "<dir>/<name>" is a complete local copy,
 // "<dir>/<name>.part" is a write-through in progress, "<dir>/<name>.fillpart"
 // is a background fill in progress. The fill never touches the write-through's
 // stream or its .part file (and vice versa) so the two populators can never
-// interleave bytes or race a discard/rename into a truncated "complete" file
-// (found in review of PLAN-disk-cache T3). Only names with `prefix` are
+// interleave bytes or race a discard/rename into a truncated "complete" file. Only names with `prefix` are
 // cached; everything else passes straight through to the backing store
 // (checkpoint/LATEST is mutable and must never be cached).
 //
@@ -88,14 +87,11 @@ class DiskCacheStorage : public Storage {
     size_t chunk_bytes = 64u << 20;  // file mode only: ranged-read size of the fill worker
     bool drop_pages = true;          // POSIX_FADV_DONTNEED after each tier read
     size_t max_queue = 256;          // fill queue bound; the oldest is dropped
-    // Defaults flipped from kAlways/kFile on the evidence of campaign
-    // disk2-20260828 (bench/RESULTS-cost.md, "Disk-cache tier, round 2"): at a
-    // 512 MB budget chunk entries plus admission gave 11,308 ops/s against the
-    // file tier's 8,744 and 0.32 ms of client CPU per op against 1.22 ms, and
-    // the full 2 GB tier did not regress (48,276 against 46,741 ops/s).
-    Admission admission = Admission::kFrequency;  // kAlways: round-1 evict-to-fit
+    // Chunk entries with frequency admission beat whole-file entries with
+    // evict-to-fit at every budget below the dataset size.
+    Admission admission = Admission::kFrequency;  // kAlways: evict-to-fit
     uint64_t admit_window = 0;                    // sketch aging window in samples; 0 = 8 x the entries the budget holds
-    Mode mode = Mode::kChunk;                     // kFile: round-1 whole-SSTable entries with a fill worker
+    Mode mode = Mode::kChunk;                     // kFile: whole-SSTable entries with a fill worker
     size_t entry_bytes = 64u << 10;               // chunk mode: entry size, a power of two >= 4096
   };
 
@@ -156,8 +152,8 @@ class DiskCacheStorage : public Storage {
     std::list<std::string>::iterator lru;
   };
 
-  // How a candidate takes budget that is not free (bench/PLAN-disk-cache-2.md, Task 2).
-  //   kForce    evict until it fits: the round-1 behaviour. reconcile(), and every
+  // How a candidate takes budget that is not free.
+  //   kForce    evict until it fits. reconcile(), and every
   //             path under Admission::kAlways.
   //   kContest  only if the candidate's sketch frequency is strictly above the
   //             victim's: fills under Admission::kFrequency.
@@ -176,10 +172,10 @@ class DiskCacheStorage : public Storage {
   bool mayTakeLocked(std::string const& key, size_t bytes, std::string const& victim, AdmitMode how);
   // backing_->size() memoised per cacheable name (objects are immutable);
   // dropped by eraseLocked/invalidate. Used by the fill path only: the public
-  // size() keeps its round-1 behaviour for a file the builder is appending.
+  // size() reports the backing size for a file the builder is appending.
   size_t sizeOf(std::string const& name);
 
-  // Chunk mode (bench/PLAN-disk-cache-2.md, Task 3). One sparse local file per
+  // Chunk mode. One sparse local file per
   // SSTable under localPath(name); one state byte per chunk. A chunk is
   // charged chunkBytes() of budget while kPresent or kPending. kPending is a
   // reservation: the bytes are on their way to the file, so a reader must

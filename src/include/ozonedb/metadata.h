@@ -89,7 +89,7 @@ class Metadata {
   // input is one read; lower it to bound memory per in-flight compaction.
   uint64_t compaction_read_bytes = 67108864;
 
-  // Compaction-aware block cache (bench/PLAN-compaction-cache.md, part B).
+  // Compaction-aware block cache.
   // When a COMPACT is applied to this process's view, the outputs are
   // read once (compaction_read_bytes per ranged read) and published into
   // the block cache, so the peers of the compactor do not fetch them one
@@ -107,17 +107,15 @@ class Metadata {
   // not warm it, and a pure load warms nothing.
   uint64_t cache_warm_min_input_blocks = 1;
 
-  // Disk-backed read-through tier for SSTables (bench/PLAN-disk-cache.md).
+  // Disk-backed read-through tier for SSTables.
   // Empty dir = off. The dir gets a trailing '/'. Requires sstable_backend.
   std::string disk_cache_dir;
   uint64_t disk_cache_bytes = 0;
   uint64_t disk_cache_chunk_bytes = 67108864;
   bool disk_cache_drop_pages = true;
   uint64_t disk_cache_fill_queue = 256;
-  // Round 2 (bench/PLAN-disk-cache-2.md): "file" keeps whole SSTables, "chunk"
-  // keeps disk_cache_entry_bytes pieces of them; "frequency" is TinyLFU
-  // admission, "always" the round-1 evict-to-fit. The defaults are the round-2
-  // pair, measured in campaign disk2-20260828 (bench/RESULTS-cost.md).
+  // "file" keeps whole SSTables, "chunk" keeps disk_cache_entry_bytes pieces
+  // of them; "frequency" is TinyLFU admission, "always" is evict-to-fit.
   std::string disk_cache_mode = "chunk";
   uint64_t disk_cache_entry_bytes = 65536;
   std::string disk_cache_admission = "frequency";
@@ -145,7 +143,7 @@ class Metadata {
   // sequenced in the log before it acks; see CorfuDBStorage::sync_mode_).
   bool linearizable_reads = false;
 
-  // Log trimming (PLAN-trimming.md). When log_trim_enabled is true THIS
+  // Log trimming. When log_trim_enabled is true THIS
   // process runs a LogTrimmer: every log_trim_interval_ms it writes a
   // checkpoint of the live log state to sstable_storage under
   // <sstable_dir>/<checkpoint_dir>/ and trims the Corfu stream behind the
@@ -164,7 +162,7 @@ class Metadata {
    *
    */
   // int64_t max_memory_size;
-  int compaction_input_file_number = 2;  // todo: number of files to be compacted
+  int compaction_input_file_number = 2;  // number of files to be compacted
 
   /**
    * @brief Construct a new Metadata object

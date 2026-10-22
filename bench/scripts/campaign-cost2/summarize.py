@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Per-cell summary of one or more result tags (PLAN-cost-2 checkpoints).
+"""Per-cell summary of one or more result tags.
   summarize.py TAGDIR [TAGDIR ...]   -- runs the extractor, prints one line per cell
 """
 import csv

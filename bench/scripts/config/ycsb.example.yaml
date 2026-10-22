@@ -61,9 +61,8 @@ local:
 #   lan   how OTHER NODES reach it -- internal 10.10.1.x
 # `corfu_server -a <addr>` binds the address it is handed, so it must be the LAN
 # one or no client can connect; the sweep script must SSH to the same box, which
-# from off-cluster needs the public one. Previously only one of the two was ever
-# recorded, and the corfu host was additionally hardcoded in both sweep wrappers
-# -- where it had already drifted to 10.10.1.2, the MinIO node.
+# from off-cluster needs the public one. Both addresses are recorded here once so the
+# sweep wrappers never hardcode the corfu host.
 #
 # `ssh:` may be omitted, in which case `lan:` is used for SSH too. That is the
 # old behaviour and works when you orchestrate from inside CloudLab. Add the
@@ -101,7 +100,7 @@ nodes:
 corfu:
   port: 9090
   stream_name: "ozonedb-ycsb"
-  # Log trimming (PLAN-trimming.md). Prefer --log-trim on
+  # Log trimming. Prefer --log-trim on
   # load_local_ycsb_multiproc.py / run_local_ycsb_multiproc.py /
   # run_multinode_ycsb.py over `enabled: true` here: the flag needs no sync
   # to every client. Only global writer 0 gets log_trim_enabled=true in its

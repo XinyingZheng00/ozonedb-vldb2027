@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # setup_disk_cache.sh -- format one unused local SSD as the OzoneDB disk-cache
-# tier and mount it (bench/PLAN-disk-cache.md).
+# tier and mount it.
 #
 # Idempotent: a device that already carries the label is only mounted; a
 # mount that is already up is left alone. The script formats WHOLE DISKS

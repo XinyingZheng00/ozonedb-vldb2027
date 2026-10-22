@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Per-cell cost coefficients from a results directory (bench/PLAN-cost.md P0.6).
+"""Per-cell cost coefficients from a results directory.
 
 One TSV row per cell (label, workload, writers, trial), built from:
 
@@ -66,11 +66,11 @@ CACHE_RE = re.compile(
     # Bytes held at close. cache_fill = current_size / capacity tells a cell
     # whose per-writer cache never filled (a 5 GiB cache fills at the writer's
     # own miss rate, ~1.9 MB/s at 10 GB, so a 600 s cell closes 25 % full and
-    # its h is the hit rate of a much smaller cache; PLAN-cost-2 Task 5).
+    # its h is the hit rate of a much smaller cache).
     r"(?: current_size=(\d+) files=(\d+))?"
 )
-# Second stats line (bench/PLAN-compaction-cache.md part C): hits and misses
-# per SSTable level as "<level>:<count>" pairs, blocks of files no longer in
+# Second stats line: hits and misses
+# per SSTable level as "<level>:<count>" pairs, blocks of files not in
 # the View, retired Table objects, and the warm-worker counters.
 LEVELS_RE = re.compile(
     r"\[lru_cache\] levels hits=(?P<hits>[\d:,]+) misses=(?P<misses>[\d:,]+)"
@@ -82,7 +82,7 @@ LEVELS_RE = re.compile(
     r" skipped_affinity=(?P<skipped_affinity>\d+) skipped_gone=(?P<skipped_gone>\d+)"
     r" skipped_built=(?P<skipped_built>\d+) dropped=(?P<dropped>\d+) warm_hits=(?P<warm_hits>\d+)"
 )
-# Disk-cache tier stats line (bench/PLAN-disk-cache.md), printed after the
+# Disk-cache tier stats line, printed after the
 # [lru_cache] lines when disk_cache_dir is set. All twenty fields are parsed;
 # only a subset become TSV columns (build_row).
 DISK_RE = re.compile(
@@ -94,7 +94,7 @@ DISK_RE = re.compile(
     r" writethrough_files=(?P<writethrough_files>\d+) evictions=(?P<evictions>\d+)"
     r" evicted_bytes=(?P<evicted_bytes>\d+) invalidated=(?P<invalidated>\d+) files=(?P<files>\d+)"
     r" bytes=(?P<bytes>\d+) capacity=(?P<capacity>\d+)"
-    # Round-2 tail (bench/PLAN-disk-cache-2.md). Optional, so the round-1
+    # Chunk-mode tail. Optional, so the file-mode
     # result files still parse; the groups then come back None and read as
     # 0 / "file" below.
     r"(?: fetch_bytes=(?P<fetch_bytes>\d+) admit_rejected=(?P<admit_rejected>\d+)"
@@ -579,14 +579,14 @@ def build_row(key, writers, samples, shared, record_bytes, window=60, tag=""):
             "disk_ratio": round(disks[0]["capacity"] / (rc * record_bytes), 7) if rc else "",
             "disk_fetch_bytes": disk_sums["fetch_bytes"],
             # bytes pulled from the backing per byte the workload asked for:
-            # ~100 for the round-1 partial tier, the chunk-to-block ratio in chunk mode
+            # ~100 for the file-mode tier, the chunk-to-block ratio in chunk mode
             "disk_amp": round(disk_sums["fetch_bytes"] / disk_sums["miss_bytes"], 2) if disk_sums["miss_bytes"] else "",
             "disk_admit_rejected": disk_sums["admit_rejected"],
             "disk_entries": disk_sums["entries"],
             "disk_mode": disks[0]["mode"],
             "disk_entry_bytes": disks[0]["entry_bytes"],
             "disk_punch_failed": disk_sums["punch_failed"],
-            "disk_evicted_bytes": disk_sums["evicted_bytes"],  # parsed in round 1, never a column
+            "disk_evicted_bytes": disk_sums["evicted_bytes"],  # parsed but never a column
             "h_total": h_total,
         })
     # Server samples: request deltas, bytes, du, bucket, CPU.

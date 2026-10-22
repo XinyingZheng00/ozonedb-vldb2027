@@ -77,8 +77,8 @@ DB::DB(std::string const& shared_config_path) {
                                         *this->metadata, /*for_sstables=*/true,
                                         /*checkpoint_store=*/nullptr);
   }
-  // Disk-backed read-through tier in front of the SSTable object store
-  // (bench/PLAN-disk-cache.md). Metadata's constructor already rejects
+  // Disk-backed read-through tier in front of the SSTable object store.
+  // Metadata's constructor already rejects
   // disk_cache_dir without sstable_backend, so sstable_storage above is
   // guaranteed non-null here whenever this fires.
   if (!this->metadata->disk_cache_dir.empty()) {
@@ -115,10 +115,9 @@ DB::DB(std::string const& shared_config_path) {
   }
   this->metadata_log->setMetadata(this->metadata);
   {
-    // Compaction-aware block cache (bench/PLAN-compaction-cache.md, part
-    // B). Policy and the liveness check are set before any thread runs;
-    // the worker itself starts in openDB once a view exists and stops in
-    // closeDB before the counters print.
+    // Compaction-aware block cache. Policy and the liveness check are set
+    // before any thread runs; the worker itself starts in openDB once a view
+    // exists and stops in closeDB before the counters print.
     LRUCache::WarmPolicy policy;
     policy.enabled = this->metadata->cache_warm_enabled;
     policy.max_level = this->metadata->cache_warm_max_level;

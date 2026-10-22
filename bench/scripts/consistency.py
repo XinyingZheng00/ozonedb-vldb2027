@@ -371,8 +371,8 @@ def cmd_probe_staleness(cfg, args):
 
 
 def cmd_check_visibility(cfg, args):
-    """Two benchmarks from one run over YCSB-keyspace inserts (PBS-style,
-    see bench/PLAN-visibility.md). A writer inserts brand-new keys and acks
+    """Two benchmarks from one run over YCSB-keyspace inserts (PBS-style).
+    A writer inserts brand-new keys and acks
     each into a notify file; a reader polls every acked key until it
     appears. B2 (miss rate): did the reader's FIRST get -- which starts
     after the ack by construction, no clocks involved -- find the key?
@@ -423,7 +423,7 @@ def cmd_check_visibility(cfg, args):
     procs = writer_procs + [reader_proc]
     try:
         _wait_ready_then_go(out, ready_ws + [ready_r], procs)
-        # Writers no longer touch the done file themselves: with n of
+        # Writers do not touch the done file themselves: with n of
         # them, "done" means ALL writers have exited, which only the
         # orchestrator can observe. The reader then drains every notify
         # file to EOF before finishing.

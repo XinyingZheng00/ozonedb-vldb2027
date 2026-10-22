@@ -39,7 +39,7 @@ VCPKG_REPO="https://github.com/microsoft/vcpkg.git"
 VCPKG_DIR="${VCPKG_ROOT:-$REPO_ROOT/vcpkg}"
 CORFU_REPO="https://github.com/CorfuDB/CorfuDB.git"
 CORFU_CLONE_DIR="${CLONE_DIR:-$HOME/CorfuDB}"
-# The CorfuDB commit the paper ran against (0.9.1.0-SNAPSHOT, 2026-05-28).
+# The CorfuDB commit the paper ran against (0.9.1.0-SNAPSHOT).
 # The native client speaks this server's wire protocol; a newer server may
 # differ.
 CORFU_COMMIT="8f144d4c92535dfe5fad8e1a5c9ddaba5b7ad8d5"
@@ -480,8 +480,7 @@ role_minio() {
   log "=== role: minio ==="
 
   # The corfu base config defaults sstable_backend to s3, so the default
-  # benchmark path needs an object store. This was previously documented only
-  # as a comment in ycsb.yaml.
+  # benchmark path needs an object store.
   local bucket="$MINIO_BUCKET"
   if [[ -z "$bucket" ]]; then
     bucket="$(python3 - "$REPO_ROOT/bench/scripts/config/ycsb.yaml" <<'PY' 2>/dev/null || true
@@ -532,7 +531,7 @@ Environment=MINIO_ROOT_USER=$MINIO_USER
 Environment=MINIO_ROOT_PASSWORD=$MINIO_PASSWORD
 # /minio/v2/metrics/{cluster,bucket} without a bearer token, so
 # bench/scripts/server_sampler.sh can read the S3 request counters that the
-# cost model (bench/PLAN-cost.md) is built on. Bench LAN only.
+# cost model is built on. Bench LAN only.
 Environment=MINIO_PROMETHEUS_AUTH_TYPE=public
 ExecStart=/usr/local/bin/minio server $MINIO_DATA_DIR --address :$MINIO_PORT --console-address :$MINIO_CONSOLE_PORT
 Restart=always

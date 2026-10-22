@@ -1,18 +1,16 @@
 #!/bin/bash
-# PLAN-cost-2 Task 8: the extractions, the two model runs, the overlay.
+# The extractions, the two model runs, the overlay.
 #
-# Corpus layout after the 2026-08-29 rerun (the second cluster, the
-# filter-copy fix 3b28a2cd on every OzoneDB cell):
+# Corpus layout:
 #   results-$TAG.tsv          main corpus, one build: OzoneDB 10 GB (-10g-fix, -10g-fix-tier)
 #                             and 100 GB (-100g, -100g-tier), Cassandra 10 GB and 100 GB.
-#                             The load rows come from the results root (10 GB: first-cluster load
-#                             of 2026-08-28; 100 GB: second-cluster load of 2026-08-29).
+#                             The load rows come from the results root.
 #   results-$TAG-controls.tsv scaling + JNI on the fixed build, the Cassandra control
 #                             cells on the new box (-cass-10g-rerun), the probe-counter
 #                             diagnostic cells (-100g-diag: a, ai, c) and the insert
 #                             pair on Cassandra (-cass-ins at 10 GB, -cass-100g-new at
 #                             100 GB). None of these feed the model.
-#   results-$TAG-prefix.tsv   the 2026-08-28 first-cluster cells on the build BEFORE the fix
+#   results-$TAG-prefix.tsv   the cells on the build BEFORE the filter-copy fix
 #                             (-10g, -10g-tier, -scale, -jni): the "before" control.
 #   results-$TAG-zipf.tsv     key-space zipfian: -10g-zipf (old build; h is unaffected),
 #                             -100g-zipf, -cass-zipf, plus -cass-10g and -10g-fix so the
