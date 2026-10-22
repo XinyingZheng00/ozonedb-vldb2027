@@ -1,6 +1,10 @@
 #include "db.h"
+#include "protobuf_serializer.h"
+#include "storage.h"
 #include "test_env.h"
+#include <algorithm>
 #include <filesystem>
+#include <thread>
 #include "gtest/gtest.h"
 #include <chrono>
 using namespace ozonedb;
@@ -225,5 +229,76 @@ TEST_F(DBTest, reopen_read_latency) {
     EXPECT_EQ("value" + std::to_string(i), *value);
   }
 
+  DB::closeDB(db);
+}
+
+namespace {
+// Statuses of every TaskRecord in <db_dir>/task.log, in append order.
+std::vector<TaskRecord::TaskStatus> taskLogStatuses(std::string const& db_dir) {
+  std::vector<TaskRecord::TaskStatus> out;
+  FileStorage storage(db_dir);
+  if (!storage.exist("task.log")) return out;
+  unsigned char* buffer = nullptr;
+  size_t size = 0;
+  if (storage.read("task.log", buffer, size) != Status::kSuccess || buffer == nullptr) return out;
+  std::vector<google::protobuf::Message*> records;
+  protobuf::deserializeMessages(buffer, size, records, []() -> google::protobuf::Message* { return new TaskRecord(); });
+  delete[] buffer;
+  for (auto* m : records) {
+    out.push_back(static_cast<TaskRecord*>(m)->status());
+    delete m;
+  }
+  return out;
+}
+
+int countStatus(std::vector<TaskRecord::TaskStatus> const& v, TaskRecord::TaskStatus s) {
+  return static_cast<int>(std::count(v.begin(), v.end(), s));
+}
+}  // namespace
+
+// Fault injection: with compaction_abort_rate = 1 every claimed task is
+// abandoned, so the task log holds claims (at rising generations, as the
+// abandoned ones are reclaimed) but never a TASK_COMPLETE, and every key
+// stays readable from the log files. Reopened with the knob off and a
+// short threshold, the stale claims lapse and compaction finishes.
+TEST_F(DBTest, abort_rate_one_leaves_claims_unfinished_and_data_readable) {
+  std::string const name = "db_abort";
+  std::filesystem::remove_all(testenv::path(name + "/"));
+  std::string const abort_cfg = testenv::dbConfigWith(name, {{"compaction_abort_rate", "1.0"},
+                                                             {"task_heartbeat_threshold_ticks", "5"}});
+  DB* db = nullptr;
+  ASSERT_EQ(Status::kSuccess, DB::openDB(db, abort_cfg));
+  std::string const value(100, 'v');
+  for (int i = 0; i < 300; i++) {
+    ASSERT_EQ(Status::kSuccess, db->put("key" + std::to_string(i), value));
+  }
+  // Let the watcher claim, abort, and reclaim for a while.
+  std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+  for (int i = 0; i < 300; i++) {
+    std::string const* v = nullptr;
+    std::shared_ptr<Record> guard;
+    ASSERT_EQ(Status::kSuccess, db->get("key" + std::to_string(i), v, guard)) << "key" << i;
+    EXPECT_EQ(value, *v);
+  }
+  DB::closeDB(db);
+
+  auto statuses = taskLogStatuses(testenv::path(name + "/"));
+  EXPECT_GT(countStatus(statuses, TaskRecord::TASK_BEGIN), 0) << "no compaction was ever claimed";
+  EXPECT_EQ(0, countStatus(statuses, TaskRecord::TASK_COMPLETE)) << "an aborted task must not complete";
+
+  // Knob off: the abandoned claims lapse and the backlog drains.
+  std::string const normal_cfg = testenv::dbConfigWith(name, {{"task_heartbeat_threshold_ticks", "5"}});
+  ASSERT_EQ(Status::kSuccess, DB::openDB(db, normal_cfg));
+  bool completed = false;
+  for (int i = 0; i < 100 && !completed; i++) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    completed = countStatus(taskLogStatuses(testenv::path(name + "/")), TaskRecord::TASK_COMPLETE) > 0;
+  }
+  EXPECT_TRUE(completed) << "no task completed within 10 s of reopening with the knob off";
+  for (int i = 0; i < 300; i++) {
+    std::string const* v = nullptr;
+    std::shared_ptr<Record> guard;
+    ASSERT_EQ(Status::kSuccess, db->get("key" + std::to_string(i), v, guard)) << "key" << i;
+  }
   DB::closeDB(db);
 }

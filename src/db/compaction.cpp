@@ -74,9 +74,16 @@ Status CompactionWatcher::watchForCompaction(std::atomic<bool> const* active) {
 
 Status CompactionWatcher::taskHeartbeat(Compaction* compaction, TaskRecord* task_record) {
   task_record->set_status(TaskRecord::TASK_IN_PROGRESS);
-  while (!(compaction->finished)) {
+  while (!(compaction->finished) && !compaction->aborted.load()) {
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
     this->task_log_handler->appendToTaskLog(*task_record);
+  }
+  // An abandoned task gets no TASK_COMPLETE: the claim must lapse so the
+  // task is reclaimed (section 4.4). Before the flag existed the abandon
+  // paths in doCompactionWork left `finished` false and this loop ran
+  // forever, which kept the claim alive and hung the watcher.
+  if (compaction->aborted.load()) {
+    return Status::kSuccess;
   }
   task_record->set_status(TaskRecord::TASK_COMPLETE);
   this->task_log_handler->appendToTaskLog(*task_record);
@@ -285,6 +292,19 @@ Status CompactionWatcher::doCompactionWork(Compaction* compaction) {
   bool log_level_compaction = false;
   std::string log_string = "Compacting ";
   std::unordered_map<std::string, std::shared_ptr<Record>> key_record;
+  // Fault injection (compaction_abort_rate): give the task up before any
+  // work, as if this writer had died with the claim held. Multi-process
+  // mode only: in Singleton mode a failed task stops the watcher thread,
+  // and there is no task log for a peer to take the task from.
+  if (this->metadata->compaction_abort_rate > 0.0 && this->mode != Mode::Singleton) {
+    std::uniform_real_distribution<double> draw(0.0, 1.0);
+    if (draw(abort_rng_) < this->metadata->compaction_abort_rate) {
+      compaction->aborted.store(true);
+      std::vector<std::string> inputs(compaction->task_id->input_files().begin(), compaction->task_id->input_files().end());
+      std::cout << getpid() << ":COMPACT_ABORT " << formatTaskId(inputs, compaction->task_id->destinationlevel(), !compaction->task_id->compactintonextlevel()) << std::endl;
+      return Status::kFailure;
+    }
+  }
   if (compaction->task_id->input_files(0).find(this->metadata->log_prefix) != std::string::npos) {
     log_level_compaction = true;
     if (this->event_listener != nullptr) {
@@ -376,6 +396,7 @@ Status CompactionWatcher::doCompactionWork(Compaction* compaction) {
         std::cerr << "[compaction] input " << input << " unreadable (status="
                   << static_cast<int>(read_status) << "), abandoning task; inputs kept\n";
         compaction->finished = false;
+        compaction->aborted.store(true);
         return Status::kFailure;
       }
       if (records_tmp.empty()) {
@@ -471,6 +492,7 @@ Status CompactionWatcher::doCompactionWork(Compaction* compaction) {
     // the output name carries a fresh timestamp.
     std::cerr << "[compaction] output write failed, abandoning task; inputs kept\n";
     compaction->finished = false;
+    compaction->aborted.store(true);
     return Status::kFailure;
   }
 

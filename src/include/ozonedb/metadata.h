@@ -168,6 +168,14 @@ class Metadata {
   // set this above corfu_hole_fill_timeout_ms / 100.
   int task_heartbeat_threshold_ticks = 30;
 
+  // Fault injection for the churn experiment (paper section 6, Table 4):
+  // with this probability a claimed compaction is abandoned at the start
+  // of its work, as if the writer had died there. The claim is left
+  // without a TASK_COMPLETE, so after task_heartbeat_threshold_ticks the
+  // peers (or this writer) reclaim it at the next owner_generation. 0 is
+  // off. Not a tuning knob: every abort is wasted work.
+  double compaction_abort_rate = 0.0;
+
   /**
    * @brief Local Metadata, read from local config file
    *
@@ -281,6 +289,12 @@ class Metadata {
       task_heartbeat_threshold_ticks = std::stoi(it->second);
       if (task_heartbeat_threshold_ticks < 1) {
         throw std::runtime_error("config error: task_heartbeat_threshold_ticks must be >= 1");
+      }
+    }
+    if (auto it = result.find("compaction_abort_rate"); it != result.end()) {
+      compaction_abort_rate = std::stod(it->second);
+      if (compaction_abort_rate < 0.0 || compaction_abort_rate > 1.0) {
+        throw std::runtime_error("config error: compaction_abort_rate must be in [0, 1]");
       }
     }
 
