@@ -152,7 +152,18 @@ Status CompactionWatcher::pickCompaction(Compaction*& compaction, TaskRecord*& t
   while (files.size() > metadata->last_file_number_limit) {
     compaction = new Compaction();
     compaction->task_id = new TaskRecord::TaskIdentifier();
-    initInputUnitInlastLayer(compaction, files, this->metadata->compaction_input_file_number);
+    Status init_status = initInputUnitInlastLayer(compaction, files, this->metadata->compaction_input_file_number);
+    // initInputUnitInlastLayer returns kFailure when the level holds no run
+    // of `compaction_input_file_number` same-version files. task_id then has
+    // no inputs, and shouldWorkOnTask followed by doCompactionWork would
+    // index input_files(0). Leave the level alone until the next view update
+    // changes it. task_record is still null here, so task_id is ours to free.
+    if (init_status != Status::kSuccess || compaction->task_id->input_files_size() < 2) {
+      delete compaction->task_id;
+      delete compaction;
+      compaction = nullptr;
+      break;
+    }
     compaction->task_id->set_compactintonextlevel(false);
     compaction->task_id->set_destinationlevel(this->metadata->max_level);
     compaction->compaction_version = 0;
