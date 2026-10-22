@@ -96,7 +96,12 @@ The Corfu smoke binaries exercise the full multi-writer path:
 ```bash
 ./corfu_smoke <shared-config.json> [num_keys]
 ./corfu_multiwriter_smoke <shared-config.json> [keys_per_writer]
+./corfu_multiwriter_smoke <shared-config.json> 2000 --kill-one   # dead-writer takeover demo
 ```
+
+`--kill-one` kills one of the two writers half-way through its range; the other stays open past
+`task_heartbeat_threshold_ticks`, reclaims the dead writer's compaction claim and finishes it, and
+the parent checks every acked key. It fails unless at least one takeover happened.
 
 ## 4. Use the C++ API
 
@@ -133,6 +138,9 @@ the full set. The ones you will touch:
 | `db_path` | local scratch directory, unique per process |
 | `log_file_size_limit`, `level_size`, `level_file_size_limit`, `max_level` | LSM shape |
 | `lru_cache_bytes` | block cache per process |
+| `task_heartbeat_threshold_ticks` | 100 ms ticks without a heartbeat before a compaction claim is dead and taken over (default 30) |
+| `compaction_enabled` | `false` opens a process that never compacts |
+| `compaction_abort_rate` | fault injection: probability that a claimed compaction is abandoned (default 0) |
 | `linearizable_reads` | one fence per get, strict reads across writers |
 | `trust_background_tail` | serve log reads from the in-memory key index |
 | `disk_cache_dir`, `disk_cache_bytes` | local SSD tier in front of the object store |
@@ -157,6 +165,9 @@ bash bench/scripts/local/run_ycsb_with_corfu.sh --workloads "a c" --writers-list
 # fan out across cluster hosts
 bash bench/scripts/local/run_multinode_ycsb_with_corfu.sh --linearizable --trials 3
 ```
+
+The single-node comparison (Fig 2a, 9, 15, 19a and Table 4 of the paper) has its own drivers under
+`bench/scripts/local/singlenode/` and `bench/scripts/local/churn_experiment/`; see `CLAUDE.md`.
 
 Results land in `bench/results/local` (gitignored). Plot scripts are in `bench/scripts/plot/`.
 `bench/ansible/` pushes the tree to every host and runs `setup.sh` there. See

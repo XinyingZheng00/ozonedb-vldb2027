@@ -16,7 +16,8 @@ Fixed already: `SIGPIPE` on a Corfu restart (every non-JVM process died with
    after the token was granted maps to `kAbortOther`, which the seam defines
    as "consumed no address". The slow path then appends the same payload
    again. Data-log duplicates are benign. A duplicated last-level COMPACT
-   record reaches `level_layout.erase(it)` with `it == end()`.
+   record is parked in the replay buffer and never applied (one leaked
+   record per duplicate; it used to erase `end()`).
    `native_corfu_client.cpp` (`appendChecked`), `metadata_log_handler.cpp`.
 2. **The tailer loop has no backoff and no fail-stop on error.** A server
    outage becomes a reconnect spin at 100 % CPU, and a permanent decode
@@ -71,9 +72,9 @@ Fixed already: `SIGPIPE` on a Corfu restart (every non-JVM process died with
     `filter_block.cpp`.
 18. **Task-log locking.** `worthAppend` reads `task_map` without a lock
     while `updateHeartbeats` mutates it; `stop_thread` is a plain bool.
-    Heartbeats are appended every 100 ms and the takeover threshold is
-    10,000,000 heartbeats, so dead-task takeover never fires.
-    `task_log_handler.cpp`, `task_log_handler.h`.
+    `task_log_handler.cpp`, `task_log_handler.h`. (The takeover threshold
+    is `task_heartbeat_threshold_ticks` now, default 30; takeover fires
+    and is tested.)
 19. **A per-tick leak in the compaction watcher.** `Compaction` has no
     destructor, so `task_id` leaks on the fewer-than-two-inputs path.
     `compaction.cpp`.
@@ -85,6 +86,21 @@ Fixed already: `SIGPIPE` on a Corfu restart (every non-JVM process died with
     `OzoneDBClient.java`.
 22. **Fully pruned levels vanish from the `[lru_cache]` diagnostic line.**
     `cache.cpp` (`printCacheStats`).
+23. **`closeDB` waits for the view-update tick and any in-flight
+    compaction.** `stopViewUpdate` and `stopCompactionWatcher` join their
+    threads: up to 100 ms of `sleep_for`, plus however long the current
+    compaction takes. A one-shot process that opens, writes once and
+    closes pays that on every call. A condition-variable wait on `active`
+    would make the idle case immediate. `metadata_log_handler.cpp`,
+    `compaction.cpp`.
+24. **A false dead-task on a Corfu tailer stall.** A hole left by a dead
+    peer stalls every tailer for `corfu_hole_fill_timeout_ms` (item 7),
+    and with it the replay of live peers' heartbeats, so a threshold
+    below that timeout declares live tasks dead and a second writer runs
+    the same compaction at the next generation (its COMPACT record is
+    then parked, item 1). The Corfu configs set
+    `task_heartbeat_threshold_ticks` to 200 for this reason.
+    `task_log_handler.cpp`.
 
 ## Deliberate leftovers
 
