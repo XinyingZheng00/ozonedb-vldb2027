@@ -168,6 +168,11 @@ class Metadata {
   // set this above corfu_hole_fill_timeout_ms / 100.
   int task_heartbeat_threshold_ticks = 30;
 
+  // false starts no compaction watcher: the process only appends to the
+  // logs and reads. The churn experiment loads its dataset this way so
+  // every trial starts from the same compaction backlog.
+  bool compaction_enabled = true;
+
   // Fault injection for the churn experiment (paper section 6, Table 4):
   // with this probability a claimed compaction is abandoned at the start
   // of its work, as if the writer had died there. The claim is left
@@ -296,6 +301,9 @@ class Metadata {
       if (compaction_abort_rate < 0.0 || compaction_abort_rate > 1.0) {
         throw std::runtime_error("config error: compaction_abort_rate must be in [0, 1]");
       }
+    }
+    if (auto it = result.find("compaction_enabled"); it != result.end()) {
+      compaction_enabled = !(it->second == "false" || it->second == "0");
     }
 
     if (auto it = result.find("compaction_read_bytes"); it != result.end()) {

@@ -302,3 +302,32 @@ TEST_F(DBTest, abort_rate_one_leaves_claims_unfinished_and_data_readable) {
   }
   DB::closeDB(db);
 }
+
+// compaction_enabled = false opens a DB that never compacts: the log
+// files pile up and stay readable, and the task log stays empty.
+TEST_F(DBTest, compaction_disabled_leaves_the_log_files_alone) {
+  std::string const name = "db_nocompact";
+  std::filesystem::remove_all(testenv::path(name + "/"));
+  std::string const cfg = testenv::dbConfigWith(name, {{"compaction_enabled", "false"}});
+  DB* db = nullptr;
+  ASSERT_EQ(Status::kSuccess, DB::openDB(db, cfg));
+  std::string const value(100, 'v');
+  for (int i = 0; i < 300; i++) {
+    ASSERT_EQ(Status::kSuccess, db->put("key" + std::to_string(i), value));
+  }
+  std::this_thread::sleep_for(std::chrono::milliseconds(800));
+  for (int i = 0; i < 300; i++) {
+    std::string const* v = nullptr;
+    std::shared_ptr<Record> guard;
+    ASSERT_EQ(Status::kSuccess, db->get("key" + std::to_string(i), v, guard)) << "key" << i;
+  }
+  DB::closeDB(db);
+  EXPECT_TRUE(taskLogStatuses(testenv::path(name + "/")).empty());
+  int log_files = 0;
+  for (auto const& e : std::filesystem::directory_iterator(testenv::path(name + "/datalog/"))) {
+    (void)e;
+    ++log_files;
+  }
+  EXPECT_GT(log_files, 2) << "300 x 100 B puts at a 1 KiB log limit must leave many log files";
+}
+

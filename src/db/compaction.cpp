@@ -8,6 +8,7 @@ Status CompactionWatcher::startCompactionWatcher(std::atomic<bool> const* active
   return Status::kSuccess;
 }
 Status CompactionWatcher::stopCompactionWatcher() {
+  if (this->compaction_thread == nullptr) return Status::kSuccess;  // compaction_enabled = false
   this->compaction_thread->join();
   return Status::kSuccess;
 }

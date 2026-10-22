@@ -221,7 +221,9 @@ Status DB::openDB(DB*& db, std::string const& shared_config_path) {
   db->lru_cache->setLatestView(view_ptr);
   db->lru_cache->startWarmWorker();
   db->log_handler->warmKeyIndex();
-  db->watcher->startCompactionWatcher(&(db->active));
+  if (db->metadata->compaction_enabled) {
+    db->watcher->startCompactionWatcher(&(db->active));
+  }
   db->metadata_log->startViewUpdate(&(db->active));
 #ifdef OZONEDB_ENABLE_CORFU
   if (db->metadata->log_trim_enabled) {
