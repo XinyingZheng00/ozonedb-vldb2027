@@ -214,7 +214,11 @@ Status CompactionWatcher::pickCompaction(Compaction*& compaction, TaskRecord*& t
     }
     compaction->task_id->set_compactintonextlevel(false);
     compaction->task_id->set_destinationlevel(this->metadata->max_level);
-    compaction->compaction_version = 0;
+    // compaction_version is chosen_version + 1, set by
+    // initInputUnitInlastLayer: the output of merging two version-k files
+    // is a version-(k+1) file. An override to 0 here (since the initial
+    // commit) made every last-level output version 0, so the picker, which
+    // merges runs of equal version, never converged.
     bool is_first_writer = shouldWorkOnTask(compaction->task_id, task_record, 0);
     if (is_first_writer) {
       // std::cout << getpid() << " is the first writer for task " << compaction->task_id->ShortDebugString() << std::endl;
@@ -446,9 +450,16 @@ Status CompactionWatcher::doCompactionWork(Compaction* compaction) {
   // a missing SSTable and then deleting the inputs destroys data, so a
   // failed build must abandon the whole task and leave the inputs alone.
   bool output_failed = false;
+  // A last-level compaction always emits ONE output: it merges two
+  // version-k files into one version-(k+1) file, and the level converges
+  // to at most last_file_number_limit files. Splitting that output by
+  // size kept the file count constant (two in, two out) and the picker
+  // never converged. Every other level cuts its output at
+  // level_file_size_limit, so file sizes stay bounded down the tree.
+  bool const is_last_level = compaction->task_id->destinationlevel() == this->metadata->max_level;
   for (int i = 0; i < records.size(); i++) {
     if (compaction->outputBuilder == nullptr ||
-        (compaction->task_id->destinationlevel() == this->metadata->max_level && compaction->outputBuilder->fileSize() > this->metadata->level_file_size_limit[compaction->task_id->destinationlevel() - 1])) {
+        (!is_last_level && compaction->outputBuilder->fileSize() > this->metadata->level_file_size_limit[compaction->task_id->destinationlevel() - 1])) {
       if (compaction->outputBuilder != nullptr) {
         if (compaction->outputBuilder->finish() != Status::kSuccess) output_failed = true;
         key_range.second = records[i - 1]->key();

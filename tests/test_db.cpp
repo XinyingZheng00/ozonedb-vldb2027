@@ -331,3 +331,46 @@ TEST_F(DBTest, compaction_disabled_leaves_the_log_files_alone) {
   EXPECT_GT(log_files, 2) << "300 x 100 B puts at a 1 KiB log limit must leave many log files";
 }
 
+// Last-level compactions merge two same-version files into one file of
+// the next version (sstable3/1_<name>.sst from two 0_ files), and the
+// level converges to at most last_file_number_limit files. Every key stays
+// readable throughout.
+TEST_F(DBTest, last_level_compaction_emits_one_versioned_output) {
+  std::string const name = "db_lastlevel";
+  std::filesystem::remove_all(testenv::path(name + "/"));
+  std::string const cfg = testenv::dbConfigWith(name, {});
+  DB* db = nullptr;
+  ASSERT_EQ(Status::kSuccess, DB::openDB(db, cfg));
+  std::string const value(100, 'v');
+  for (int i = 0; i < 3000; i++) {
+    ASSERT_EQ(Status::kSuccess, db->put("key" + std::to_string(i), value));
+  }
+  // Wait for the tree to settle: no more than last_file_number_limit (4)
+  // files at the last level, and at least one of version >= 1.
+  std::string const last_level = testenv::path(name + "/sstable3/");
+  int highest_version = -1;
+  size_t files = 0;
+  for (int tick = 0; tick < 300; tick++) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    if (!std::filesystem::exists(last_level)) continue;
+    highest_version = -1;
+    files = 0;
+    for (auto const& e : std::filesystem::directory_iterator(last_level)) {
+      ++files;
+      std::string const fn = e.path().filename().string();
+      size_t us = fn.find('_');
+      if (us != std::string::npos) highest_version = std::max(highest_version, std::stoi(fn.substr(0, us)));
+    }
+    if (highest_version >= 1 && files <= 4) break;
+  }
+  EXPECT_GE(highest_version, 1) << "no second-round last-level merge within 30 s";
+  EXPECT_LE(files, 4u) << "last level did not converge to last_file_number_limit files";
+  for (int i = 0; i < 3000; i++) {
+    std::string const* v = nullptr;
+    std::shared_ptr<Record> guard;
+    ASSERT_EQ(Status::kSuccess, db->get("key" + std::to_string(i), v, guard)) << "key" << i;
+    EXPECT_EQ(value, *v);
+  }
+  DB::closeDB(db);
+}
+
