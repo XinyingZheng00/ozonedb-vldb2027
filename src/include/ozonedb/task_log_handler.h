@@ -2,6 +2,7 @@
 #define TASK_LOG_HANDLER_H
 #include "protobuf/record.pb.h"
 #include "storage.h"
+#include <chrono>
 #include <cstring>
 #include <thread>
 #include <unordered_map>
@@ -50,9 +51,14 @@ class TaskLogHandler {
   };
 
  private:
-  uint32_t offset;
+  // Bytes of task.log already replayed into task_map. Guarded by
+  // task_log_mutex; see readTaskLog for why the I/O itself is not.
+  size_t offset;
   std::string active_unit;
   Storage* storage = nullptr;
+  // When rollForwardTaskLog last ran; rollForwardTaskLogIfDue paces on it.
+  // Both are called from the compaction thread only.
+  std::chrono::steady_clock::time_point last_rollforward_{};
 
   std::unordered_map<TaskRecord::TaskIdentifier, TaskStatus, TaskIdentifierHash, TaskIdentifierEqual> task_map;
   std::shared_mutex task_map_mutex;
@@ -87,7 +93,18 @@ class TaskLogHandler {
     stopHeartbeatThread();
   };
 
+  // Replay every record appended since the last replay, then mark as dead
+  // every task whose tick count reached the threshold. Replaying a task's
+  // own heartbeats is what resets its count, so this is the only place
+  // dead tasks are discovered, and it has to run periodically, not only
+  // when this writer attempts a claim.
   void rollForwardTaskLog();
+  // rollForwardTaskLog, at most once per third of the threshold. The
+  // compaction thread calls it on every pick: a replay is cheap on a local
+  // file and two fenced calls on Corfu, and a live task's count is reset
+  // by each replay, so this interval keeps it under a third of the
+  // threshold plus the replay latency.
+  void rollForwardTaskLogIfDue();
 
   // Ticks without a heartbeat after which a task counts as dead. Call
   // before the first rollForwardTaskLog.

@@ -232,6 +232,7 @@ set(OZONEDB_TEST_SOURCES
     tests/test_cache.cpp
     tests/test_disk_cache_storage.cpp
     tests/test_frequency_sketch.cpp
+    tests/test_task_log.cpp
 )
 if (OZONEDB_ENABLE_S3)
     list(APPEND OZONEDB_TEST_SOURCES tests/test_s3_storage.cpp)

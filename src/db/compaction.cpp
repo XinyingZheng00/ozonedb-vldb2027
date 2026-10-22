@@ -34,16 +34,17 @@ bool CompactionWatcher::shouldWorkOnTask(TaskRecord::TaskIdentifier* task_id, Ta
 Status CompactionWatcher::watchForCompaction(std::atomic<bool> const* active) {
   while (*active) {
     // Task log works as follows:
-    //  1. Client comes and identifies a task to be done
-    //  2. Client writes to the task log
-    //  3. Client rolls forward the task log to check if it is the first writer of this task
-    //  4. If it is the first writer, work on the task
-    //  5. If it is not the first writer, check any dead task, also compete for the first writer to work on the tasks.
-    //  6. If there is no dead task, go back to step 1
+    //  1. Client replays the task log (at most every threshold/3 ticks)
+    //     and claims any task whose owner stopped heartbeating, at
+    //     owner_generation + 1 (pickCompaction step 0)
+    //  2. Otherwise it identifies a task to be done from its view
+    //  3. Client writes a TASK_BEGIN to the task log
+    //  4. Client rolls forward the task log to check if it is the first writer of this task
+    //  5. If it is the first writer, work on the task, heartbeating every 100 ms
+    //  6. If it is not the first writer, go back to step 2
 
-    // Dead Task logic:
-    // 1. the compaction tasks are finished in hundreds of milliseconds, and the heartbeat rate is 100ms, so the threshold is set to 10,
-    // which means that the TaskRecord is considered to be dead after 10 heartbeats are not received.
+    // Dead Task logic: a task with no heartbeat for
+    // task_heartbeat_threshold_ticks ticks (default 30, 3 s) is dead.
     bool has_worked_on_compaction;
     Compaction* compaction = nullptr;
     TaskRecord* task_record = nullptr;
@@ -84,6 +85,45 @@ Status CompactionWatcher::taskHeartbeat(Compaction* compaction, TaskRecord* task
 
 Status CompactionWatcher::pickCompaction(Compaction*& compaction, TaskRecord*& task_record, bool& has_worked_on_compaction) {
   this->metadata_handler->getLatestView(this->latest_view);
+
+  if (this->mode != Mode::Singleton) {
+    // Replay the task log on a timer, not only when a claim is attempted.
+    // Dead tasks are discovered inside rollForwardTaskLog (replaying a
+    // task's heartbeats resets its tick count; the threshold is checked
+    // after the replay), and until this call it ran only from
+    // shouldWorkOnTask. A writer that attempted no claims, because every
+    // task was claimed or its view held nothing to compact, never saw a
+    // peer's task die, so in the read-only phase of the churn experiment
+    // every abandoned task stayed abandoned.
+    this->task_log_handler->rollForwardTaskLogIfDue();
+
+    // Step 0: dead tasks before new work. This check used to be step 4,
+    // after the three pickers, and under a continuous write workload those
+    // always find something, so it never ran and reclaimed nothing. A dead
+    // task is a compaction some writer already scheduled, so it also holds
+    // the oldest inputs.
+    auto result = this->task_log_handler->getDeadTask();
+    auto dead_task = result.first;
+    int owner_generation = result.second;
+    while (dead_task.IsInitialized()) {
+      auto* dead_task_id = new TaskRecord::TaskIdentifier(dead_task);
+      std::vector<std::string> inputs(dead_task_id->input_files().begin(), dead_task_id->input_files().end());
+      std::cout << getpid() << ":Found dead task " << formatTaskId(inputs, dead_task_id->destinationlevel(), !dead_task_id->compactintonextlevel())
+                << " gen " << owner_generation << ", claiming gen " << owner_generation + 1 << std::endl;
+      bool is_first_writer = shouldWorkOnTask(dead_task_id, task_record, owner_generation + 1);
+      if (is_first_writer) {
+        compaction = new Compaction();
+        compaction->task_id = dead_task_id;
+        has_worked_on_compaction = true;
+        return Status::kSuccess;
+      }
+      delete task_record;
+      task_record = nullptr;
+      result = this->task_log_handler->getDeadTask();
+      dead_task = result.first;
+      owner_generation = result.second;
+    }
+  }
 
   // First step: check if there is any log level compaction
   // log level compaction
@@ -178,28 +218,6 @@ Status CompactionWatcher::pickCompaction(Compaction*& compaction, TaskRecord*& t
     compaction = nullptr;
     task_record = nullptr;
   };
-  // Fourth step: check if there is any dead task
-  auto result = this->task_log_handler->getDeadTask();
-  auto dead_task = result.first;
-  int owner_generation = result.second;
-  while (dead_task.IsInitialized()) {
-    auto* dead_task_id = new TaskRecord::TaskIdentifier(dead_task);
-    std::cout << getpid() << ":Found dead task " << dead_task_id->ShortDebugString() << std::endl;
-    bool is_first_writer = shouldWorkOnTask(dead_task_id, task_record, owner_generation + 1);
-    if (is_first_writer) {
-      // std::cout << getpid() << " is the first writer for dead task " << dead_task_id->ShortDebugString() << std::endl;
-      compaction = new Compaction();
-      compaction->task_id = dead_task_id;
-      has_worked_on_compaction = true;
-      return Status::kSuccess;
-    } else {
-      delete task_record;
-      task_record = nullptr;
-      result = this->task_log_handler->getDeadTask();
-      dead_task = result.first;
-      owner_generation = result.second;
-    }
-  }
   has_worked_on_compaction = false;
   return Status::kSuccess;
 }

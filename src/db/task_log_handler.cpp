@@ -1,6 +1,7 @@
 #include "task_log_handler.h"
 #include "helper.h"
 #include "protobuf_serializer.h"
+#include <algorithm>
 #include <chrono>
 #include <iostream>
 #include <unistd.h>
@@ -37,26 +38,40 @@ void TaskLogHandler::appendToTaskLog(TaskRecord const& record) {
   }
 }
 
+// Reads the records appended since the last read.
+//
+// The fenced exist() and size() calls (on Corfu a sequencer round trip
+// each, then a wait for the tailer) run WITHOUT task_log_mutex.
+// appendToTaskLog takes that mutex for every heartbeat, and a read that
+// held it across a tailer stall silenced this writer's own heartbeats
+// until its peers declared its task dead and took it over. The offset is
+// snapshotted under the mutex, the I/O runs lock-free, and the offset is
+// committed under the mutex only if nobody advanced it meanwhile; a loser
+// drops its records and the caller catches up on its next read. The
+// offset moves only after a successful parse, so a read that fails is
+// retried from the same place instead of skipping records.
 Status TaskLogHandler::readTaskLog(std::vector<TaskRecord*>& result) {
-  std::unique_lock<std::shared_mutex> lock(task_log_mutex);
+  size_t local_offset;
+  {
+    std::shared_lock<std::shared_mutex> lock(task_log_mutex);
+    local_offset = this->offset;
+  }
   if (!this->storage->exist(this->active_unit)) {
     return Status::kSuccess;
   }
   size_t file_size = this->storage->size(this->active_unit);
-  if (file_size == this->offset) {
+  if (file_size <= local_offset) {
     return Status::kSuccess;
   }
-  size_t size = file_size - this->offset;
-  std::vector<google::protobuf::Message*> records;
+  size_t size = file_size - local_offset;
   unsigned char* buffer = nullptr;
   Status read_status =
-      this->storage->read(this->active_unit, buffer, this->offset, size);
-  this->offset = file_size;
-  lock.unlock();
+      this->storage->read(this->active_unit, buffer, local_offset, size);
   if (read_status != Status::kSuccess || buffer == nullptr) {
     delete[] buffer;
     return Status::kFailure;
   }
+  std::vector<google::protobuf::Message*> records;
   if (protobuf::deserializeMessages(buffer, size, records, []() -> google::protobuf::Message* {
         return new TaskRecord();
       }) == Status::kFailure) {
@@ -65,7 +80,19 @@ Status TaskLogHandler::readTaskLog(std::vector<TaskRecord*>& result) {
   }
   delete[] buffer;
   buffer = nullptr;
-  result.reserve(records.size());
+  {
+    std::unique_lock<std::shared_mutex> lock(task_log_mutex);
+    if (this->offset != local_offset) {
+      // Another reader advanced the offset while we were doing I/O; its
+      // batch covers ours.
+      for (auto* record : records) {
+        delete record;
+      }
+      return Status::kSuccess;
+    }
+    this->offset = file_size;
+  }
+  result.reserve(result.size() + records.size());
   for (auto const& record : records) {
     result.push_back(static_cast<TaskRecord*>(record));
   }
@@ -123,18 +150,32 @@ void TaskLogHandler::rollForwardTaskLog() {
   std::unique_lock<std::shared_mutex> task_map_lock(task_map_mutex);
   for (auto it = task_map.begin(); it != task_map.end(); it++) {
     if (it->second.heartbeat >= task_heartbeat_threshold && it->second.status != TaskRecord::TASK_COMPLETE && it->second.status != TaskRecord::TASK_DEAD) {
-      // std::cout << getpid() << ":Task " << it->first.DebugString() << " is dead" << std::endl;
+      std::vector<std::string> inputs(it->first.input_files().begin(), it->first.input_files().end());
+      std::cout << getpid() << ":Task " << formatTaskId(inputs, it->first.destinationlevel(), !it->first.compactintonextlevel())
+                << " owned by " << it->second.owner << " gen " << it->second.owner_generation
+                << " is dead (hb=" << it->second.heartbeat << ")" << std::endl;
       std::unique_lock<std::shared_mutex> lock(dead_tasks_mutex);
       dead_tasks[it->first] = it->second.owner_generation;
       lock.unlock();
       it->second.status = TaskRecord::TASK_DEAD;
     }
   }
+  task_map_lock.unlock();
+  last_rollforward_ = std::chrono::steady_clock::now();
 
   // delete records
   for (auto* record : records) {
     delete record;
   }
+}
+
+void TaskLogHandler::rollForwardTaskLogIfDue() {
+  int interval_ticks = std::max(1, task_heartbeat_threshold / 3);
+  auto interval = std::chrono::milliseconds(100) * interval_ticks;
+  if (std::chrono::steady_clock::now() - last_rollforward_ < interval) {
+    return;
+  }
+  rollForwardTaskLog();
 }
 
 bool TaskLogHandler::isFirstWriterForTask(TaskRecord::TaskIdentifier* task_id, std::string const& client, int owner_generation) {
