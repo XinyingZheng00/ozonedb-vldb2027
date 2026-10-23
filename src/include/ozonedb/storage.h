@@ -258,6 +258,15 @@ class FileStorage : public Storage {
   std::mutex append_map_mtx_;
   std::unordered_map<std::string, std::unique_ptr<std::mutex>> append_mtx_;
   std::mutex& appendMutexFor(std::string const& name);
+  // Same for reads: getReadStream hands the SAME ifstream to every caller
+  // for a given name, and a read is a seek + read on it. The YCSB thread
+  // probing an SSTable's blocks and the compaction thread reading the
+  // same SSTable as an input interleaved their seeks, each got the
+  // other's bytes, and the parse failures ended in readFilterBlock
+  // indexing an empty vector. read_mtx above only guards the map.
+  std::mutex read_map_mtx_;
+  std::unordered_map<std::string, std::unique_ptr<std::mutex>> read_file_mtx_;
+  std::mutex& readMutexFor(std::string const& name);
 
  public:
   std::ifstream* getReadStream(std::string const& name);
