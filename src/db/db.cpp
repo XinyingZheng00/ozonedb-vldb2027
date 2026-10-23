@@ -1,4 +1,5 @@
 #include "db.h"
+#include "read_profile.h"
 #include "disk_cache_storage.h"
 #include "helper.h"
 #include "thread_pool.h"
@@ -153,7 +154,9 @@ DB::DB(std::string const& shared_config_path) {
   this->watcher = new CompactionWatcher(this->metadata, this->log_storage, this->log_handler, metadata_log, this->sstable_handler, fingerprint);
   this->watcher->setSSTableStorage(this->sstable_storage);
   this->watcher->setLRUCache(this->lru_cache);
-  this->watcher->setTaskLogHandler(new TaskLogHandler(this->metadata->task_log, this->log_storage));
+  auto* task_log_handler = new TaskLogHandler(this->metadata->task_log, this->log_storage);
+  task_log_handler->setHeartbeatThreshold(this->metadata->task_heartbeat_threshold_ticks);
+  this->watcher->setTaskLogHandler(task_log_handler);
   this->watcher->setMode(this->mode);
   this->file_mutex_manager = new FileMutexManager();
   this->lru_cache->setFileMutexManager(this->file_mutex_manager);
@@ -219,7 +222,9 @@ Status DB::openDB(DB*& db, std::string const& shared_config_path) {
   db->lru_cache->setLatestView(view_ptr);
   db->lru_cache->startWarmWorker();
   db->log_handler->warmKeyIndex();
-  db->watcher->startCompactionWatcher(&(db->active));
+  if (db->metadata->compaction_enabled) {
+    db->watcher->startCompactionWatcher(&(db->active));
+  }
   db->metadata_log->startViewUpdate(&(db->active));
 #ifdef OZONEDB_ENABLE_CORFU
   if (db->metadata->log_trim_enabled) {
@@ -255,6 +260,7 @@ Status DB::closeDB(DB*& db) {
   if (db->disk_cache != nullptr) db->disk_cache->stopFillWorker();
   db->lru_cache->printCacheStats();
   if (db->disk_cache != nullptr) db->disk_cache->printStats();
+  OZONEDB_PROFILE_DUMP();
   delete db;
   return Status::kSuccess;
 }
@@ -299,6 +305,7 @@ Status DB::get(std::string const& key, std::string const*& value,
   if (this->metadata->trust_background_tail) {
     std::shared_ptr<Record> fast_hit;
     if (this->log_handler->tryIndexLookup(key, fast_hit)) {
+      OZONEDB_PROFILE_COUNT(read_profile::index_hits);
       if (fast_hit->type() == kTypeDeletion) return Status::kFailure;
       value = &(fast_hit->value());
       guard = std::move(fast_hit);
@@ -338,6 +345,8 @@ Status DB::get(std::string const& key, std::string const*& value,
   // this thread already holds a token, the get linearizes at the
   // caller's fence point instead of taking its own — one sequencer
   // round-trip amortized over the caller's whole read batch.
+  OZONEDB_PROFILE_COUNT(read_profile::reads);
+  OZONEDB_PROFILE_SCOPE(profile_total, read_profile::total_ns);
   bool const strict = this->metadata->linearizable_reads;
   std::optional<Storage::SyncScope> fence;
   if (strict && !log_storage->hasSyncToken()) {
@@ -358,37 +367,49 @@ Status DB::get(std::string const& key, std::string const*& value,
   constexpr int kDefaultMaxAttempts = 5;
   for (int attempt = 0;; ++attempt) {
     size_t view_offset = 0;
-    if (strict) {
-      view_offset = metadata_log->syncView();
-    }
-    uint64_t const read_failures_before = lru_cache->readFailures();
+    View const* view_ptr = nullptr;
+    uint64_t read_failures_before = 0;
+    {
+      OZONEDB_PROFILE_SCOPE(profile_view, read_profile::view_ns);
+      if (strict) {
+        view_offset = metadata_log->syncView();
+      }
+      read_failures_before = lru_cache->readFailures();
 
-    // Atomic snapshot of the metadata-log view — no deep copy, no lock.
-    // Held locally so children's raw latest_view pointers stay valid
-    // until this frame returns. Refresh publishes happen only on log
-    // rollforward / tail-size refresh, not per get.
-    this->latest_view_snapshot = metadata_log->latestViewSnapshot();
-    View const* view_ptr = this->latest_view_snapshot.get();
-    if (view_ptr == nullptr) {
-      return Status::kFailure;
+      // Atomic snapshot of the metadata-log view — no deep copy, no lock.
+      // Held locally so children's raw latest_view pointers stay valid
+      // until this frame returns. Refresh publishes happen only on log
+      // rollforward / tail-size refresh, not per get.
+      this->latest_view_snapshot = metadata_log->latestViewSnapshot();
+      view_ptr = this->latest_view_snapshot.get();
+      if (view_ptr == nullptr) {
+        return Status::kFailure;
+      }
+      this->log_handler->setLatestView(view_ptr);
+      this->sstable_handler->setLatestView(view_ptr);
+      this->lru_cache->setLatestView(view_ptr);
     }
-    this->log_handler->setLatestView(view_ptr);
-    this->sstable_handler->setLatestView(view_ptr);
-    this->lru_cache->setLatestView(view_ptr);
 
     // The `offset` arguments below are always empty: they belonged to a
     // tail cache that no longer exists.
     std::shared_ptr<Record> log_record;
     std::string const empty_offset;
     std::string latest_offset;
-    log_handler->readRecord(key, log_record, empty_offset, latest_offset);
+    {
+      OZONEDB_PROFILE_SCOPE(profile_log, read_profile::log_ns);
+      log_handler->readRecord(key, log_record, empty_offset, latest_offset);
+    }
 
     std::shared_ptr<Record> latest_record;
     if (log_record) {
       latest_record = std::move(log_record);
     } else {
       std::shared_ptr<Record> sstable_record;
-      sstable_handler->readRecordFromAllLevel(key, sstable_record, empty_offset);
+      {
+        OZONEDB_PROFILE_COUNT(read_profile::sst_calls);
+        OZONEDB_PROFILE_SCOPE(profile_sst, read_profile::sst_ns);
+        sstable_handler->readRecordFromAllLevel(key, sstable_record, empty_offset);
+      }
       if (sstable_record) {
         latest_record = std::move(sstable_record);
       }

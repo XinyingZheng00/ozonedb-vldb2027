@@ -141,7 +141,9 @@ JNIEXPORT jbyteArray JNICALL Java_jni_OzoneDBJNI_get(JNIEnv* env, jobject obj, j
   env->ReleaseStringUTFChars(key, nativeKey);
 
   if (status != ozonedb::Status::kSuccess) {
-    std::cerr << "Failed to get value" << std::endl;
+    // A miss is a normal outcome (YCSB reads keys that were never
+    // inserted, and workload a updates keys a peer owns); the Java side
+    // turns null into NOT_FOUND. Printing here wrote one line per miss.
     return nullptr;
   }
   jbyteArray byteArray = env->NewByteArray(value->length());

@@ -96,6 +96,9 @@ class MetadataLogHandler {
   std::vector<OperationRecord*> readMetadataLog(size_t* observed_size = nullptr,
                                                 size_t* batch_start = nullptr);
   std::string rollforwardSingleOperationRecord(OperationRecord* record);
+  // Apply every buffered record for `layer` that can apply now; see the
+  // definition. Caller holds view_mutex as a unique_lock.
+  void drainBuffer(std::string const& layer);
   // Refresh latest_view.tail_size without holding view_mutex across
   // storage->size() — keeps the Corfu fence out of the critical section.
   void refreshTailSizeUnlocked();

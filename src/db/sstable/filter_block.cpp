@@ -95,7 +95,16 @@ Status readFilterBlock(Storage* storage,
   });
   delete[] block_data_contents;
   block_data_contents = nullptr;
+  // A failed or empty parse used to index block_data[0] regardless and
+  // crash the reader; report it instead, the caller treats the file as
+  // having no usable filter.
+  if (status != Status::kSuccess || block_data.empty()) {
+    for (auto* m : block_data) delete m;
+    result = nullptr;
+    return status == Status::kSuccess ? Status::kFailure : status;
+  }
   result = static_cast<FilterBlock*>(block_data[0]);
+  for (size_t i = 1; i < block_data.size(); ++i) delete block_data[i];
   return status;
 }
 

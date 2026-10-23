@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file. See the AUTHORS file for names of contributors.
 
+#include "read_profile.h"
 #include "sstable/table_reader.h"
 #include "cache.h"
 #include "protobuf/sstable.pb.h"
@@ -170,6 +171,7 @@ Status Table::get(std::string const& key, std::shared_ptr<Record>& record) {
   // check file filter first
   if (rep_->filter_block_for_file_reader != nullptr && !rep_->filter_block_for_file_reader->keyMayMatch(0, key)) {
     this->rep_->lru_cache->noteProbe(rep_->fileName, 1);
+    OZONEDB_PROFILE_COUNT(read_profile::tbl_file_filter_reject);
     return Status::kNotFound;
   }
   Status s;
@@ -180,6 +182,7 @@ Status Table::get(std::string const& key, std::shared_ptr<Record>& record) {
     bool s = identifier.ParseFromString(identifier_value);
     if (rep_->filter_block_reader != nullptr && !rep_->filter_block_reader->keyMayMatch(identifier.offset(), key)) {
       this->rep_->lru_cache->noteProbe(rep_->fileName, 1);
+      OZONEDB_PROFILE_COUNT(read_profile::tbl_block_filter_reject);
       return Status::kNotFound;
     }
     Status status;
@@ -187,21 +190,27 @@ Status Table::get(std::string const& key, std::shared_ptr<Record>& record) {
       bool read_more = true;
       this->rep_->lru_cache->needReadBlock(rep_->fileName, read_more, identifier_value);
       if (read_more) {
+        OZONEDB_PROFILE_COUNT(read_profile::tbl_block_read);
         this->rep_->lru_cache->readDataBlocks(rep_->fileName, identifier_value, this);
+      } else {
+        OZONEDB_PROFILE_COUNT(read_profile::tbl_block_cached);
       }
       this->rep_->lru_cache->get(rep_->fileName, key, record, identifier_value);
       if (record) {
+        OZONEDB_PROFILE_COUNT(read_profile::tbl_found);
         return Status::kSuccess;
       }
       // A block was consulted (cache hit or GET) and the key is not in
       // it: a filter false positive, or a file without a usable filter.
       this->rep_->lru_cache->noteProbe(rep_->fileName, 2);
+      OZONEDB_PROFILE_COUNT(read_profile::tbl_miss_after_read);
       return Status::kNotFound;
     }
   }
   // Key past the last index entry, or an unparseable identifier: no
   // block touched. Counted as pruned.
   this->rep_->lru_cache->noteProbe(rep_->fileName, 1);
+  OZONEDB_PROFILE_COUNT(read_profile::tbl_index_invalid);
   return Status::kNotFound;
 }
 

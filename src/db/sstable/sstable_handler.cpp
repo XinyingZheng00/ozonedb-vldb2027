@@ -1,4 +1,6 @@
 #include "sstable/sstable_handler.h"
+#include "read_profile.h"
+#include <algorithm>
 #include "sstable/table_builder.h"
 #include "sstable/table_reader.h"
 
@@ -15,6 +17,7 @@ Status SSTableHandler::readRecordFromAllLevel(std::string const& key, std::share
   }
 
   for (int i = 1; i <= max_level; i++) {
+    OZONEDB_PROFILE_SCOPE(profile_level, read_profile::level_ns[std::min(i, read_profile::kMaxLevels - 1)]);
     std::string prefix = this->sstable_prefix + std::to_string(i);
 
     // Reference into the view snapshot — avoids a per-level deque
@@ -31,7 +34,9 @@ Status SSTableHandler::readRecordFromAllLevel(std::string const& key, std::share
     int count = 0;
     for (int j = tables.size() - 1; j >= 0; j--) {
       std::string const& file_name = tables[j];
+      OZONEDB_PROFILE_COUNT(read_profile::level_enters[std::min(i, read_profile::kMaxLevels - 1)]);
       if (key < this->latest_view->getKeyRange(file_name).first || key > this->latest_view->getKeyRange(file_name).second) {
+        OZONEDB_PROFILE_COUNT(read_profile::level_range_rejects[std::min(i, read_profile::kMaxLevels - 1)]);
         continue;
       }
       Table* table = nullptr;
@@ -41,8 +46,10 @@ Status SSTableHandler::readRecordFromAllLevel(std::string const& key, std::share
       // failed. Skip the file rather than dereferencing null — another
       // level may still hold the key.
       if (table == nullptr) continue;
+      OZONEDB_PROFILE_COUNT(read_profile::level_table_gets[std::min(i, read_profile::kMaxLevels - 1)]);
       Status status = table->get(key, record);
       if (status == Status::kSuccess) {
+        OZONEDB_PROFILE_COUNT(read_profile::level_hits[std::min(i, read_profile::kMaxLevels - 1)]);
         return Status::kSuccess;
       }
       /*

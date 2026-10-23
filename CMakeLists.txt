@@ -45,6 +45,11 @@ option(OZONEDB_ENABLE_S3 "Build the S3/MinIO/R2 storage backend (requires aws-sd
 # part of the build that needs a JDK.
 option(OZONEDB_BUILD_JNI "Build libozonedb.so, the JNI shim the YCSB binding loads" ON)
 
+# Read-path profile counters (src/include/ozonedb/read_profile.h): where a
+# get spends its time, printed by DB::closeDB. Off by default; the probes
+# cost two clock reads and a few atomics per get.
+option(OZONEDB_PROFILE_READS "Compile the read-path profile counters into DB::get" OFF)
+
 # Find Packages
 #
 # No link_directories() here: vcpkg's imported targets already carry their
@@ -130,6 +135,7 @@ set(OZONEDB_SOURCES
     src/db/cache.cpp
     src/db/metadata_log_handler.cpp
     src/db/task_log_handler.cpp
+    src/db/read_profile.cpp
     src/db/checkpoint.cpp
     src/db/storage.cpp
     src/db/disk_cache_storage.cpp
@@ -184,6 +190,10 @@ target_link_libraries(OzoneDB
     pthread
 )
 
+if (OZONEDB_PROFILE_READS)
+    target_compile_definitions(OzoneDB PUBLIC OZONEDB_PROFILE_READS)
+endif()
+
 if (OZONEDB_ENABLE_S3)
     target_compile_definitions(OzoneDB PUBLIC OZONEDB_ENABLE_S3)
     target_link_libraries(OzoneDB ${AWSSDK_LINK_LIBRARIES})
@@ -232,6 +242,8 @@ set(OZONEDB_TEST_SOURCES
     tests/test_cache.cpp
     tests/test_disk_cache_storage.cpp
     tests/test_frequency_sketch.cpp
+    tests/test_task_log.cpp
+    tests/test_metadata_log.cpp
 )
 if (OZONEDB_ENABLE_S3)
     list(APPEND OZONEDB_TEST_SOURCES tests/test_s3_storage.cpp)

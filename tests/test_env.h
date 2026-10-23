@@ -7,6 +7,8 @@
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace ozonedb::testenv {
 
@@ -44,6 +46,31 @@ inline std::string const& dbConfig() {
     return file;
   }();
   return out;
+}
+
+// Like dbConfig(), but writes <name>.json with `extra` key/value lines
+// appended to the base config (values verbatim: numbers unquoted, strings
+// quoted by the caller) and db_path under root()/<name>/. For tests that
+// need a knob the base config does not set.
+inline std::string dbConfigWith(std::string const& name,
+                                std::vector<std::pair<std::string, std::string>> const& extra) {
+  std::ifstream in("../src/config/local/test_db.json");
+  std::stringstream ss;
+  ss << in.rdbuf();
+  std::string json = ss.str();
+  std::string const key = "\"db_path\": \"";
+  size_t a = json.find(key);
+  if (a == std::string::npos) throw std::runtime_error("test_db.json has no db_path (run the tests from build/)");
+  a += key.size();
+  size_t b = json.find('"', a);
+  json.replace(a, b - a, path(name + "/"));
+  size_t close = json.rfind('}');
+  std::string extra_lines;
+  for (auto const& [k, v] : extra) extra_lines += ",\n  \"" + k + "\": " + v;
+  json.insert(close, extra_lines + "\n");
+  std::string const file = path(name + ".json");
+  std::ofstream(file) << json;
+  return file;
 }
 
 }  // namespace ozonedb::testenv

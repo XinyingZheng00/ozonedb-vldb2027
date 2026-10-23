@@ -8,6 +8,7 @@ Status CompactionWatcher::startCompactionWatcher(std::atomic<bool> const* active
   return Status::kSuccess;
 }
 Status CompactionWatcher::stopCompactionWatcher() {
+  if (this->compaction_thread == nullptr) return Status::kSuccess;  // compaction_enabled = false
   this->compaction_thread->join();
   return Status::kSuccess;
 }
@@ -34,16 +35,17 @@ bool CompactionWatcher::shouldWorkOnTask(TaskRecord::TaskIdentifier* task_id, Ta
 Status CompactionWatcher::watchForCompaction(std::atomic<bool> const* active) {
   while (*active) {
     // Task log works as follows:
-    //  1. Client comes and identifies a task to be done
-    //  2. Client writes to the task log
-    //  3. Client rolls forward the task log to check if it is the first writer of this task
-    //  4. If it is the first writer, work on the task
-    //  5. If it is not the first writer, check any dead task, also compete for the first writer to work on the tasks.
-    //  6. If there is no dead task, go back to step 1
+    //  1. Client replays the task log (at most every threshold/3 ticks)
+    //     and claims any task whose owner stopped heartbeating, at
+    //     owner_generation + 1 (pickCompaction step 0)
+    //  2. Otherwise it identifies a task to be done from its view
+    //  3. Client writes a TASK_BEGIN to the task log
+    //  4. Client rolls forward the task log to check if it is the first writer of this task
+    //  5. If it is the first writer, work on the task, heartbeating every 100 ms
+    //  6. If it is not the first writer, go back to step 2
 
-    // Dead Task logic:
-    // 1. the compaction tasks are finished in hundreds of milliseconds, and the heartbeat rate is 100ms, so the threshold is set to 10,
-    // which means that the TaskRecord is considered to be dead after 10 heartbeats are not received.
+    // Dead Task logic: a task with no heartbeat for
+    // task_heartbeat_threshold_ticks ticks (default 30, 3 s) is dead.
     bool has_worked_on_compaction;
     Compaction* compaction = nullptr;
     TaskRecord* task_record = nullptr;
@@ -73,9 +75,16 @@ Status CompactionWatcher::watchForCompaction(std::atomic<bool> const* active) {
 
 Status CompactionWatcher::taskHeartbeat(Compaction* compaction, TaskRecord* task_record) {
   task_record->set_status(TaskRecord::TASK_IN_PROGRESS);
-  while (!(compaction->finished)) {
+  while (!(compaction->finished) && !compaction->aborted.load()) {
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
     this->task_log_handler->appendToTaskLog(*task_record);
+  }
+  // An abandoned task gets no TASK_COMPLETE: the claim must lapse so the
+  // task is reclaimed (section 4.4). Before the flag existed the abandon
+  // paths in doCompactionWork left `finished` false and this loop ran
+  // forever, which kept the claim alive and hung the watcher.
+  if (compaction->aborted.load()) {
+    return Status::kSuccess;
   }
   task_record->set_status(TaskRecord::TASK_COMPLETE);
   this->task_log_handler->appendToTaskLog(*task_record);
@@ -84,6 +93,45 @@ Status CompactionWatcher::taskHeartbeat(Compaction* compaction, TaskRecord* task
 
 Status CompactionWatcher::pickCompaction(Compaction*& compaction, TaskRecord*& task_record, bool& has_worked_on_compaction) {
   this->metadata_handler->getLatestView(this->latest_view);
+
+  if (this->mode != Mode::Singleton) {
+    // Replay the task log on a timer, not only when a claim is attempted.
+    // Dead tasks are discovered inside rollForwardTaskLog (replaying a
+    // task's heartbeats resets its tick count; the threshold is checked
+    // after the replay), and until this call it ran only from
+    // shouldWorkOnTask. A writer that attempted no claims, because every
+    // task was claimed or its view held nothing to compact, never saw a
+    // peer's task die, so in the read-only phase of the churn experiment
+    // every abandoned task stayed abandoned.
+    this->task_log_handler->rollForwardTaskLogIfDue();
+
+    // Step 0: dead tasks before new work. This check used to be step 4,
+    // after the three pickers, and under a continuous write workload those
+    // always find something, so it never ran and reclaimed nothing. A dead
+    // task is a compaction some writer already scheduled, so it also holds
+    // the oldest inputs.
+    auto result = this->task_log_handler->getDeadTask();
+    auto dead_task = result.first;
+    int owner_generation = result.second;
+    while (dead_task.IsInitialized()) {
+      auto* dead_task_id = new TaskRecord::TaskIdentifier(dead_task);
+      std::vector<std::string> inputs(dead_task_id->input_files().begin(), dead_task_id->input_files().end());
+      std::cout << getpid() << ":Found dead task " << formatTaskId(inputs, dead_task_id->destinationlevel(), !dead_task_id->compactintonextlevel())
+                << " gen " << owner_generation << ", claiming gen " << owner_generation + 1 << std::endl;
+      bool is_first_writer = shouldWorkOnTask(dead_task_id, task_record, owner_generation + 1);
+      if (is_first_writer) {
+        compaction = new Compaction();
+        compaction->task_id = dead_task_id;
+        has_worked_on_compaction = true;
+        return Status::kSuccess;
+      }
+      delete task_record;
+      task_record = nullptr;
+      result = this->task_log_handler->getDeadTask();
+      dead_task = result.first;
+      owner_generation = result.second;
+    }
+  }
 
   // First step: check if there is any log level compaction
   // log level compaction
@@ -152,10 +200,25 @@ Status CompactionWatcher::pickCompaction(Compaction*& compaction, TaskRecord*& t
   while (files.size() > metadata->last_file_number_limit) {
     compaction = new Compaction();
     compaction->task_id = new TaskRecord::TaskIdentifier();
-    initInputUnitInlastLayer(compaction, files, this->metadata->compaction_input_file_number);
+    Status init_status = initInputUnitInlastLayer(compaction, files, this->metadata->compaction_input_file_number);
+    // initInputUnitInlastLayer returns kFailure when the level holds no run
+    // of `compaction_input_file_number` same-version files. task_id then has
+    // no inputs, and shouldWorkOnTask followed by doCompactionWork would
+    // index input_files(0). Leave the level alone until the next view update
+    // changes it. task_record is still null here, so task_id is ours to free.
+    if (init_status != Status::kSuccess || compaction->task_id->input_files_size() < 2) {
+      delete compaction->task_id;
+      delete compaction;
+      compaction = nullptr;
+      break;
+    }
     compaction->task_id->set_compactintonextlevel(false);
     compaction->task_id->set_destinationlevel(this->metadata->max_level);
-    compaction->compaction_version = 0;
+    // compaction_version is chosen_version + 1, set by
+    // initInputUnitInlastLayer: the output of merging two version-k files
+    // is a version-(k+1) file. An override to 0 here (since the initial
+    // commit) made every last-level output version 0, so the picker, which
+    // merges runs of equal version, never converged.
     bool is_first_writer = shouldWorkOnTask(compaction->task_id, task_record, 0);
     if (is_first_writer) {
       // std::cout << getpid() << " is the first writer for task " << compaction->task_id->ShortDebugString() << std::endl;
@@ -167,28 +230,6 @@ Status CompactionWatcher::pickCompaction(Compaction*& compaction, TaskRecord*& t
     compaction = nullptr;
     task_record = nullptr;
   };
-  // Fourth step: check if there is any dead task
-  auto result = this->task_log_handler->getDeadTask();
-  auto dead_task = result.first;
-  int owner_generation = result.second;
-  while (dead_task.IsInitialized()) {
-    auto* dead_task_id = new TaskRecord::TaskIdentifier(dead_task);
-    std::cout << getpid() << ":Found dead task " << dead_task_id->ShortDebugString() << std::endl;
-    bool is_first_writer = shouldWorkOnTask(dead_task_id, task_record, owner_generation + 1);
-    if (is_first_writer) {
-      // std::cout << getpid() << " is the first writer for dead task " << dead_task_id->ShortDebugString() << std::endl;
-      compaction = new Compaction();
-      compaction->task_id = dead_task_id;
-      has_worked_on_compaction = true;
-      return Status::kSuccess;
-    } else {
-      delete task_record;
-      task_record = nullptr;
-      result = this->task_log_handler->getDeadTask();
-      dead_task = result.first;
-      owner_generation = result.second;
-    }
-  }
   has_worked_on_compaction = false;
   return Status::kSuccess;
 }
@@ -256,6 +297,29 @@ Status CompactionWatcher::doCompactionWork(Compaction* compaction) {
   bool log_level_compaction = false;
   std::string log_string = "Compacting ";
   std::unordered_map<std::string, std::shared_ptr<Record>> key_record;
+  // Fault injection (compaction_abort_rate): give the task up before any
+  // work, as if this writer had died with the claim held. Multi-process
+  // mode only: in Singleton mode a failed task stops the watcher thread,
+  // and there is no task log for a peer to take the task from.
+  if (this->metadata->compaction_abort_rate > 0.0 && this->mode != Mode::Singleton) {
+    std::uniform_real_distribution<double> draw(0.0, 1.0);
+    if (draw(abort_rng_) < this->metadata->compaction_abort_rate) {
+      compaction->aborted.store(true);
+      std::vector<std::string> inputs(compaction->task_id->input_files().begin(), compaction->task_id->input_files().end());
+      std::cout << getpid() << ":COMPACT_ABORT " << formatTaskId(inputs, compaction->task_id->destinationlevel(), !compaction->task_id->compactintonextlevel()) << std::endl;
+      return Status::kFailure;
+    }
+  }
+  // The output version of a last-level merge is one above its inputs'.
+  // Derived here from the task itself, so every path agrees: the picker
+  // sets it too, but a task reclaimed from a dead peer (pickCompaction
+  // step 0) arrives in a fresh Compaction whose version is still -1, and
+  // its output then carried no version prefix. Such an output re-entered
+  // the level looking like a new arrival, shifted every later pair by
+  // one, and the overlapping picks that followed lost data.
+  if (!compaction->task_id->compactintonextlevel()) {
+    compaction->compaction_version = getNumberBeforeUnderscore(compaction->task_id->input_files(0)) + 1;
+  }
   if (compaction->task_id->input_files(0).find(this->metadata->log_prefix) != std::string::npos) {
     log_level_compaction = true;
     if (this->event_listener != nullptr) {
@@ -347,6 +411,7 @@ Status CompactionWatcher::doCompactionWork(Compaction* compaction) {
         std::cerr << "[compaction] input " << input << " unreadable (status="
                   << static_cast<int>(read_status) << "), abandoning task; inputs kept\n";
         compaction->finished = false;
+        compaction->aborted.store(true);
         return Status::kFailure;
       }
       if (records_tmp.empty()) {
@@ -367,6 +432,23 @@ Status CompactionWatcher::doCompactionWork(Compaction* compaction) {
       }
       delete table;
     }
+  }
+
+  // An input was removed under us: a peer executed a task that shares it
+  // (a false dead-task takeover, or an overlapping pick) and that peer's
+  // COMPACT record already took the file out of the view. Nothing we
+  // could publish would apply: a record whose first input is gone is
+  // parked by every replayer forever, and before it was parked it had
+  // already deleted the inputs we did read, which lost their records.
+  // And giving the task up only had it reclaimed and fail again, at
+  // generation after generation. So complete the claim with no record:
+  // no outputs, no removals. The inputs that are still there stay in the
+  // view and go into a later task.
+  if (inputs_skipped > 0) {
+    std::cerr << "[compaction] " << inputs_skipped << " of " << compaction->task_id->input_files_size()
+              << " inputs removed under us by a peer's compaction; completing the claim with no record\n";
+    compaction->finished = true;
+    return Status::kSuccess;
   }
 
   std::vector<std::shared_ptr<Record>> records;
@@ -395,9 +477,16 @@ Status CompactionWatcher::doCompactionWork(Compaction* compaction) {
   // a missing SSTable and then deleting the inputs destroys data, so a
   // failed build must abandon the whole task and leave the inputs alone.
   bool output_failed = false;
+  // A last-level compaction always emits ONE output: it merges two
+  // version-k files into one version-(k+1) file, and the level converges
+  // to at most last_file_number_limit files. Splitting that output by
+  // size kept the file count constant (two in, two out) and the picker
+  // never converged. Every other level cuts its output at
+  // level_file_size_limit, so file sizes stay bounded down the tree.
+  bool const is_last_level = compaction->task_id->destinationlevel() == this->metadata->max_level;
   for (int i = 0; i < records.size(); i++) {
     if (compaction->outputBuilder == nullptr ||
-        (compaction->task_id->destinationlevel() == this->metadata->max_level && compaction->outputBuilder->fileSize() > this->metadata->level_file_size_limit[compaction->task_id->destinationlevel() - 1])) {
+        (!is_last_level && compaction->outputBuilder->fileSize() > this->metadata->level_file_size_limit[compaction->task_id->destinationlevel() - 1])) {
       if (compaction->outputBuilder != nullptr) {
         if (compaction->outputBuilder->finish() != Status::kSuccess) output_failed = true;
         key_range.second = records[i - 1]->key();
@@ -442,6 +531,7 @@ Status CompactionWatcher::doCompactionWork(Compaction* compaction) {
     // the output name carries a fresh timestamp.
     std::cerr << "[compaction] output write failed, abandoning task; inputs kept\n";
     compaction->finished = false;
+    compaction->aborted.store(true);
     return Status::kFailure;
   }
 

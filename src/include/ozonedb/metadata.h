@@ -157,6 +157,30 @@ class Metadata {
   int log_trim_keep_checkpoints = 2;
   std::string checkpoint_dir = "checkpoint";
 
+  // Dead-task takeover. A writer that claims a compaction task appends a
+  // TASK_IN_PROGRESS heartbeat every 100 ms; every writer counts ticks
+  // since the last heartbeat it replayed for each task. A task whose count
+  // reaches this many ticks is dead and any writer may claim it at the next
+  // owner_generation (paper section 4.4). 30 ticks is 3 s. The task log is
+  // replayed at most every third of this, so a live task's count stays
+  // well below it. On Corfu a tailer stall (a hole left by a dead peer)
+  // delays heartbeat replay by the hole-fill timeout, so the Corfu configs
+  // set this above corfu_hole_fill_timeout_ms / 100.
+  int task_heartbeat_threshold_ticks = 30;
+
+  // false starts no compaction watcher: the process only appends to the
+  // logs and reads. The churn experiment loads its dataset this way so
+  // every trial starts from the same compaction backlog.
+  bool compaction_enabled = true;
+
+  // Fault injection for the churn experiment (paper section 6, Table 4):
+  // with this probability a claimed compaction is abandoned at the start
+  // of its work, as if the writer had died there. The claim is left
+  // without a TASK_COMPLETE, so after task_heartbeat_threshold_ticks the
+  // peers (or this writer) reclaim it at the next owner_generation. 0 is
+  // off. Not a tuning knob: every abort is wasted work.
+  double compaction_abort_rate = 0.0;
+
   /**
    * @brief Local Metadata, read from local config file
    *
@@ -264,6 +288,22 @@ class Metadata {
     auto lru_it = result.find("lru_cache_bytes");
     if (lru_it != result.end()) {
       lru_cache_bytes = std::stoull(lru_it->second);
+    }
+
+    if (auto it = result.find("task_heartbeat_threshold_ticks"); it != result.end()) {
+      task_heartbeat_threshold_ticks = std::stoi(it->second);
+      if (task_heartbeat_threshold_ticks < 1) {
+        throw std::runtime_error("config error: task_heartbeat_threshold_ticks must be >= 1");
+      }
+    }
+    if (auto it = result.find("compaction_abort_rate"); it != result.end()) {
+      compaction_abort_rate = std::stod(it->second);
+      if (compaction_abort_rate < 0.0 || compaction_abort_rate > 1.0) {
+        throw std::runtime_error("config error: compaction_abort_rate must be in [0, 1]");
+      }
+    }
+    if (auto it = result.find("compaction_enabled"); it != result.end()) {
+      compaction_enabled = !(it->second == "false" || it->second == "0");
     }
 
     if (auto it = result.find("compaction_read_bytes"); it != result.end()) {

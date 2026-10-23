@@ -54,6 +54,15 @@ std::mutex& FileStorage::appendMutexFor(std::string const& name) {
   return *it->second;
 }
 
+std::mutex& FileStorage::readMutexFor(std::string const& name) {
+  std::lock_guard<std::mutex> lk(read_map_mtx_);
+  auto it = read_file_mtx_.find(name);
+  if (it == read_file_mtx_.end()) {
+    it = read_file_mtx_.emplace(name, std::make_unique<std::mutex>()).first;
+  }
+  return *it->second;
+}
+
 Status FileStorage::append(std::string const& fileName, unsigned char* const& data, int length) {
   std::ofstream* output_file = getWriteStream(fileName);
   if (isSealed(fileName)) {
@@ -108,6 +117,9 @@ Status FileStorage::flush(std::string const& fileName) {
 }
 
 Status FileStorage::read(std::string const& fileName, unsigned char*& data, size_t& size) {
+  // Hold the per-file lock across seek + read: the ifstream is shared by
+  // every thread that reads this file (see readMutexFor).
+  std::lock_guard<std::mutex> lk(readMutexFor(fileName));
   std::ifstream* input_file = getReadStream(fileName);
   if (!input_file->is_open()) {
     if (!exist(fileName)) {
@@ -127,6 +139,7 @@ Status FileStorage::read(std::string const& fileName, unsigned char*& data, size
 
 Status FileStorage::read(std::string const& fileName, unsigned char*& data, size_t a, size_t length) {
   // read data from a, read b bytes in total, similar as previous read method
+  std::lock_guard<std::mutex> lk(readMutexFor(fileName));
   std::ifstream* input_file = getReadStream(fileName);
   if (!input_file->is_open()) {
     if (!exist(fileName)) {

@@ -60,6 +60,9 @@ above as the primary path. `CMakeUserPresets.json` is per-user and gitignored.
   defaults **OFF**. Both set a `-D` compile definition that guards the corresponding
   `src/db/*_storage.cpp` and its header — new backend code must be inside those guards.
 - `-DOZONEDB_PROFILING=ON` keeps `-O3` but adds frame pointers + line tables for perf/flamegraph.
+- `-DOZONEDB_PROFILE_READS=ON` compiles the read-path counters of `read_profile.h` into `DB::get`
+  (view, log and SSTable time per get, per-level and per-table probe outcomes); `DB::closeDB` prints
+  them as `[OZONEDB-*-PROFILE]` lines. Off by default; every probe is a macro that expands to nothing.
 - `OZONEDB_BUILD_JNI` (default ON) builds `libozonedb.so`, the shim the YCSB binding loads. It is
   the only target that needs a JDK; without `jni.h` it is skipped with a message.
 - Protobuf headers are generated into `build/generated/protobuf/` at configure time from
@@ -116,8 +119,14 @@ cd build && ctest --output-on-failure                     # all (one gtest binar
   to exercise the shared-log path:
   ```bash
   ./corfu_smoke <shared-config.json> [num_keys]
-  ./corfu_multiwriter_smoke <shared-config.json> [keys_per_writer]
+  ./corfu_multiwriter_smoke <shared-config.json> [keys_per_writer] [--kill-one]
   ```
+  `--kill-one` is the dead-writer demo: writer 1 is `SIGKILL`ed half-way through its range, writer 0
+  stays open past `task_heartbeat_threshold_ticks` and reclaims the dead claim, and the parent checks
+  every key writer 0 wrote plus every key writer 1 had acked. It fails without at least one takeover.
+- `TaskLogTest` (dead-task detection and takeover), `MetadataLogTest` (replay order of last-level
+  COMPACT records) and the `DBTest` cases for `compaction_abort_rate`, `compaction_enabled` and the
+  last level run on the local backend with no server.
 - `KNOWN-ISSUES.md` lists the correctness hazards found by the 2026-09 audit that are not fixed.
 
 ## Benchmarks
@@ -139,6 +148,23 @@ bash    bench/scripts/local/run_ycsb_with_corfu.sh --workloads "a c" --writers-l
 python3 bench/scripts/local/run_multinode_ycsb.py          # fan out across CloudLab hosts via scp/ssh
 python3 bench/scripts/local/run_corfu_compaction_contention.py
 ```
+
+The single-node comparison of the paper (Fig 2a, 9, 15, 19a, Table 4) has its own drivers:
+
+```bash
+python3 bench/scripts/local/singlenode/run_fig2_load.py --systems ozonedb        # cached dataset, Fig 19a load
+python3 bench/scripts/local/singlenode/run_fig2_sweep.py --systems ozonedb       # threads sweep, Fig 2a / 19a
+python3 bench/scripts/local/singlenode/run_phase1_multiproc_sweep.py --systems ozonedb --results-dir ...  # processes sweep, Fig 9
+python3 bench/scripts/local/churn_experiment/churn_runner.py --vary abort        # churn, Table 4 / Fig 15
+```
+
+They read `src/config/local/shared_config_singlenode.json` (the base config with a 128 MB cache, to
+match the RocksDB and SQLite caches in `bench/scripts/config/`), take the data root from
+`OZONEDB_DATA_ROOT` (default `/tank/ycsb_data`), and need `YCSB_CPP_DIR` and `ROCKSDB_PREFIX` only
+for the SQLite and RocksDB series. `run_local_ycsb_multiproc.py` stays the driver for the OzoneKV,
+Corfu and Cassandra series. The churn runner loads with `compaction_enabled = false`, snapshots, and
+runs every trial from that snapshot with `compaction_abort_rate` set; it parses `task.log` through
+`task_log_parser.py`, which generates `record_pb2.py` with `protoc` on first use.
 
 - `run_ycsb_with_corfu.sh` restarts the remote Corfu server between every (trial, workload, writers)
   iteration and tags all results with one `OZONEDB_RUN_TAG`.
@@ -209,8 +235,26 @@ exist where; it is published as an immutable `shared_ptr<View const>` snapshot a
 (readers must not deep-copy it — that was a hot-path regression that has already been removed once).
 
 The task log is how concurrent writers avoid duplicating compaction: a writer claims a task by
-appending a `TaskRecord` (owner fingerprint + `owner_generation`), heartbeats it, and dead owners'
-tasks get reclaimed.
+appending a `TaskRecord` (owner fingerprint + `owner_generation`), heartbeats it every 100 ms, and
+dead owners' tasks get reclaimed. Every `pickCompaction` starts by replaying the task log
+(`rollForwardTaskLogIfDue`, at most once per third of `task_heartbeat_threshold_ticks`): replaying a
+task's heartbeats resets its tick count, and a task whose count reaches the threshold (default 30,
+3 s) is dead. Dead tasks are claimed first, at `owner_generation + 1`, before any new work is
+picked; under a continuous write workload the new-work pickers always find something, so a check
+after them never ran. On Corfu the replay is two fenced calls, which is why it is paced and why
+`readTaskLog` holds no lock across them (a stall there would silence this writer's own heartbeats);
+the Corfu configs set the threshold to 200 ticks because a hole left by a dead peer stalls the
+tailer, and with it every peer's heartbeat replay, for `corfu_hole_fill_timeout_ms`.
+
+Last-level compactions merge two version-k files into one version-(k+1) file
+(`initInputUnitInlastLayer`; `doCompactionWork` derives the version from the task's first input
+again, because a task reclaimed from a dead peer arrives in a fresh `Compaction`), so the level
+converges to `last_file_number_limit` files; every other level cuts its output at
+`level_file_size_limit`. A compaction that finds an input removed under it (a peer ran a task that
+shares it) completes its claim with no record: nothing published, nothing deleted. Last-level `COMPACT` records are replayed in a
+canonical order (a record applies only when its first input heads its version region, otherwise it
+waits in `MetadataLogHandler::buffer`), so every process ends with the same deque; a record whose
+inputs are gone is parked and never applied.
 
 ### Read / write paths
 
@@ -335,6 +379,19 @@ One flat JSON file per DB instance, parsed by `Metadata` (`metadata.h`) via `par
 returns `map<string,string>` — so *every* value is read as a string and arrays are literal strings
 like `"[268435456, 2684354560]"`. Adding a config key means adding the parse in `Metadata`'s
 constructor. Base configs live in `src/config/{local,corfu}/`.
+
+Compaction-protocol keys: `task_heartbeat_threshold_ticks` (default 30; ticks of 100 ms without a
+heartbeat before a claim is dead and may be taken over), `compaction_enabled` (default true; false
+starts no watcher, for loads that must leave a backlog).
+
+### Fault injection
+
+`compaction_abort_rate` (default 0) is the fault model of the churn experiment, not a tuning knob:
+with that probability `doCompactionWork` gives a claimed task up before any work, sets
+`Compaction::aborted`, and the heartbeat thread exits without a `TASK_COMPLETE`, exactly as if the
+writer had died holding the claim. The task is reclaimed after the threshold. The draw is a
+per-process `mt19937_64`; the knob is inert in Singleton mode. The same flag ends the heartbeat
+thread when a compaction abandons its task on an unreadable input or a failed output write.
 
 ### JNI / YCSB chain
 

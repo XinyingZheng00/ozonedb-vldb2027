@@ -7,6 +7,8 @@
 #include "sstable/table_builder.h"
 #include "storage.h"
 #include "task_log_handler.h"
+#include <atomic>
+#include <random>
 #include <thread>
 #include <unordered_map>
 #include <vector>
@@ -23,6 +25,12 @@ class Compaction {
   TaskRecord::TaskIdentifier* task_id = nullptr;
   TableBuilder* outputBuilder = nullptr;
   bool finished = false;
+  // Set when doCompactionWork gives the task up: an injected abort
+  // (compaction_abort_rate) or an unreadable input or output. The heartbeat
+  // thread then exits WITHOUT appending TASK_COMPLETE, so the claim lapses
+  // after the threshold and the task is reclaimed, exactly as if the
+  // writer had died here.
+  std::atomic<bool> aborted{false};
   int compaction_version = -1; // this is only used for the last layer compaction
 };
 
@@ -44,6 +52,9 @@ class CompactionWatcher {
   View latest_view;
   FileMutexManager* file_mutex_manager = nullptr;
   Mode mode;
+  // Draws for compaction_abort_rate. Seeded per process in the
+  // constructor so concurrent writers do not abort the same sequence.
+  std::mt19937_64 abort_rng_;
 
   Status watchForCompaction(std::atomic<bool> const* active);
   bool shouldWorkOnTask(TaskRecord::TaskIdentifier* task_id, TaskRecord*& task_record, int owner_generation);
@@ -61,6 +72,8 @@ class CompactionWatcher {
     // sstable_storage defaults to the same backend as the log layer for
     // backward compat. setSSTableStorage(...) overrides it after construction
     // when the config splits SSTable storage off (paper §3.5).
+    std::seed_seq seed{std::random_device{}(), static_cast<unsigned>(std::hash<std::string>{}(fingerprint))};
+    abort_rng_.seed(seed);
   }
   ~CompactionWatcher() {
     // delete this->compaction_thread;
