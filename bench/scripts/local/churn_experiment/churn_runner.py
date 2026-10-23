@@ -395,7 +395,8 @@ class TrialResult:
 def execute_trial(trial_id: str, vary: str, n_writers: int,
                   abort_rate: float, record_count: int, key_size: str,
                   completion_timeout_s: int, results_dir: Path,
-                  quiescence_grace_s: int = QUIESCENCE_GRACE_S) -> TrialResult:
+                  quiescence_grace_s: int = QUIESCENCE_GRACE_S,
+                  keep_db: bool = False) -> TrialResult:
     trial_dir = results_dir / "per_trial" / trial_id
     trial_dir.mkdir(parents=True, exist_ok=True)
 
@@ -470,7 +471,10 @@ def execute_trial(trial_id: str, vary: str, n_writers: int,
     except Exception as e:
         res.notes.append(f"verify raised: {e}")
 
-    wipe(db_path)
+    if keep_db:
+        print(f"  [{trial_id}] keeping DB at {db_path}", flush=True)
+    else:
+        wipe(db_path)
     cfg_path.unlink(missing_ok=True)
     verify_cfg_path.unlink(missing_ok=True)
     print(f"  [{trial_id}] DONE  completion={res.completion_time_s:.1f}s "
@@ -545,6 +549,9 @@ def main() -> int:
                    help="Number of repetitions per (vary, N, R) trial")
     p.add_argument("--quiescence-grace", type=int, default=QUIESCENCE_GRACE_S,
                    help="Seconds n_total must be flat before declaring completion")
+    p.add_argument("--keep-db", action="store_true",
+                   help="Leave every trial's DB directory in place (metadata.log and task.log "
+                        "for a post-mortem) instead of wiping it")
     args = p.parse_args()
 
     timestamp = time.strftime("%Y%m%dT%H%M%S")
@@ -613,6 +620,7 @@ def main() -> int:
             completion_timeout_s=args.completion_timeout,
             results_dir=results_dir,
             quiescence_grace_s=args.quiescence_grace,
+            keep_db=args.keep_db,
         )
         append_csv_row(csv_path, res)
 
