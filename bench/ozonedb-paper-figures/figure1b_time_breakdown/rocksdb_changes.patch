@@ -1,0 +1,48 @@
+diff --git a/analyse_time_share.py b/analyse_time_share.py
+index 27e8821854945c334d08a33c6e18e82181efac8c..11d1565b45dbbe7c66535031f0a5160505a8f867 100644
+--- a/analyse_time_share.py
++++ b/analyse_time_share.py
+@@ -29,6 +29,9 @@ CLOSE_PATTERNS = [
+     "rocksdb::DB::~DB",
+     "~DBImpl",
+     "~DB",
++    "__close",
++    "__x64_sys_close",
++    "filp_close",
+ ]
+ OPS_PATTERNS = [
+     # Put/Get are usually the leaves for this workload
+@@ -43,9 +46,9 @@ OPS_PATTERNS = [
+ 
+ def compute_group_pcts_from_folded(path):
+     """
+-    Use folded callgraph output and classify by the *leaf* symbol (last frame).
+-    This avoids double-counting issues from "Children%" and also counts open/close
+-    even if it happens outside UpdateRandom.
++    Use folded callgraph output and classify by matching the *entire callchain*
++    (not only the leaf frame). This helps baseline/non-reopen cases where close
++    work appears in the chain but the sampled leaf may be in kernel/syscall code.
+     """
+ 
+     cmd = [
+@@ -91,16 +94,12 @@ def compute_group_pcts_from_folded(path):
+         if not chain:
+             continue
+ 
+-        frames = [f.strip() for f in chain.split(";") if f.strip()]
+-        if not frames:
+-            continue
+-        leaf = frames[-1]
+-
+-        if any(pat in leaf for pat in CLOSE_PATTERNS):
++        # Match against whole chain so we can catch patterns that are not at leaf.
++        if any(pat in chain for pat in CLOSE_PATTERNS):
+             close_pct += pct
+-        elif any(pat in leaf for pat in OPEN_PATTERNS):
++        elif any(pat in chain for pat in OPEN_PATTERNS):
+             open_pct += pct
+-        elif any(pat in leaf for pat in OPS_PATTERNS):
++        elif any(pat in chain for pat in OPS_PATTERNS):
+             ops_pct += pct
+ 
+     p.wait()
