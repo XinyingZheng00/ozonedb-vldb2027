@@ -67,9 +67,10 @@ Fixed already: `SIGPIPE` on a Corfu restart (every non-JVM process died with
     `appendToMetadataLog` and `appendToTaskLog` discard the append status;
     `doCompactionWork` then removes the inputs. `metadata_log_handler.cpp`,
     `task_log_handler.cpp`, `compaction.cpp`.
-17. **Filter reads ignore status** and index `block_data[0]` before checking
-    for an empty buffer. `table_reader.cpp`, `block_handler.cpp`,
-    `filter_block.cpp`.
+17. **Block reads ignore status** and index `block_data[0]` before checking
+    for an empty buffer. `table_reader.cpp`, `block_handler.cpp`.
+    (`readFilterBlock` in `filter_block.cpp` checks now; it was the crash
+    site when two threads shared one read stream, item 25.)
 18. **Task-log locking.** `worthAppend` reads `task_map` without a lock
     while `updateHeartbeats` mutates it; `stop_thread` is a plain bool.
     `task_log_handler.cpp`, `task_log_handler.h`. (The takeover threshold
@@ -100,6 +101,27 @@ Fixed already: `SIGPIPE` on a Corfu restart (every non-JVM process died with
     the same compaction at the next generation (its COMPACT record is
     then parked, item 1). The Corfu configs set
     `task_heartbeat_threshold_ticks` to 200 for this reason.
+    `task_log_handler.cpp`.
+25. **Fixed on `port/experiment-plot`, listed so the symptom is findable.**
+    `FileStorage::read` shared one `ifstream` per file across threads with
+    no lock around seek + read; a reclaimed last-level task ran with no
+    output version; a compaction whose input a peer had removed published
+    a record covering the rest, which the replay parked after the inputs
+    were deleted; a COMPACT with no outputs crashed the replay. Symptoms:
+    "Failed to parse message", a SIGSEGV in `getPrefix` or
+    `readFilterBlock`, keys NOT_FOUND after a multi-writer compaction
+    backlog. Commits `efe016f`, `f6b10e4`, `7597d63`.
+26. **`TableBuilder::fileSize()` is 8 bytes over** the bytes written
+    (`offset` plus an empty block's size estimate), so `output_bytes` on
+    every COMPACT record and the view's `file_size` for SSTables are 8
+    bytes high. Heuristics only. `table_builder.cpp`.
+27. **The task-log replay runs on the compaction thread**
+    (`rollForwardTaskLogIfDue` at the top of every pick), so a compaction
+    longer than `task_heartbeat_threshold_ticks` starves it and the peers'
+    tick counts run past the threshold until it returns (the replay then
+    resets them before the check, so nothing is declared dead, but the
+    takeover of a real dead task waits that long). A replay thread in
+    `TaskLogHandler` would remove the dependency. `compaction.cpp`,
     `task_log_handler.cpp`.
 
 ## Deliberate leftovers

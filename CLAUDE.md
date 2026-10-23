@@ -247,8 +247,11 @@ the Corfu configs set the threshold to 200 ticks because a hole left by a dead p
 tailer, and with it every peer's heartbeat replay, for `corfu_hole_fill_timeout_ms`.
 
 Last-level compactions merge two version-k files into one version-(k+1) file
-(`initInputUnitInlastLayer`), so the level converges to `last_file_number_limit` files; every other
-level cuts its output at `level_file_size_limit`. Last-level `COMPACT` records are replayed in a
+(`initInputUnitInlastLayer`; `doCompactionWork` derives the version from the task's first input
+again, because a task reclaimed from a dead peer arrives in a fresh `Compaction`), so the level
+converges to `last_file_number_limit` files; every other level cuts its output at
+`level_file_size_limit`. A compaction that finds an input removed under it (a peer ran a task that
+shares it) completes its claim with no record: nothing published, nothing deleted. Last-level `COMPACT` records are replayed in a
 canonical order (a record applies only when its first input heads its version region, otherwise it
 waits in `MetadataLogHandler::buffer`), so every process ends with the same deque; a record whose
 inputs are gone is parked and never applied.
