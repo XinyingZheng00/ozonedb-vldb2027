@@ -424,6 +424,17 @@ Status CompactionWatcher::doCompactionWork(Compaction* compaction) {
     }
   }
 
+  // Every input was removed under us: a peer executed an overlapping task
+  // and its COMPACT record already took these files out of the view. A
+  // record with no outputs would only remove inputs that are gone (and
+  // was parked unapplied by every replayer); give the task up instead.
+  if (inputs_skipped > 0 && inputs_skipped == compaction->task_id->input_files_size()) {
+    std::cerr << "[compaction] every input removed under us, abandoning task\n";
+    compaction->finished = false;
+    compaction->aborted.store(true);
+    return Status::kFailure;
+  }
+
   std::vector<std::shared_ptr<Record>> records;
   records.reserve(key_record.size());
   for (auto& [key, record] : key_record) {

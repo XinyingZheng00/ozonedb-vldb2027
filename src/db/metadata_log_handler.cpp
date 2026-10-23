@@ -16,7 +16,13 @@ namespace {
 // own rollforward thread, including the winner. The benchmark harness joins
 // these with `[COMPACTION_NEEDED]` from task_log_handler.cpp by task_id.
 inline void logCompactionCommitted(OperationRecord const* record) {
-  int dest_level = getNumberInTheEnd(getPrefix(record->output_file(0)));
+  // A COMPACT can carry no outputs (every input was empty, or was removed
+  // under the compactor by a peer's execution of an overlapping task);
+  // indexing output_file(0) then dereferenced null. The destination is
+  // not known for such a record; log it under the input level.
+  int dest_level = record->output_file_size() > 0
+                       ? getNumberInTheEnd(getPrefix(record->output_file(0)))
+                       : getNumberInTheEnd(getPrefix(record->input_files(0)));
   std::vector<std::string> inputs(record->input_files().begin(),
                                   record->input_files().end());
   auto wall_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
@@ -218,9 +224,14 @@ std::string MetadataLogHandler::rollforwardSingleOperationRecord(OperationRecord
     std::string const& input_file = record->input_files()[0];
     std::string input_prefix = getPrefix(input_file);
     std::deque<std::string>& level_layout = this->latest_view.storage_layout[input_prefix];
-    if (level_layout.front() != input_file) {
+    // front() of an empty deque was undefined behaviour; an input that is
+    // not in the level at all (a duplicate record) is parked at INT_MAX
+    // like its last-level counterpart below.
+    if (level_layout.empty() || level_layout.front() != input_file) {
       auto it = std::find(level_layout.begin(), level_layout.end(), input_file);
-      int index = std::distance(level_layout.begin(), it);
+      int index = (it == level_layout.end())
+                      ? INT_MAX
+                      : static_cast<int>(std::distance(level_layout.begin(), it));
       this->buffer[input_prefix].push({index, record});
       return "buffered";
     }
