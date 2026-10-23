@@ -254,6 +254,19 @@ std::vector<TaskRecord::TaskStatus> taskLogStatuses(std::string const& db_dir) {
 int countStatus(std::vector<TaskRecord::TaskStatus> const& v, TaskRecord::TaskStatus s) {
   return static_cast<int>(std::count(v.begin(), v.end(), s));
 }
+
+// Put `count` keys in rounds with a pause between rounds. The data log
+// rolls on a tail size the view thread refreshes every 100 ms, so a burst
+// of puts that finishes inside one refresh lands in ONE log file however
+// small the limit (on a tmpfs test root all 300 puts below did), and a
+// test that needs several log files, and so a compaction, then has none.
+// Each round here exceeds the 1 KiB limit of test_db.json on its own.
+void putInRounds(DB* db, int count, std::string const& value, int per_round = 25) {
+  for (int i = 0; i < count; i++) {
+    ASSERT_EQ(Status::kSuccess, db->put("key" + std::to_string(i), value)) << "key" << i;
+    if ((i + 1) % per_round == 0) std::this_thread::sleep_for(std::chrono::milliseconds(150));
+  }
+}
 }  // namespace
 
 // Fault injection: with compaction_abort_rate = 1 every claimed task is
@@ -269,9 +282,7 @@ TEST_F(DBTest, abort_rate_one_leaves_claims_unfinished_and_data_readable) {
   DB* db = nullptr;
   ASSERT_EQ(Status::kSuccess, DB::openDB(db, abort_cfg));
   std::string const value(100, 'v');
-  for (int i = 0; i < 300; i++) {
-    ASSERT_EQ(Status::kSuccess, db->put("key" + std::to_string(i), value));
-  }
+  putInRounds(db, 300, value);
   // Let the watcher claim, abort, and reclaim for a while.
   std::this_thread::sleep_for(std::chrono::milliseconds(1500));
   for (int i = 0; i < 300; i++) {
@@ -312,9 +323,7 @@ TEST_F(DBTest, compaction_disabled_leaves_the_log_files_alone) {
   DB* db = nullptr;
   ASSERT_EQ(Status::kSuccess, DB::openDB(db, cfg));
   std::string const value(100, 'v');
-  for (int i = 0; i < 300; i++) {
-    ASSERT_EQ(Status::kSuccess, db->put("key" + std::to_string(i), value));
-  }
+  putInRounds(db, 300, value);
   std::this_thread::sleep_for(std::chrono::milliseconds(800));
   for (int i = 0; i < 300; i++) {
     std::string const* v = nullptr;
@@ -328,7 +337,7 @@ TEST_F(DBTest, compaction_disabled_leaves_the_log_files_alone) {
     (void)e;
     ++log_files;
   }
-  EXPECT_GT(log_files, 2) << "300 x 100 B puts at a 1 KiB log limit must leave many log files";
+  EXPECT_GT(log_files, 2) << "300 x 100 B puts in rounds at a 1 KiB log limit must leave many log files";
 }
 
 // Last-level compactions merge two same-version files into one file of
@@ -342,9 +351,7 @@ TEST_F(DBTest, last_level_compaction_emits_one_versioned_output) {
   DB* db = nullptr;
   ASSERT_EQ(Status::kSuccess, DB::openDB(db, cfg));
   std::string const value(100, 'v');
-  for (int i = 0; i < 3000; i++) {
-    ASSERT_EQ(Status::kSuccess, db->put("key" + std::to_string(i), value));
-  }
+  putInRounds(db, 3000, value, 50);
   // Wait for the tree to settle: no more than last_file_number_limit (4)
   // files at the last level, and at least one of version >= 1.
   std::string const last_level = testenv::path(name + "/sstable3/");
