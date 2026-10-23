@@ -310,6 +310,16 @@ Status CompactionWatcher::doCompactionWork(Compaction* compaction) {
       return Status::kFailure;
     }
   }
+  // The output version of a last-level merge is one above its inputs'.
+  // Derived here from the task itself, so every path agrees: the picker
+  // sets it too, but a task reclaimed from a dead peer (pickCompaction
+  // step 0) arrives in a fresh Compaction whose version is still -1, and
+  // its output then carried no version prefix. Such an output re-entered
+  // the level looking like a new arrival, shifted every later pair by
+  // one, and the overlapping picks that followed lost data.
+  if (!compaction->task_id->compactintonextlevel()) {
+    compaction->compaction_version = getNumberBeforeUnderscore(compaction->task_id->input_files(0)) + 1;
+  }
   if (compaction->task_id->input_files(0).find(this->metadata->log_prefix) != std::string::npos) {
     log_level_compaction = true;
     if (this->event_listener != nullptr) {
@@ -424,15 +434,21 @@ Status CompactionWatcher::doCompactionWork(Compaction* compaction) {
     }
   }
 
-  // Every input was removed under us: a peer executed an overlapping task
-  // and its COMPACT record already took these files out of the view. A
-  // record with no outputs would only remove inputs that are gone (and
-  // was parked unapplied by every replayer); give the task up instead.
-  if (inputs_skipped > 0 && inputs_skipped == compaction->task_id->input_files_size()) {
-    std::cerr << "[compaction] every input removed under us, abandoning task\n";
-    compaction->finished = false;
-    compaction->aborted.store(true);
-    return Status::kFailure;
+  // An input was removed under us: a peer executed a task that shares it
+  // (a false dead-task takeover, or an overlapping pick) and that peer's
+  // COMPACT record already took the file out of the view. Nothing we
+  // could publish would apply: a record whose first input is gone is
+  // parked by every replayer forever, and before it was parked it had
+  // already deleted the inputs we did read, which lost their records.
+  // And giving the task up only had it reclaimed and fail again, at
+  // generation after generation. So complete the claim with no record:
+  // no outputs, no removals. The inputs that are still there stay in the
+  // view and go into a later task.
+  if (inputs_skipped > 0) {
+    std::cerr << "[compaction] " << inputs_skipped << " of " << compaction->task_id->input_files_size()
+              << " inputs removed under us by a peer's compaction; completing the claim with no record\n";
+    compaction->finished = true;
+    return Status::kSuccess;
   }
 
   std::vector<std::shared_ptr<Record>> records;
