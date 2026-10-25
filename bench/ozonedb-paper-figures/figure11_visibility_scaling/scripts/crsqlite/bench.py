@@ -990,7 +990,7 @@ VIS_PBS_AGES_MS = [0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500]
 
 def cmd_check_visibility(cfg, args):
     """Two benchmarks from one run. This mirrors ozonedb's check-visibility
-    (see ozonedb/bench/PLAN-visibility.md). A writer INSERTs brand-new
+    command. A writer INSERTs brand-new
     YCSB-keyspace rows on replica 0 and acks each one into a queue. A reader
     polls replica 1 for every acked key until it appears. The first read
     per key starts after the ack (ack, then notify, then read). So a

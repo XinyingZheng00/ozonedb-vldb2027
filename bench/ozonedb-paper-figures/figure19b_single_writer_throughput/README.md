@@ -2,10 +2,10 @@
 
 Paper: `images/experiment/single_throughput.pdf` (§5). The figure shows OzoneKV-async,
 OzoneKV-sync, SlateDB-async and SlateDB-sync on workloads A, B, C, D and F with one
-writer. The deployment is distributed: Corfu backs OzoneKV, and S3 backs SlateDB.
+writer. The deployment is distributed: Corfu/MinIO backs OzoneKV, and S3 backs SlateDB.
 
 | File | What it is |
-|---|---|
+| --- | --- |
 | `paper_figure.pdf` | the figure as it appears in the paper |
 | `data/ozonedb/` | OzoneKV-async: 15 `.result` files (5 workloads × 3 trials) |
 | `data/ozonedb-durable/` | OzoneKV-sync: 5 files. There is 1 trial per workload, so there are no error bars |
@@ -23,11 +23,6 @@ async/sync naming: `-durable` means sync. The error bars are the stdev across tr
 cd scripts
 python3 plot_throughput.py --output ../single_throughput.pdf
 ```
-
-The script needs matplotlib and numpy (or `uv run`). It prints every mean ± stdev. The
-paper's copy was drawn at a wider aspect ratio, with the legend to the right of the axes.
-The script puts the legend inside the top-left corner. The bars and the error bars are the
-same.
 
 ## Regenerate the data (cluster)
 

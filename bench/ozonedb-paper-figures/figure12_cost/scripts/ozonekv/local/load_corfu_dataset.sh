@@ -137,7 +137,7 @@ SAMPLER_SRC="$OZONEDB_HOME/bench/scripts/server_sampler.sh"
 SAMPLER_REMOTE_DIR="ozonedb_server_samples/load"
 S3_PORT="$(cfg --get s3.port 2>/dev/null || echo 9000)"
 S3_BUCKET="$(cfg --get s3.bucket 2>/dev/null || echo "")"
-# The record count is part of the cell name. Both dataset sizes of a campaign
+# The record count is part of the cell name. Both dataset sizes of an experiment
 # load into the same results root. With an untagged name, the second load
 # overwrites the server sample of the first load (see SAMPLE_RE in
 # extract_cost_coefficients.py).

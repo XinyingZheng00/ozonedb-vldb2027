@@ -2,7 +2,7 @@
 
 These files are the wire protocol of the CorfuDB server, copied from
 `runtime/proto/` of the CorfuDB repository for the native C++ client
-(`src/db/corfu/`, `PLAN-native-corfu.md`).
+(`src/db/corfu/`).
 
 | File | Source | Change |
 |---|---|---|

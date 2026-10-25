@@ -1,3 +1,9 @@
+"""Plot the single-writer YCSB results.
+
+The script reads the result files or the aggregated CSV files of one results directory.
+It draws one bar per system and workload and writes the figure as a PDF. The --mode
+option selects the input format and the figure layout.
+"""
 import argparse
 import csv
 import math

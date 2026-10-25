@@ -1,23 +1,22 @@
 #!/bin/bash
-# Edited for the artifact: ${NODE_A} ${NODE_B} ${NODE_C} (user@host) and
-# ${NODE_A_HOST} ${NODE_B_HOST} ${NODE_C_HOST} replace the CloudLab login
-# and the three node hostnames. OZONEDB_HOME comes from the
-# environment. Everything else is as run.
-# New experiment 2026-08-29, after the filter-copy fix (3b28a2cd). This chain re-measures
-# the 10 GB cells on the fixed build. The write-up quotes the throughput and CPU columns
-# of these cells. The 10 GB snapshot is /mnt/corfu/load. chain_oz100c.sh reloaded it.
+# Measure the OzoneKV cells at 10 GB on the build with the filter-copy fix.
+# The script expects the 10 GB snapshot in /mnt/corfu/load. sweep_oz100c.sh makes it.
 # Tags: -10g-fix (RAM, a, linearizable), -10g-fix-tier, -10g-fix-scale, -10g-fix-jni.
-# The a@100m and c@80m cells are already in -10g-fix. Runs detached on the laptop after
-# chain_oz100c.sh ends with CHAIN-DONE.
+# The a@100m and c@80m cells of -10g-fix come from sweep_oz100c.sh.
+# Before you start the script, set these variables:
+#   - OZONEDB_HOME: the root of this repository
+#   - NODE_A, NODE_B, NODE_C: the SSH login (user@host) of each cluster node
+#   - NODE_A_HOST, NODE_B_HOST, NODE_C_HOST: the hostname of each cluster node
+# The script writes its log to bench/results/local/cost-sweeps/.
 set -euo pipefail
-trap 'echo "[chain $(date "+%F %T")] CHAIN-FAILED rc=$? line $LINENO"' ERR
+trap 'echo "[sweep $(date "+%F %T")] SWEEP-FAILED rc=$? line $LINENO"' ERR
 export OZONEDB_HOME=${OZONEDB_HOME:?set OZONEDB_HOME to the ozonedb checkout}
 cd "$OZONEDB_HOME"
-TAG=cost2-20260828
+TAG=cost-20260828
 SRV=${NODE_A}
 HOSTS=$(python3 bench/scripts/ycsb_config.py --list clients --field ssh | paste -s -d, -)
 hosts_n() { echo "$HOSTS" | tr ',' '\n' | head -n "$1" | paste -s -d, -; }
-step() { echo "[chain $(date '+%F %T')] $*"; }
+step() { echo "[sweep $(date '+%F %T')] $*"; }
 RUN=bench/scripts/local/run_multinode_ycsb_with_corfu.sh
 RC=10000000
 
@@ -55,4 +54,4 @@ run_tier10 2684354560  c     300
 run_tier10 5368709120  "c a" 600
 run_tier10 21474836480 "a c" 1800
 ssh -o BatchMode=yes "$SRV" 'pkill -KILL -f "org.corfudb.infrastructure.[C]orfuServer" || true; df -h /tank/ssd | tail -1'
-step "CHAIN-DONE"
+step "SWEEP-DONE"

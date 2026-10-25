@@ -1,3 +1,10 @@
+"""Run a YCSB phase on several client hosts at the same time.
+
+The script reads the hosts from ycsb.yaml. It starts the multi-process runner on every
+host over SSH, streams the remote logs, and copies the result files back with scp. Then
+it writes one cross-node aggregate file. If a server sampler is configured, it starts
+the sampler on the server before the run and collects the sample after the run.
+"""
 import sys
 import argparse
 import os
@@ -779,7 +786,7 @@ def main():
     if cell_timeout is None and args.max_exec_time:
         cell_timeout = args.max_exec_time * 2 + 120
 
-    # A SIGTERM (the trap of the shell wrapper, a killed campaign chain) must
+    # A SIGTERM (the trap of the shell wrapper, a killed experiment sweep) must
     # not leave the writers on the clients. They would sit on a stopped
     # Corfu until the preflight of the next cell finds them.
     def on_term(signum, frame):

@@ -149,7 +149,7 @@ share of the run. Cells at 8 writers and above stay in single digits.
     32 writers. So a ratio against it is not informative above 2 writers. Its
     bars disappear where the rate rounds to zero.
 
-## Cost projection (source: cost2-serial/bench/RESULTS-cost.md)
+## Cost projection (source: figure12_cost/data/results-cost-20260828-projection.tsv)
 
 The table gives USD per month at 10,000 ops/s, RF=3, priced against
 `cassandra-serial`. Serial and quorum give the same dollar lines, so the

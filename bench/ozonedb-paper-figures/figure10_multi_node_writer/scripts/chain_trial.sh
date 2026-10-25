@@ -1,11 +1,12 @@
 #!/bin/bash
-# Edited for publication: the CloudLab login and the server hostname were replaced by
-# ${NODE_B} (user@host) and ${SSH_USER}. OZONEDB_HOME comes from the environment.
-# Everything else is as run.
-# PLAN-strict-100g: one trial of the strict frontier at 100 GB.
-# Usage: chain_trial.sh <trial number>. The script runs detached on the laptop.
-# Cassandra runs first, then OzoneDB. They share the server and must never
-# run at the same time.
+# Run one trial of the strict-consistency frontier at 100 GB.
+# The script runs Cassandra first, then OzoneKV. The two systems share the server node.
+# WARNING: Never run Cassandra and OzoneKV at the same time.
+# Usage: chain_trial.sh <trial number: 1, 2 or 3>
+# Before you start the script, set these variables:
+#   - OZONEDB_HOME: the root of this repository
+#   - NODE_B: the SSH login (user@host) of the server node
+#   - SSH_USER: the SSH user on the client nodes
 set -euo pipefail
 trap 'echo "[chain $(date "+%F %T")] CHAIN-FAILED rc=$? line $LINENO"' ERR
 T=${1:?trial number (1, 2 or 3)}

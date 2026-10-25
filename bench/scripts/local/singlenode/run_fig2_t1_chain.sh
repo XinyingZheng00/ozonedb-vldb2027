@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
-# Wait for the in-flight Fig 2 multi-writer sweep (PID passed as $1) to exit,
-# then launch a follow-up sweep with --threads 1 for every (system, workload)
-# pair so the scaling lines have a single-thread baseline.
-#
-# Designed to survive SSH disconnect: invoked under setsid + nohup, ignores
-# stdin, redirects all output to a dedicated log.
+# Wait for the Fig 2 multi-writer sweep to exit. $1 is its PID.
+# Then start a second sweep with --threads 1 for every (system, workload) pair. This
+# sweep gives the scaling lines a single-thread baseline.
+# The script ignores stdin and writes all output to its own log file, so it continues
+# after an SSH disconnect.
 
 set -uo pipefail
 

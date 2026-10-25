@@ -2,8 +2,7 @@
 
 It only exposes what the MLflow metric-write bridge needs: open, put, get,
 remove and close. Each OzoneDB() instance holds its own handle. Open one
-per thread or process. This matches the T/P convention documented in
-PHASE_REPORT.md Phase 0: each thread or process opens its own independent
+per thread or process. The convention is this: each thread or process opens its own independent
 DB* to the same on-disk directory. There is no internal cross-handle
 locking to rely on instead.
 """

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Functional check. The first cz cell must have a hit rate far above the
 scrambled-zipfian cell at the same cache (0.14 at 100 MiB / 10 GB). Exit 1 stops
-the chain."""
+the sweep."""
 import csv
 import os
 import subprocess
@@ -9,7 +9,7 @@ import sys
 
 results_dir = sys.argv[1]
 home = os.environ["OZONEDB_HOME"]
-tsv = os.path.join(home, "bench/results/local/cost2-chains/zipf_check.tsv")
+tsv = os.path.join(home, "bench/results/local/cost-sweeps/zipf_check.tsv")
 subprocess.run([sys.executable, os.path.join(home, "bench/scripts/extract_cost_coefficients.py"),
                 results_dir, "--window", "60", "--tsv", tsv], check=True)
 rows = [r for r in csv.DictReader(open(tsv), delimiter="\t") if r["workload"] == "cz"]

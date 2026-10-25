@@ -1,3 +1,10 @@
+"""Load the YCSB dataset with N parallel writer processes.
+
+The script generates one config file per writer from the shared base config. It
+partitions the record range over the writers. Then it starts N YCSB load processes
+and waits for them. At the end it parses the writer result files and writes one
+aggregate file. The run scripts import the helper functions of this module.
+"""
 import sys
 import subprocess
 import os

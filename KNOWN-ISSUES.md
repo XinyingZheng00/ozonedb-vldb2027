@@ -102,7 +102,7 @@ Fixed already: `SIGPIPE` on a Corfu restart (every non-JVM process died with
     then parked, item 1). The Corfu configs set
     `task_heartbeat_threshold_ticks` to 200 for this reason.
     `task_log_handler.cpp`.
-25. **Fixed on `port/experiment-plot`, listed so the symptom is findable.**
+25. **Fixed, listed so the symptom is findable.**
     `FileStorage::read` shared one `ifstream` per file across threads with
     no lock around seek + read; a reclaimed last-level task ran with no
     output version; a compaction whose input a peer had removed published

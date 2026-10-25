@@ -23,13 +23,13 @@ measured decade and dotted beyond it, filled markers on the measured sizes
 and none beyond, one "cheaper from" marker per OzoneKV line,
 and the 10 TB and 100 TB value labels. --read-fraction overrides
 prices.json's projection.read_fraction (the offered mix; writes are blind
-puts, so this is the insert workload `ai` of PLAN-cost-2, not workload a).
+puts, so this is the insert workload `ai` of the cost experiment, not workload a).
 Panel (b) is one decade of the same model split into its cost lines.
 Everything is computed here from Coefficients and Model; nothing is typed in.
 
 The paper's fig_cost* came from (run in bench/ozonedb-paper-figures/figure12_cost/scripts/):
 
-  python3 paper_cost_figure.py ../data/results-cost2-20260828.tsv ../data/prices.json \
+  python3 paper_cost_figure.py ../data/results-cost-20260828.tsv ../data/prices.json \
       --space ../data/space.json --tier-variant ch64k-adm \
       --cassandra-mode serial --read-fraction 0.10 --out ../fig_cost
 

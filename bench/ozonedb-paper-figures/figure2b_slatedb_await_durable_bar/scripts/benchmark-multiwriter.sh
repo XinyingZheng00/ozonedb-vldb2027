@@ -2,6 +2,13 @@
 
 set -eu # stop on errors and undefined variables
 
+# Run the SlateDB multi-writer benchmark and collect the results in a CSV file.
+# For each trial the script runs the slatedb-bencher multi-writer command for 60 s with
+# the given writer count, concurrency, put percentage and flush interval. It writes the
+# log of each run to target/bencher/results/logs and appends the final statistics to the
+# results CSV. Set SLATEDB_BENCH_AWAIT_DURABLE to add --await-durable to each run. Set
+# SLATEDB_BENCH_CLEAN to start each run from an empty path. The script reads the AWS
+# credentials from .env_aws if that file exists.
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export RUST_LOG=${RUST_LOG:-bencher=info}
 OUT="target/bencher/results"

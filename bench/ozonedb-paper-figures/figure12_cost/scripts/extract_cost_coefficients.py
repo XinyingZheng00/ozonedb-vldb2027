@@ -64,7 +64,7 @@ LOAD_RE = re.compile(
     r"_t(?P<thread>\d+)\.result$"
 )
 # `_rc<N>` is the record count of a load cell. The two load wrappers write it
-# because both dataset sizes of a campaign load into the same results root
+# because both dataset sizes of an experiment load into the same results root
 # and the same sample cell name. The 10 GB load of cost-20260827 overwrote
 # the server sample of the 1 GB load. A sample with `_rc` matches only rows
 # of that record count. A sample without it matches any row. Run cells have

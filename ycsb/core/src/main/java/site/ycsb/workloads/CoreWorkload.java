@@ -523,7 +523,7 @@ public class CoreWorkload extends Workload {
       // A zipfian (theta 0.99) over THIS key space, hottest at insertstart. The
       // "zipfian" branch above is a ScrambledZipfianGenerator over 10^10 items
       // folded onto the key space by fnvhash64, which is close to uniform beyond
-      // a few hundred hot keys (bench/PLAN-cost-2.md, Task 0b). Same bounds as
+      // a few hundred hot keys. Same bounds as
       // that branch; a key number past the last insert is rejected by
       // nextKeynum(). With the default insertorder=hashed the hot key numbers
       // hash to key strings scattered over the whole key range, so the skew

@@ -27,14 +27,14 @@ Panel (a) is the figure of plot_cost_model.py, cut to what the text argues from:
   - the 10 TB and 100 TB value labels
 --read-fraction overrides projection.read_fraction of prices.json. This is
 the offered mix. Writes are blind puts, so this is the insert workload `ai`
-of PLAN-cost-2, not workload a. Panel (b) is one decade of the same model
+of the cost experiment, not workload a. Panel (b) is one decade of the same model
 split into its cost lines. The script computes everything from Coefficients
 and Model. Nothing is typed in.
 
 The paper's fig_cost* came from this command (run in
 bench/ozonedb-paper-figures/figure12_cost/scripts/):
 
-  python3 paper_cost_figure.py ../data/results-cost2-20260828.tsv ../data/prices.json \
+  python3 paper_cost_figure.py ../data/results-cost-20260828.tsv ../data/prices.json \
       --space ../data/space.json --tier-variant ch64k-adm \
       --cassandra-mode serial --read-fraction 0.10 --out ../fig_cost
 

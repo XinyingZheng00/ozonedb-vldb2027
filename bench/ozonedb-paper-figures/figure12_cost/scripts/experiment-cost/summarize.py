@@ -8,7 +8,7 @@ import subprocess
 import sys
 
 home = os.environ["OZONEDB_HOME"]
-tsv = os.path.join(home, "bench/results/local/cost2-chains/summary.tsv")
+tsv = os.path.join(home, "bench/results/local/cost-sweeps/summary.tsv")
 dirs = sys.argv[1:]
 subprocess.run([sys.executable, os.path.join(home, "bench/scripts/extract_cost_coefficients.py"),
                 *dirs, "--window", "60", "--tsv", tsv], check=True, stdout=subprocess.DEVNULL)

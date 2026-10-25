@@ -69,7 +69,7 @@ Usage: $(basename "$0") [options]
   --workloads "a b c"       space-separated workload letters (default: "$WORKLOADS")
   --writers-list "1 2"      space-separated writers_per_host values (default: "$WRITERS_LIST")
   --trials N                run trials 1..N (default: $TRIALS)
-  --trial N                 run exactly trial N (campaign-driver form; excludes --trials)
+  --trial N                 run exactly trial N (experiment-driver form; excludes --trials)
   --duration SECONDS        cap every YCSB run (forwarded as --max_exec_time)
   --consistency MODE        one | quorum | serial: forwarded to every client as
                             --cassandra_consistency; result files are labelled

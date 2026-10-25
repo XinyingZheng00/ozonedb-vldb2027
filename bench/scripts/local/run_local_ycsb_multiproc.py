@@ -1,3 +1,9 @@
+"""Run the YCSB run phase with N parallel writer processes.
+
+The script generates one config file per writer from the shared base config. Then it
+starts N YCSB run processes against the loaded dataset and waits for them. At the end
+it parses the writer result files and writes one aggregate file.
+"""
 import sys
 import subprocess
 import os

@@ -1,3 +1,9 @@
+"""Compute the time share of open/close against operations from two perf recordings.
+
+The script reads the folded call graphs of two db_bench runs: one with a reopen after
+each operation, and one without. It classifies each sample by its leaf symbol. Then it
+prints the share of time in open/close and the share of time in operations.
+"""
 import subprocess
 import re
 import sys

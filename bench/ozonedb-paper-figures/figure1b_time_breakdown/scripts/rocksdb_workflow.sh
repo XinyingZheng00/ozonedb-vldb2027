@@ -1,3 +1,9 @@
+#!/bin/bash
+# Build RocksDB db_bench and run the reopen benchmark.
+# The script installs the build dependencies, builds db_bench, runs
+# tools/reopen_benchmark.sh in processes mode and plots the CSV result. The commented
+# commands at the end record the perf runs that analyse_time_share.py reads.
+# Run the script from the root of a RocksDB checkout that has the two tools scripts.
 sudo apt-get update && sudo apt-get install libgflags-dev python3-pip linux-tools-common linux-tools-generic && sudo apt-get install libsnappy-dev
 make clean && make db_bench DEBUG_LEVEL=0 -j$(nproc)
 

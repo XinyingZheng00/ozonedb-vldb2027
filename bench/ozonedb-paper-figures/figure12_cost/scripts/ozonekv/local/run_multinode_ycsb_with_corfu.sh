@@ -16,7 +16,7 @@ set -euo pipefail
 # iterations share one OZONEDB_RUN_TAG (--run-tag, default: timestamp), so
 # the result files land in one tagged dir.
 #
-# A campaign driver (crsqlite/bench/scripts/campaign/throughput.py) calls this
+# An experiment driver in the crsqlite repo calls this
 # once per cell: --trial N --duration S --run-tag TAG [--linearizable]
 # --workloads <wl> --writers-list <wph> --client-hosts <prefix>. The read mode
 # is a flag, never a ycsb.yaml edit. The script forwards --linearizable to
@@ -72,7 +72,7 @@ WORKLOADS="a b c d f"
 WRITERS_LIST="1 2 4 8"
 TRIALS=1
 TRIALS_SET=0
-TRIAL=""          # --trial N: exactly this trial (what a campaign driver passes)
+TRIAL=""          # --trial N: exactly this trial (what an experiment driver passes)
 DURATION=""       # --duration S: forwarded to every client as --max_exec_time
 LINEARIZABLE=0    # --linearizable: strict reads, label ozonedb-corfu-linearizable
 LOG_TRIM=0        # --log-trim: writer 0 checkpoints and trims the Corfu stream
@@ -122,7 +122,7 @@ Usage: $(basename "$0") [options]
   --trials N                run trials 1..N per (workload, writers_per_host)
                             (default: $TRIALS)
   --trial N                 run exactly trial N -- one cell per invocation,
-                            as a campaign driver does. Excludes --trials.
+                            as an experiment driver does. Excludes --trials.
   --duration SECONDS        cap every YCSB run at this many seconds
                             (forwarded to each client as --max_exec_time;
                             default: each client's local.run.max_exec_time)
@@ -323,7 +323,7 @@ start_corfu() {
   # LATEST of the snapshot after the mirror, with no condition. mc cp always
   # overwrites. The manifests and SSTables have unique names.
   corfu_sh "if [ -d /mnt/corfu/load-bucket ]; then mc mirror --overwrite --remove --quiet /mnt/corfu/load-bucket $MC_ALIAS/$S3_BUCKET >/dev/null && cd /mnt/corfu/load-bucket && find . -type f -name LATEST | while read -r f; do mc cp --quiet \"\$f\" \"$MC_ALIAS/$S3_BUCKET/\${f#./}\" >/dev/null || exit 1; done && echo '[corfu] bucket restored from /mnt/corfu/load-bucket (LATEST forced)'; else echo '[corfu] WARNING: no /mnt/corfu/load-bucket snapshot; bucket left as is'; fi"
-  # The trailing & must apply only to nohup, not to the whole chain. Otherwise
+  # The trailing & must apply only to nohup, not to the whole command. Otherwise
   # ssh holds stdout open on a foreground subshell and hangs.
   corfu_sh "cd $CORFU_DIR && rm -rf /mnt/corfu/run_batch/ && cp -r /mnt/corfu/load/ /mnt/corfu/run_batch/ && ( setsid nohup env CORFUDB_HEAP=122880 ./bin/corfu_server -l /mnt/corfu/run_batch -s -a $CORFU_BIND_HOST $CORFU_PORT </dev/null >$CORFU_LOG 2>&1 & )"
   sleep 10
@@ -382,7 +382,7 @@ RESULTS=()
 
 # All trials/workloads/writers iterations land under this single tag.
 # run_multinode_ycsb.py also passes it through to each client host, so
-# every node writes into the same tag dir. With --run-tag, a campaign driver
+# every node writes into the same tag dir. With --run-tag, an experiment driver
 # can collect many invocations (one per cell) in one dir.
 export OZONEDB_RUN_TAG="${RUN_TAG:-$(date +%Y%m%d-%H%M%S)}"
 READ_MODE=default

@@ -1,22 +1,24 @@
 #!/bin/bash
-# Edited for the artifact: ${NODE_A} ${NODE_B} ${NODE_C} (user@host) and
-# ${NODE_A_HOST} ${NODE_B_HOST} ${NODE_C_HOST} replace the CloudLab login
-# and the three node hostnames. OZONEDB_HOME comes from the
-# environment. Everything else is as run.
-# One cell: workload ai (50 % read, 50 % blind insert) at 100 GB, 100 MiB RAM, 300 s,
-# on the probe-counter build. Twin of the workload-a diag cell of the same tag. That
-# cell pays a read-modify-write per update. This chain first pushes
-# ycsb/workloads/workloadai to the clients. No rebuild is needed: the file is data,
-# not code. Runs detached on the laptop.
+# Measure one OzoneKV cell: workload ai (50 % read, 50 % blind insert) at 100 GB,
+# 100 MiB RAM, 300 s, on the build with the probe counters.
+# The cell is the pair of the workload-a cell of the same tag, which pays a
+# read-modify-write per update.
+# First the script copies ycsb/workloads/workloadai to the clients. A rebuild is not
+# necessary: the file is data, not code.
+# Before you start the script, set these variables:
+#   - OZONEDB_HOME: the root of this repository
+#   - NODE_A, NODE_B, NODE_C: the SSH login (user@host) of each cluster node
+#   - NODE_A_HOST, NODE_B_HOST, NODE_C_HOST: the hostname of each cluster node
+# The script writes its log to bench/results/local/cost-sweeps/.
 set -euo pipefail
-trap 'echo "[chain $(date "+%F %T")] CHAIN-FAILED rc=$? line $LINENO"' ERR
+trap 'echo "[sweep $(date "+%F %T")] SWEEP-FAILED rc=$? line $LINENO"' ERR
 export OZONEDB_HOME=${OZONEDB_HOME:?set OZONEDB_HOME to the ozonedb checkout}
 export ANSIBLE_CONFIG=$OZONEDB_HOME/bench/ansible/ansible.cfg
 cd "$OZONEDB_HOME"
-TAG=cost2-20260828
+TAG=cost-20260828
 SRV=${NODE_A}
 HOSTS=$(python3 bench/scripts/ycsb_config.py --list clients --field ssh | paste -s -d, -)
-step() { echo "[chain $(date '+%F %T')] $*"; }
+step() { echo "[sweep $(date '+%F %T')] $*"; }
 R=bench/results/local
 
 step "guard: server clear"
@@ -36,4 +38,4 @@ f=$(ls $R/$TAG-100g-diag/1KB-999999999-100000000-workloadai-*lru100m_w0of8_t1_tr
 awk '/\[lru_cache\] (sstable|levels)/' "$f" | cut -c1-400
 awk '/\[READ\], Operations|\[INSERT\], Operations|Return=OK|Return=ERROR/' "$f" | head -6
 ssh -o BatchMode=yes "$SRV" 'pkill -KILL -f "org.corfudb.infrastructure.[C]orfuServer" || true'
-step "CHAIN-DONE"
+step "SWEEP-DONE"

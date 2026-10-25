@@ -1,28 +1,27 @@
 #!/bin/bash
-# Edited for the artifact: ${NODE_A} ${NODE_B} ${NODE_C} (user@host) and
-# ${NODE_A_HOST} ${NODE_B_HOST} ${NODE_C_HOST} replace the CloudLab login
-# and the three node hostnames. OZONEDB_HOME comes from the
-# environment. Everything else is as run.
-# Cassandra at 100 GB on the 2026-08-29 cluster: the load, then the workload-a and
-# workload-ai cells. This gives the OzoneDB insert-against-update pair at 100 GB a twin
-# of the same size on the same box. The old cluster's 100 GB Cassandra cells (2026-08-28)
-# stay in the corpus.
-#
-# No snapshot: load_multinode_cassandra.sh ends with save-load, which copies data to
-# data.load (about 107 GB more). /tank/ssd has 169 GB free, so the pair (214 GB) does
-# not fit. This chain therefore drives cassandra_ctl.sh by hand: wipe, start, schema,
-# load. It runs both cells with --no-restore. Cell order: a first (clean dataset), then
-# ai. The inserts of ai add about 300k keys to the 100 M.
+# Measure Cassandra at 100 GB: the load, then the workload-a and workload-ai cells.
+# The two cells give the OzoneKV insert-against-update pair at 100 GB
+# a Cassandra pair of the same size.
+# The script does not make a snapshot. load_multinode_cassandra.sh ends with save-load,
+# which copies the data to data.load (about 107 GB more). The disk does not have space
+# for the pair. So the script drives cassandra_ctl.sh step by step: wipe, start, schema,
+# load. It runs both cells with --no-restore. It runs cell a first, on the clean dataset,
+# then cell ai. The inserts of ai add about 300k keys to the 100 M.
+# Before you start the script, set these variables:
+#   - OZONEDB_HOME: the root of this repository
+#   - NODE_A, NODE_B, NODE_C: the SSH login (user@host) of each cluster node
+#   - NODE_A_HOST, NODE_B_HOST, NODE_C_HOST: the hostname of each cluster node
+# The script writes its log to bench/results/local/cost-sweeps/.
 set -euo pipefail
-trap 'echo "[chain $(date "+%F %T")] CHAIN-FAILED rc=$? line $LINENO"' ERR
+trap 'echo "[sweep $(date "+%F %T")] SWEEP-FAILED rc=$? line $LINENO"' ERR
 export OZONEDB_HOME=${OZONEDB_HOME:?set OZONEDB_HOME to the ozonedb checkout}
 cd "$OZONEDB_HOME"
-TAG=cost2-20260828
+TAG=cost-20260828
 SRV=${NODE_A}
 C0=${NODE_C}
 CTL=/tank/cassandra/cassandra_ctl.sh
 HOSTS=$(python3 bench/scripts/ycsb_config.py --list clients --field ssh | paste -s -d, -)
-step() { echo "[chain $(date '+%F %T')] $*"; }
+step() { echo "[sweep $(date '+%F %T')] $*"; }
 RUN=bench/scripts/local/run_multinode_ycsb_with_cassandra.sh
 
 step "guard: corfu down; free the 10 GB cassandra trees"
@@ -45,4 +44,4 @@ bash $RUN --consistency quorum --record-cnt 100000000 --no-restore --workloads a
 
 step "stop cassandra, report space"
 ssh -o BatchMode=yes "$SRV" "$CTL stop || true; df -h /tank/ssd | tail -1"
-step "CHAIN-DONE"
+step "SWEEP-DONE"

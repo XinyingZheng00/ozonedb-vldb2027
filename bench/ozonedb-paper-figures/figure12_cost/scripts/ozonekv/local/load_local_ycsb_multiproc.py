@@ -1,3 +1,10 @@
+"""Load the YCSB dataset with N parallel writer processes.
+
+The script generates one config file per writer from the shared base config. It
+partitions the record range over the writers. Then it starts N YCSB load processes
+and waits for them. At the end it parses the writer result files and writes one
+aggregate file. The run scripts import the helper functions of this module.
+"""
 import sys
 import subprocess
 import os
@@ -193,7 +200,7 @@ def cache_warm_corfu_settings(corfu_settings, max_level=None, max_fraction=None)
 
     Every generated shared_config gets cache_warm_enabled=true, and the result
     files get a `-warm` token. So the A/B cells of one tag never overwrite
-    each other. The campaign sweeps two policy knobs: cache_warm_max_level
+    each other. The experiment sweeps two policy knobs: cache_warm_max_level
     and cache_warm_max_fraction (the engine defaults are 1 and 0.25). When
     given, they ride along and add `-wl<N>` / `-wf<percent>` to the token.
     One override, one place, the way --log-trim and --lru-cache-bytes work.

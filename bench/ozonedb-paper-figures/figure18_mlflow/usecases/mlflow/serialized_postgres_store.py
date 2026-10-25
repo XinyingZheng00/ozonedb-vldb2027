@@ -8,8 +8,7 @@ of Phase 2c: the real workload of OzoneDB measured avg_batch=1.00, that
 is, it never naturally gets to batch either. We use this control to test
 one question. Is the speed of Postgres under concurrency (the P-sweep of
 Phase 2c) actually explained by WAL group commit? Or is it explained by
-something else in its architecture, independent of batching? See
-PHASE_REPORT.md for the result.
+something else in its architecture, independent of batching?
 
 The control is a SQLAlchemy `before_commit` session event, not an
 override of `_log_metrics`. So it runs against the real, unmodified

@@ -1,3 +1,8 @@
+"""Generate a YCSB workload file for the crsqlite benchmark.
+
+The script copies a base workload file and sets the record count and the operation
+count. See generate_workload() for the details.
+"""
 import os
 import argparse
 

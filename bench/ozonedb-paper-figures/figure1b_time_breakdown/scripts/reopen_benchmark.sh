@@ -1,4 +1,11 @@
 #!/bin/bash
+# Measure RocksDB db_bench with N workers on one database.
+# RUNNER_MODE selects the worker type. "threads" runs N threads in one process.
+# "processes" runs N processes with one thread each, every one with a reopen after each
+# operation. For each worker count the script copies a fresh database, runs updaterandom
+# for 30 s and appends the throughput, the latency percentiles and the open time to a CSV
+# file. It repeats each cell five times. Run the script from the RocksDB build directory
+# that holds db_bench.
 
 # Runner mode. "threads" runs N threads in one process.
 # "processes" runs N processes with 1 thread each.

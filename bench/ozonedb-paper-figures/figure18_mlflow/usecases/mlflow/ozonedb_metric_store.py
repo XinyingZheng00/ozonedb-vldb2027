@@ -56,7 +56,7 @@ silent behavior drift from real MLflow:
      this in isolation at about 0.1-0.16% over 2500 concurrent attempts
      (5 threads x 500 calls). That was under the P-processes/T=5-threads-
      per-run benchmark design this file was originally built for. That
-     design is now superseded (see PHASE_REPORT.md Phase 2). Now one Ray
+     design is now superseded. Now one Ray
      Tune trial = one process = one run = one thread. So the race is now
      structurally impossible. No two writers ever touch the same
      `(run_uuid, key)`, because every run has exactly one writer for its
@@ -66,7 +66,7 @@ silent behavior drift from real MLflow:
      uncontended lock (one that only a single thread ever acquires, and
      never waits on) is expected to be cheap. We re-measured at P=320
      after the removal, to check that expectation against real numbers
-     rather than assume it (see PHASE_REPORT.md Phase 2 for the result).
+     rather than assume it.
      **This is a latent race in the *own*
      `_update_latest_metrics_if_necessary` of MLflow, not something
      OzoneDB introduces**. It will resurface if this class is ever reused
@@ -105,8 +105,7 @@ class OzoneDBMetricStore(SqlAlchemyStore):
         self._local = threading.local()
 
     def _ozonedb(self):
-        # One OzoneDB handle per thread. This matches the T convention
-        # documented in PHASE_REPORT.md Phase 0. There is no cross-handle
+        # One OzoneDB handle per thread. There is no cross-handle
         # locking inside OzoneDB to rely on instead.
         db = getattr(self._local, "db", None)
         if db is None:

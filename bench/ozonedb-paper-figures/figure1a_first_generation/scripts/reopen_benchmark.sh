@@ -1,4 +1,11 @@
 #!/bin/bash
+# Measure RocksDB db_bench with and without a reopen after each operation.
+# The script creates one database. Then it runs two passes over the thread counts. The
+# first pass runs updaterandom with --reopen_after_each_op (the "multi-process" rows).
+# The second pass runs updaterandom without it (the "multi-thread" rows). For each cell
+# the script copies a fresh database, runs for 30 s, and appends the throughput, the
+# latency percentiles and the open time to a CSV file. It repeats each cell five times.
+# Run the script from the RocksDB build directory that holds db_bench.
 
 # Build the CSV file name from the current date and time.
 CSV_FILE="results_$(date '+%Y%m%d_%H%M%S').csv"

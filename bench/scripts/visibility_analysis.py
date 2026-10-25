@@ -3,7 +3,7 @@
 
 Stdlib-only and OZONEDB_HOME-independent so it runs anywhere the results
 land: consistency.py imports it for same-host runs, and the cross-node
-wrapper (run_visibility_cross_node.sh) invokes it on the laptop after
+wrapper (run_visibility_cross_node.sh) invokes it on the orchestrator after
 pulling the writer's and reader's output dirs together.
 
 Cross-node runs pass --cross-node: writer and reader clocks are separate

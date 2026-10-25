@@ -20,7 +20,7 @@
 set -euo pipefail
 : "${OZONEDB_HOME:?OZONEDB_HOME must point at the repo root}"
 cd "$OZONEDB_HOME"
-TAG=cost2-20260828
+TAG=cost-20260828
 R=bench/results/local
 EX="python3 bench/scripts/extract_cost_coefficients.py"
 PY="uv run --quiet --with matplotlib python3"

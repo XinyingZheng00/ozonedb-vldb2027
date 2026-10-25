@@ -1,3 +1,10 @@
+"""Run a YCSB phase on several client hosts at the same time.
+
+The script reads the hosts from ycsb.yaml. It starts the multi-process runner on every
+host over SSH, streams the remote logs, and copies the result files back with scp. Then
+it writes one cross-node aggregate file. If a server sampler is configured, it starts
+the sampler on the server before the run and collects the sample after the run.
+"""
 import sys
 import argparse
 import os

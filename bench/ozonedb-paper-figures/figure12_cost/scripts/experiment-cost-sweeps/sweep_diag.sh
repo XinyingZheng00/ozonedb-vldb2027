@@ -1,23 +1,24 @@
 #!/bin/bash
-# Edited for the artifact: ${NODE_A} ${NODE_B} ${NODE_C} (user@host) and
-# ${NODE_A_HOST} ${NODE_B_HOST} ${NODE_C_HOST} replace the CloudLab login
-# and the three node hostnames. OZONEDB_HOME comes from the
-# environment. Everything else is as run.
-# Diagnostic for the wasted SSTable fetches on workload a (1.35 fetches per read at
-# 100 GB against 1.02 on c). This chain runs one workload-a and one workload-c cell at
-# 100 GB on the build with the probe counters (1662446b). Then it prints the per-level
-# probes/pruned/absent lines of writer 0. First it swaps the 100 GB snapshot back into
-# /mnt/corfu/load. The 10 GB snapshot goes to load-10g. Runs detached after
-# chain_oz10fix.sh and a `sync.yml -e build=true`.
+# Diagnose the extra SSTable fetches on workload a (1.35 fetches per read at 100 GB,
+# against 1.02 on workload c).
+# The script runs one workload-a cell and one workload-c cell at 100 GB on the build with
+# the probe counters. Then it prints the per-level probes/pruned/absent lines of writer 0.
+# First it moves the 100 GB snapshot back into /mnt/corfu/load and the 10 GB snapshot
+# into load-10g.
+# Before you start the script, set these variables:
+#   - OZONEDB_HOME: the root of this repository
+#   - NODE_A, NODE_B, NODE_C: the SSH login (user@host) of each cluster node
+#   - NODE_A_HOST, NODE_B_HOST, NODE_C_HOST: the hostname of each cluster node
+# The script writes its log to bench/results/local/cost-sweeps/.
 set -euo pipefail
-trap 'echo "[chain $(date "+%F %T")] CHAIN-FAILED rc=$? line $LINENO"' ERR
+trap 'echo "[sweep $(date "+%F %T")] SWEEP-FAILED rc=$? line $LINENO"' ERR
 export OZONEDB_HOME=${OZONEDB_HOME:?set OZONEDB_HOME to the ozonedb checkout}
 cd "$OZONEDB_HOME"
-TAG=cost2-20260828
+TAG=cost-20260828
 SRV=${NODE_A}
 C0=${NODE_C}
 HOSTS=$(python3 bench/scripts/ycsb_config.py --list clients --field ssh | paste -s -d, -)
-step() { echo "[chain $(date '+%F %T')] $*"; }
+step() { echo "[sweep $(date '+%F %T')] $*"; }
 RUN=bench/scripts/local/run_multinode_ycsb_with_corfu.sh
 RC=100000000
 R=bench/results/local
@@ -41,4 +42,4 @@ for wl in a c; do
   awk '/\[READ\], Operations|\[READ\], Return=/' "$f"
 done
 ssh -o BatchMode=yes "$SRV" 'pkill -KILL -f "org.corfudb.infrastructure.[C]orfuServer" || true'
-step "CHAIN-DONE"
+step "SWEEP-DONE"
