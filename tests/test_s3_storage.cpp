@@ -1,17 +1,16 @@
 // S3Storage against a live S3-compatible server (MinIO in practice). The
-// suites self-skip unless S3_TEST_ENDPOINT is set, so `ctest` stays green
-// without one; bench/scripts/minio_local.sh test starts a server and sets it.
+// suites self-skip unless S3_TEST_ENDPOINT is set; bench/scripts/minio_local.sh
+// test starts a server and sets it.
 //
 //   S3_TEST_ENDPOINT    e.g. http://127.0.0.1:9000
 //   S3_TEST_BUCKET      default ozonedb-sstables; must already exist
 //   S3_TEST_ACCESS_KEY  default minioadmin
 //   S3_TEST_SECRET_KEY  default minioadmin
 //
-// Off EC2, also set AWS_EC2_METADATA_DISABLED=true (the script does): the
-// SDK otherwise probes the instance-metadata endpoint for every client.
+// Off EC2, also set AWS_EC2_METADATA_DISABLED=true: the SDK otherwise
+// probes the instance-metadata endpoint for every client.
 //
-// Every test writes under its own key prefix, so reruns against a server
-// that kept its data do not collide.
+// Every test writes under its own key prefix, so reruns do not collide.
 #ifdef OZONEDB_ENABLE_S3
 #include "db.h"
 #include "s3_storage.h"
@@ -174,8 +173,8 @@ class CompactionCounter : public EventListener {
   void onLogCompactionCompletion(int) override { ++log_compactions; }
 };
 
-// test_db.json's small limits (so a few hundred puts compact) with the
-// log on local files and the SSTables in the bucket under `sstable_dir`.
+// Small limits, so a few hundred puts compact. The log is on local files
+// and the SSTables are in the bucket under `sstable_dir`.
 std::string writeS3DBConfig(std::string const& sstable_dir) {
   std::string const file = testenv::path("s3_db.json");
   std::ofstream(file) << "{\n"
@@ -201,13 +200,13 @@ std::string writeS3DBConfig(std::string const& sstable_dir) {
 
 }  // namespace
 
-// The paper's split (§3.5): log on one backend, SSTables in the object
+// The split of paper §3.5: log on one backend, SSTables in the object
 // store. Puts enough to force log compactions, which write SSTables to S3,
 // then reads every key back after a reopen.
 //
-// The puts come in rounds: the data log rolls on the tail size the view
-// holds, which a background thread refreshes every 100 ms, so a burst of
-// puts lands in a single log file and leaves nothing to compact.
+// The puts come in rounds: the data log rolls on the tail size the View
+// holds, which a background thread refreshes every 100 ms. A burst of puts
+// lands in one log file and leaves nothing to compact.
 TEST(S3DBTest, sstables_round_trip_through_s3) {
   SKIP_IF_NO_S3();
   std::filesystem::remove_all(testenv::path("s3db/"));

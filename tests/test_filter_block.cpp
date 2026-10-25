@@ -11,7 +11,7 @@ using namespace ozonedb;
 inline void EncodeFixed32(char* dst, uint32_t value) {
   auto* const buffer = reinterpret_cast<uint8_t*>(dst);
 
-  // Recent clang and gcc optimize this to a single mov / str instruction.
+  // clang and gcc optimize this to a single store instruction.
   buffer[0] = static_cast<uint8_t>(value);
   buffer[1] = static_cast<uint8_t>(value >> 8);
   buffer[2] = static_cast<uint8_t>(value >> 16);
@@ -24,7 +24,7 @@ void PutFixed32(std::string* dst, uint32_t value) {
   dst->append(buf, sizeof(buf));
 }
 
-// For testing: emit an array with one hash value per key
+// Test filter policy: emits one hash value per key.
 class TestHashFilter : public FilterPolicy {
  public:
   char const* name() const override { return "TestHashFilter"; }
@@ -130,7 +130,7 @@ TEST_F(FilterBlockTest, MultiChunk) {
 }
 
 TEST_F(FilterBlockTest, MultiChunk1) {
-  // when block size > filter base size
+  // Block size larger than the filter base size.
   FilterBlockBuilder builder(&policy_);
 
   // First filter

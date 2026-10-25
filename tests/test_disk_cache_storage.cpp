@@ -59,9 +59,8 @@ class CountingStorage : public FileStorage {
   size_t last_len = 0;
 };
 
-// A CountingStorage whose ranged read deletes a path (the fill's private
-// temp file, by construction) after its Nth call, to exercise a part
-// vanishing mid-fill.
+// A CountingStorage whose ranged read deletes a path after its Nth call.
+// Simulates a fill's private temp file that vanishes mid-fill.
 class PartVanishingStorage : public CountingStorage {
  public:
   PartVanishingStorage(std::string const& path, std::string vanish_path, int vanish_on_call)
@@ -76,16 +75,10 @@ class PartVanishingStorage : public CountingStorage {
   int calls_ = 0;
 };
 
-// A CountingStorage whose ranged read counts its own calls -- so a test can
-// deterministically know the worker has begun a *specific* call instead of
-// guessing from a fixed delay -- and then sleeps before delegating, so the
-// test can reliably land on "the worker is mid-fill" (a bare sleep before
-// start is not synchronization and can race the worker's first dequeue). A one-shot "entered" bool is not
-// enough here: in the test below, the setup misses call this same read()
-// directly on the main thread, before the worker thread exists, so a
-// one-shot latch would already be tripped by the time the worker starts and
-// would provide no synchronisation at all. Counting lets the test snapshot the count immediately before starting
-// the worker and then wait for the worker's own call to advance it.
+// A CountingStorage whose ranged read counts its calls, then sleeps before
+// it delegates. A test snapshots the count before it starts the worker and
+// waits for the worker's own call to advance it. The sleep holds the worker
+// mid-fill while the test acts.
 class SlowStorage : public CountingStorage {
  public:
   SlowStorage(std::string const& path, std::chrono::milliseconds delay) : CountingStorage(path), delay_(delay) {}
@@ -102,10 +95,8 @@ class SlowStorage : public CountingStorage {
     std::lock_guard<std::mutex> lk(reads_mtx_);
     return reads_;
   }
-  // Blocks, bounded by `timeout`, until at least `n` calls to read() above
-  // have begun; false on timeout instead of hanging forever (e.g. if the
-  // worker skips the read entirely via fillOne's present/gone/budget
-  // early-outs).
+  // Waits until at least `n` calls to read() have begun. Returns false on
+  // timeout, for example when fillOne skips the read.
   bool waitForReadsAtLeast(int n, std::chrono::milliseconds timeout) {
     std::unique_lock<std::mutex> lk(reads_mtx_);
     return reads_cv_.wait_for(lk, timeout, [this, n] { return reads_ >= n; });
@@ -256,9 +247,8 @@ TEST(DiskCacheStorageTest, MissIsServedFromTheBackingAndCounted) {
   EXPECT_EQ(s.misses, 1u);
   EXPECT_EQ(s.miss_bytes, 4096u);
   EXPECT_EQ(s.hits, 0u);
-  // A read of an absent file fails and is not a local hit.
-  // FileStorage::read returns kNotFound (not kFailure) for a genuinely
-  // missing file (src/db/storage.cpp); the tier forwards it unchanged.
+  // A read of an absent file is not a local hit. FileStorage::read returns
+  // kNotFound for a missing file; the tier forwards it unchanged.
   EXPECT_EQ(f.tier->read("sstable1/absent.sst", data, 0, 10), Status::kNotFound);
 }
 
@@ -397,11 +387,9 @@ TEST(DiskCacheStorageTest, FillFailsCleanlyWhenItsPartVanishesMidway) {
   std::string const name = "sstable1/" + stamp() + ".sst";
   f.seed(name, 3 * 1024 + 1);
   std::string const fill_part = f.tier_dir + name + ".fillpart";
-  // Call 1 is the outer miss-serving read; calls 2-5 are the fill's own
-  // chunk reads (4 chunks: 3 full + 1 byte). Delete the fill's private temp
-  // file out from under it during its second chunk (overall call 3) --
-  // the write-through's .part is untouched, so this is purely a "the fill's
-  // own part vanished" race, not a shared-stream race.
+  // Call 1 is the miss-serving read; calls 2-5 are the fill's chunk reads
+  // (3 full chunks + 1 byte). The fill's private temp file is deleted during
+  // its second chunk, call 3. The write-through .part is untouched.
   auto owned = std::make_unique<PartVanishingStorage>(f.backing_dir, fill_part, /*vanish_on_call=*/3);
   f.backing = owned.get();
   f.tier = std::make_unique<DiskCacheStorage>(std::move(owned), o);
@@ -412,9 +400,8 @@ TEST(DiskCacheStorageTest, FillFailsCleanlyWhenItsPartVanishesMidway) {
   delete[] data;
   f.tier->waitFillIdle();
 
-  // No complete local file appears -- in particular not a truncated one --
-  // and the failure is counted, not silently swallowed or double-counted
-  // against fill_skipped_budget.
+  // No complete local file appears, not even a truncated one. The failure
+  // counts as fill_failed, not as fill_skipped_budget.
   EXPECT_FALSE(f.local(name));
   EXPECT_FALSE(std::filesystem::exists(fill_part));
   auto s = f.tier->stats();
@@ -437,35 +424,25 @@ TEST(DiskCacheStorageTest, StopIsSerialisedAcrossTheJoinAndWaitFillIdleIsNeverSt
   f.seed(name1, 100);
   f.seed(name2, 100);
 
-  // Two misses queue two fills before the worker runs, so both survive in
-  // the queue for the worker to pick up once started.
+  // Two misses queue two fills before the worker runs.
   unsigned char* data = nullptr;
   ASSERT_EQ(f.tier->read(name1, data, 0, 10), Status::kSuccess);
   delete[] data;
   ASSERT_EQ(f.tier->read(name2, data, 0, 10), Status::kSuccess);
   delete[] data;
 
-  // Snapshot the read count *before* starting the worker: the two misses
-  // above already called SlowStorage::read() once each, directly on the main
-  // thread, so the count is nonzero here. Only the worker thread can advance
-  // it from this point on, which is what makes "wait for it to advance by 1"
-  // below a wait on the worker's own dequeue-and-read of name1, not on
-  // something that already happened.
+  // The two misses above already called SlowStorage::read() on this thread.
+  // Snapshot the count now: only the worker can advance it from here.
   int const reads_before = slow->reads();
   f.tier->startFillWorker();
-  // Wait, bounded, for the worker to actually dequeue name1 and enter its
-  // (slow) chunk read before requesting a stop. Nothing else orders the
-  // worker's fill_queue_.pop_front() ahead of stopFillWorker() setting
-  // fill_stop_; a bare sleep before start races that dequeue and can leave
-  // name1 unfilled. The bound turns a skipped fill (which would otherwise
-  // hang this wait forever) into a clear assertion failure instead. Once the
-  // wait is satisfied, the ~150ms delay inside that read holds the worker
-  // there long enough for the stop and the waiter thread below to land
-  // before the read returns.
+  // Wait until the worker has dequeued name1 and entered its slow chunk
+  // read, then request a stop. The bound turns a skipped fill into an
+  // assertion failure. The 150 ms delay in that read holds the worker there
+  // while the stop and the waiter thread land.
   ASSERT_TRUE(slow->waitForReadsAtLeast(reads_before + 1, std::chrono::seconds(5)));
   std::thread waiter([&f] { f.tier->waitFillIdle(); });
   f.tier->stopFillWorker();
-  waiter.join();  // must return promptly: this is the behaviour under test
+  waiter.join();  // must return promptly: the behaviour under test
 
   EXPECT_TRUE(f.local(name1));   // the in-flight fill was allowed to finish
   EXPECT_FALSE(f.local(name2));  // never started; still sitting in the queue
@@ -473,7 +450,7 @@ TEST(DiskCacheStorageTest, StopIsSerialisedAcrossTheJoinAndWaitFillIdleIsNeverSt
   // A second stop must not throw std::system_error from a racing join().
   EXPECT_NO_THROW(f.tier->stopFillWorker());
 
-  // A restart drains what was left over, proving start/stop can cycle.
+  // A restart drains the leftover queue: start/stop can cycle.
   f.tier->startFillWorker();
   f.tier->waitFillIdle();
   EXPECT_TRUE(f.local(name2));
@@ -544,9 +521,9 @@ TEST(DiskCacheStorageTest, InvalidateDropsOnlyTheCopy) {
 }
 
 TEST(DiskCacheStorageTest, InvalidateMidWriteThroughPoisonsThePart) {
-  // A peer's COMPACT drops the file while the builder is still appending it.
-  // discardPart poisons the name, so the appends that follow cannot be
-  // reopened with `trunc` and published as a complete copy of the tail.
+  // A peer's COMPACT drops the file while the builder still appends to it.
+  // discardPart poisons the name, so later appends do not reopen the part
+  // and publish the tail as a complete copy.
   TierFixture f(1u << 20);
   std::string const name = "sstable1/" + stamp() + ".sst";
   std::vector<unsigned char> head(3000, 'a'), tail(2000, 'b');
@@ -563,8 +540,8 @@ TEST(DiskCacheStorageTest, InvalidateMidWriteThroughPoisonsThePart) {
   EXPECT_EQ(s.writethrough_files, 0u);
   EXPECT_EQ(s.files, 0u);
   EXPECT_EQ(f.backing->size(name), 5000u);  // the object itself is whole
-  // The poison is cleared by that flush, so the tier is free to cache the
-  // file again -- a read of it misses and is served by the backing.
+  // The flush clears the poison, so the tier can cache the file again:
+  // a read misses and the backing serves it.
   unsigned char* data = nullptr;
   size_t size = 0;
   ASSERT_EQ(f.tier->read(name, data, size), Status::kSuccess);
@@ -574,8 +551,8 @@ TEST(DiskCacheStorageTest, InvalidateMidWriteThroughPoisonsThePart) {
 }
 
 TEST(DiskCacheStorageTest, UnwritableDirThrows) {
-  // A tier configured onto a path it cannot use must fail the open, not
-  // degrade into a silent pass-through. Both cases run as an ordinary user.
+  // A tier on a path it cannot use fails the open; it does not degrade to a
+  // pass-through. Both cases run as an ordinary user.
   std::string const base = kRoot + "unusable_" + stamp() + "/";
   std::filesystem::create_directories(base + "backing/sstable1");
   auto make = [&](std::string const& dir) {
@@ -587,8 +564,8 @@ TEST(DiskCacheStorageTest, UnwritableDirThrows) {
   // (a) The parent is a regular file, so create_directories cannot make it.
   { std::ofstream(base + "regular") << "x"; }
   EXPECT_THROW(make(base + "regular/tier"), std::runtime_error);
-  // (b) The directory is there but has no write permission, so only the
-  //     probe catches it: create_directories succeeds on an existing dir.
+  // (b) The directory exists but has no write permission, so only the
+  //     write probe catches it.
   std::string const ro = base + "ro/";
   std::filesystem::create_directories(ro);
   std::filesystem::permissions(ro, std::filesystem::perms::owner_read | std::filesystem::perms::owner_exec,
@@ -645,22 +622,16 @@ TEST(DiskCacheStorageTest, ReconcileDropsPartsDeadFilesAndForeignNames) {
 TEST(DiskCacheStorageTest, MetadataParsesTheDiskCacheKeys) {
   std::string const dir = kRoot + "cfg_" + stamp() + "/";
   std::filesystem::create_directories(dir);
-  // parseJSON (src/util/read_json.cpp) is line-oriented: it skips a whole
-  // line whenever it starts with '{' or '}', so it expects one key per
-  // line with '{'/'}' each on their own line -- exactly how every real
-  // config under src/config/ is pretty-printed. Writing the object as one
-  // long line (as a literal `{"a": 1, "b": 2}` would) makes the entire
-  // body land on a single line whose first character is '{', so the whole
-  // thing is skipped and every key comes back missing. `write` below
-  // wraps a body of one "key": value per line instead.
+  // parseJSON is line-oriented and skips any line that starts with '{' or
+  // '}'. `write` puts one "key": value per line, with the braces on their
+  // own lines, as every config under src/config/ does.
   auto write = [&](std::string const& body) {
     std::string const path = dir + "cfg.json";
     std::ofstream(path) << "{\n" << body << "\n}\n";
     return path;
   };
-  // Every key Metadata's constructor requires unconditionally (copied from
-  // src/config/local/shared_config_base.json), plus sstable_backend /
-  // sstable_dir / lru_cache_bytes for the disk-cache keys under test.
+  // Every key Metadata's constructor requires, plus sstable_backend,
+  // sstable_dir and lru_cache_bytes for the disk-cache keys under test.
   std::string const base =
       "\"backend\": \"local\",\n"
       "\"db_path\": \"" + dir + "db/\",\n"
@@ -675,10 +646,8 @@ TEST(DiskCacheStorageTest, MetadataParsesTheDiskCacheKeys) {
       "\"sstable_dir\": \"" + dir + "sst/\",\n"
       "\"lru_cache_bytes\": 1048576";
   {
-    // Explicit non-default values for every disk-cache key, so this assert
-    // block actually exercises the parse for disk_cache_chunk_bytes and
-    // disk_cache_fill_queue too -- asserting only the 67108864 / 256
-    // defaults would pass whether or not that parsing ever ran.
+    // Non-default values for every disk-cache key, so the block checks the
+    // parse of each one and not only its default.
     Metadata md(write(base +
         ",\n\"disk_cache_dir\": \"/tank/cache/w0\",\n"
         "\"disk_cache_bytes\": \"2147483648\",\n"
@@ -931,8 +900,8 @@ TEST(DiskCacheStorageTest, ChunkModeHasNoFillWorkerAndReconcileStartsCold) {
   f.readAt(name, bytes, 0, 8);
   f.tier->stopFillWorker();
   EXPECT_EQ(f.tier->stats().fill_gets, 0u);
-  // reconcile() in chunk mode deletes every local file: which chunks of a
-  // leftover sparse file are data is not recorded.
+  // reconcile() in chunk mode deletes every local file: it does not know
+  // which chunks of a leftover sparse file hold data.
   std::filesystem::create_directories(f.tier_dir + "sstable1");
   std::ofstream(f.tier_dir + "sstable1/leftover.sst") << "x";
   EXPECT_EQ(f.tier->reconcile([](std::string const&, size_t) { return true; }), 2u);
@@ -941,8 +910,8 @@ TEST(DiskCacheStorageTest, ChunkModeHasNoFillWorkerAndReconcileStartsCold) {
 }
 
 // Two threads miss on the same chunk while the first fetch is still in the
-// backing. Both fetch, both return the right bytes, and exactly one of them
-// writes the chunk: the other finds it kPending or kPresent and skips.
+// backing. Both fetch and return the right bytes. Exactly one writes the
+// chunk; the other finds it kPending or kPresent and skips.
 TEST(DiskCacheStorageTest, ChunkTwoConcurrentMissesFetchTwiceAndWriteOnce) {
   std::string const s = stamp();
   std::string const backing_dir = kRoot + "backing_" + s + "/";

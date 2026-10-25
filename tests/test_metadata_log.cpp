@@ -1,6 +1,6 @@
-// Replay of the metadata log into a View, without a DB. The records are
-// written through MetadataLogHandler::appendToMetadataLog and replayed with
-// rollForwardMetadataLog, which is the path every process takes.
+// Replay of the metadata log into a View, without a DB. Records go through
+// MetadataLogHandler::appendToMetadataLog and rollForwardMetadataLog, the
+// path every process takes.
 #include "metadata_log_handler.h"
 #include "storage.h"
 #include "test_env.h"
@@ -33,11 +33,10 @@ OperationRecord compact(std::vector<std::string> const& inputs, std::vector<std:
   return r;
 }
 
-// The records that put four unversioned files into the last level
-// (sstable2) of a two-level tree: 16 log files, compacted pairwise into
-// 8 sstable1 files, compacted pairwise into sstable2/b0 .. b3. Files that arrive at the
-// last level from the level above carry no version prefix; the engine
-// treats that as version -1 and the first last-level merge emits version 0.
+// Records that put four unversioned files into the last level (sstable2):
+// 16 log files, merged pairwise into 8 sstable1 files, merged pairwise into
+// sstable2/b0 .. b3. A file without a version prefix is version -1, so the
+// first last-level merge emits version 0.
 std::vector<OperationRecord> fillLastLevel() {
   std::vector<OperationRecord> records;
   for (int i = 0; i < 16; i++) {
@@ -91,15 +90,15 @@ TEST(MetadataLogTest, last_level_layout_is_the_same_in_either_order) {
   yx.append({kY, kX});
   EXPECT_EQ(expected, yx.lastLevel());
 
-  // Same log, but this process replays Y before X has been appended: Y
-  // waits in the buffer and applies once X has.
+  // This process replays Y before X is appended: Y waits in the buffer
+  // and applies once X arrives.
   yx_batched.append(fillLastLevel());
   yx_batched.append({kY});
   EXPECT_EQ((std::deque<std::string>{"sstable2/b0", "sstable2/b1", "sstable2/b2", "sstable2/b3"}), yx_batched.lastLevel());
   yx_batched.append({kX});
   EXPECT_EQ(expected, yx_batched.lastLevel());
 
-  // The next round merges the two version-0 files into a version-1 one.
+  // The next round merges the two version-0 files into one version-1 file.
   for (Replayer* r : {&xy, &yx, &yx_batched}) {
     r->append({kZ});
     View v = r->roll();
@@ -110,9 +109,8 @@ TEST(MetadataLogTest, last_level_layout_is_the_same_in_either_order) {
   }
 }
 
-// A COMPACT whose inputs are gone (a duplicate record, KNOWN-ISSUES.md
-// item 1) is parked, not applied: the layout is unchanged and replay goes
-// on. The old code erased end().
+// A COMPACT whose inputs are gone (a duplicate record) is parked, not
+// applied: the layout is unchanged and replay continues.
 TEST(MetadataLogTest, record_with_absent_inputs_is_parked) {
   Replayer r("dup");
   r.append(fillLastLevel());
@@ -124,8 +122,8 @@ TEST(MetadataLogTest, record_with_absent_inputs_is_parked) {
   EXPECT_EQ((std::deque<std::string>{"sstable2/1_d0"}), r.lastLevel());
 }
 
-// Non-last-level COMPACT records are applied in input order too: a
-// record for the second pair waits until the first pair's record arrives.
+// Non-last-level COMPACT records also apply in input order: the record
+// for the second pair waits until the first pair's record arrives.
 TEST(MetadataLogTest, non_last_level_record_waits_for_the_front_of_the_level) {
   Replayer r("l1");
   std::vector<OperationRecord> records;

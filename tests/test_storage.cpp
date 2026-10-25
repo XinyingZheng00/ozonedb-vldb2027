@@ -6,7 +6,7 @@
 #include <thread>
 using namespace ozonedb;
 TEST(StorageTest, read_write_to_binary_file_test) {
-  // append timestamp to avoid file name conflict
+  // The timestamp in the file name avoids a clash with earlier runs.
   Storage* storage = new FileStorage(testenv::path("storage/"));
   std::string fileName = "read_write_to_binary_file_test" + std::to_string(time(0));
   std::vector<uint8_t> data = {1, 2, 3, 4, 5};
@@ -96,7 +96,7 @@ TEST(StorageTest, concurrent_create) {
   std::string fileName = "concurrent_create" + std::to_string(time(0));
   int numProcesses = 100;
   multipleProcessorTester(numProcesses, testMultipleCreate, fileName);
-  // check only one file is created
+  // Only one file is created.
   int count = 0;
   for (auto const& entry : std::filesystem::directory_iterator(testenv::path("storage/"))) {
     if (entry.path().filename().string().compare(0, fileName.length(), fileName) == 0) {

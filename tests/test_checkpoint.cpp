@@ -1,6 +1,6 @@
-// Checkpoint format round trip over FileStorage. No Corfu, no S3: the
-// writer and reader only use the Storage interface, so the format is
-// tested here and the Corfu join path is tested in test_corfu_storage.cpp.
+// Checkpoint format round trip over FileStorage. The writer and reader use
+// only the Storage interface, so the format is tested here. The Corfu join
+// path is tested in test_corfu_storage.cpp.
 #include "checkpoint.h"
 #include "storage.h"
 #include "gtest/gtest.h"
@@ -41,9 +41,8 @@ checkpoint::State sampleState(long covered, long prev) {
   return st;
 }
 
-// A FileStorage that fails to flush one key. Lets the test check that
-// LATEST is written last: a failure before it must leave no visible
-// checkpoint.
+// A FileStorage that fails to flush one key. Checks that LATEST is written
+// last: a failure before it leaves no visible checkpoint.
 class FailingFlushStorage : public FileStorage {
  public:
   explicit FailingFlushStorage(std::string const& path, std::string needle)

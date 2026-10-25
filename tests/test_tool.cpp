@@ -17,32 +17,32 @@ void multipleProcessorTester(int const numProcesses, void (*func)(std::string, i
     pid_t pid = fork();
     if (pid < 0) {
       std::cerr << "Fork failed for process " << i << std::endl;
-      continue;  // Skip this iteration and try to fork the next process
+      continue;  // try the next child
     } else if (pid == 0) {
       // Child process
-      close(pipe_fd[1]);  // Close the write end of the pipe in the child
+      close(pipe_fd[1]);  // child keeps only the read end
 
-      // Wait for the signal to start
+      // Wait for the start signal.
       char buf;
       read(pipe_fd[0], &buf, 1);
       func(prefix, i);
       exit(0);
     } else {
-      // Parent process continues to next iteration to fork another child
+      // Parent: fork the next child.
     }
   }
 
-  // Parent process closes the read end of the pipe and signals all children to start
-  close(pipe_fd[0]);          // Close the read end of the pipe in the parent
-  sleep(1);                   // Optional: give all children time to set up
-  write(pipe_fd[1], "s", 1);  // Signal all children to start
-  close(pipe_fd[1]);          // Close the write end of the pipe in the parent
+  // Release all children at once.
+  close(pipe_fd[0]);          // parent keeps only the write end
+  sleep(1);                   // let every child reach read()
+  write(pipe_fd[1], "s", 1);  // start signal
+  close(pipe_fd[1]);          // done with the pipe
 
-  // Parent process waits for all child processes to complete
+  // Wait for every child and report failures.
 
   for (int i = 0; i < numProcesses; ++i) {
     int status;
-    pid_t terminated_pid = wait(&status);  // Wait for each child process to complete
+    pid_t terminated_pid = wait(&status);  // reaps one child
     if (WIFEXITED(status)) {
       if (WEXITSTATUS(status) != 0) {
         std::cerr << "Child process with pid " << terminated_pid << " exited with status " << WEXITSTATUS(status) << std::endl;
@@ -50,7 +50,6 @@ void multipleProcessorTester(int const numProcesses, void (*func)(std::string, i
     } else {
       int signal_number = WTERMSIG(status);
       std::cerr << "Child process with pid " << terminated_pid << " terminated by signal " << signal_number << std::endl;
-      // Optionally, you can also print the name of the signal
       std::cerr << "Signal name: " << strsignal(signal_number) << std::endl;
     }
   }

@@ -3,14 +3,13 @@
 // Usage:
 //   corfu_native_probe <host:port> <stream-name> [--from A] [--to B] [--batch N]
 //
-// Connects with the native transport, handshakes, prints the raw layout
-// JSON, the epoch, the server's source version, the global tail, the
-// stream tail and the trim mark, then reads every address in
+// Connects with the native transport, handshakes, and prints the raw layout
+// JSON, the epoch, the server's source version, the global tail, the stream
+// tail and the trim mark. Then reads every address in
 // [max(trim mark, --from), min(tail, --to)] and prints a histogram by
-// DataType and by stream membership. The gate is "0 foreign
-// entries" on the loaded datasets: every DATA entry carries this stream
-// in its BACKPOINTER_MAP. It also reports the payload
-// codecs seen, so a dataset written with ZSTD is caught.
+// DataType and by stream membership. The gate is "0 foreign entries": every
+// DATA entry carries this stream in its BACKPOINTER_MAP. It also reports the
+// payload codecs seen, so a dataset written with ZSTD is caught.
 #include "corfu/corfu_codec.h"
 #include "corfu/corfu_layout.h"
 #include "corfu/corfu_rpc.h"

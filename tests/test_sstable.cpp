@@ -132,7 +132,7 @@ TEST(SSTableTest, ReadTableWithFilterTest) {
   // add key value pairs to table
   std::string value;
   for (int i = 0; i < 50; ++i) {
-    value += "value";  // Append each "value" to the string
+    value += "value";  // builds a 250-byte value
   }
   for (int i = 0; i < 99; i++) {
     Record record;
@@ -160,7 +160,7 @@ TEST(SSTableTest, ReadTableWithFilterTest) {
     ASSERT_EQ(kTypeValue, record->type());
   }
   std::shared_ptr<Record> record;
-  // count the time for the get
+  // time the get with the filter
   auto start = std::chrono::high_resolution_clock::now();
   status = table->get("key55", record);
   auto end = std::chrono::high_resolution_clock::now();
@@ -169,7 +169,7 @@ TEST(SSTableTest, ReadTableWithFilterTest) {
   ASSERT_EQ(status, Status::kNotFound);
 
   table->setFilterReaderToNull();
-  // count the time for the get
+  // time the get without the filter
   start = std::chrono::high_resolution_clock::now();
   status = table->get("key55", record);
   end = std::chrono::high_resolution_clock::now();
@@ -182,9 +182,9 @@ TEST(SSTableTest, ReadTableWithFilterTest) {
 }
 
 namespace {
-// Builds an SSTable of n records whose values are value_bytes long and
-// returns key -> value. With 600-byte values and the 4 KiB data block
-// target, 800 records span about 120 blocks.
+// Builds an SSTable of n records with value_bytes-long values and returns
+// key -> value. With 600-byte values and 4 KiB data blocks, 800 records
+// span about 120 blocks.
 std::map<std::string, std::string> buildTableForScan(Storage* storage, std::string const& fileName, int n, size_t value_bytes) {
   std::vector<std::string> keys;
   for (int i = 0; i < n; i++) keys.push_back("key" + std::to_string(i));
@@ -216,9 +216,9 @@ void expectSameRecords(std::map<std::string, std::string> const& expected,
 }
 }  // namespace
 
-// getAll must return the same records whatever the chunk size: one block
-// per read (1 byte forces that, so does exactly one block), 2.5 blocks per
-// read (chunks end on block boundaries), and the whole file in one read.
+// getAll returns the same records at every read chunk size: one block per
+// read (1 byte or exactly one block), 2.5 blocks per read, and the whole
+// file in one read.
 TEST(SSTableTest, GetAllChunkSizesTest) {
   Storage* storage = new FileStorage(testenv::path("ss_table_test/"));
   std::string fileName = "GetAllChunkSizesTest" + std::to_string(time(0));
@@ -228,7 +228,7 @@ TEST(SSTableTest, GetAllChunkSizesTest) {
   ASSERT_EQ(Table::open(storage, fileName, table), Status::kSuccess);
   ASSERT_NE(nullptr, table);
   size_t const file_size = storage->size(fileName);
-  ASSERT_GT(file_size, 100 * 4096u);  // the table really spans many blocks
+  ASSERT_GT(file_size, 100 * 4096u);  // the table spans many blocks
   for (size_t max_read_bytes : {size_t{1}, size_t{4096}, size_t{10240}, size_t{1} << 20, file_size, Table::kDefaultScanReadBytes}) {
     std::unordered_map<std::string, std::shared_ptr<Record>> out;
     ASSERT_EQ(table->getAll(out, max_read_bytes), Status::kSuccess) << "max_read_bytes=" << max_read_bytes;
@@ -238,8 +238,8 @@ TEST(SSTableTest, GetAllChunkSizesTest) {
   delete storage;
 }
 
-// An index entry that points past the end of the file is a corrupt
-// index: getAll must fail before it reads anything, and leave `out` empty.
+// An index entry past the end of the file is a corrupt index: getAll
+// fails before it reads anything and leaves `out` empty.
 TEST(SSTableTest, GetAllBadIndexTest) {
   Storage* storage = new FileStorage(testenv::path("ss_table_test/"));
   std::string fileName = "GetAllBadIndexTest" + std::to_string(time(0));
@@ -261,8 +261,7 @@ TEST(SSTableTest, GetAllBadIndexTest) {
   delete storage;
 }
 
-// A file that shrinks under an open Table (a partial upload, or a peer's
-// REMOVE on a backend that truncates) is a failed read, not a crash.
+// A file that shrinks under an open Table gives a failed read, not a crash.
 TEST(SSTableTest, GetAllTruncatedFileTest) {
   Storage* storage = new FileStorage(testenv::path("ss_table_test/"));
   std::string fileName = "GetAllTruncatedFileTest" + std::to_string(time(0));

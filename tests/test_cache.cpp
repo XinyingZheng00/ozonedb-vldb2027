@@ -1,6 +1,6 @@
-// LRUCache tests: per-level counters,
-// dead blocks of files that left the View, drop on REMOVE, and the warm
-// worker. Everything runs on FileStorage under <OZONEDB_TEST_ROOT>/cache_test/.
+// LRUCache tests: per-level counters, dead blocks of files that left the
+// View, drop on REMOVE, and the warm worker. All run on FileStorage under
+// <OZONEDB_TEST_ROOT>/cache_test/.
 #include "cache.h"
 #include "test_env.h"
 #include "db.h"
@@ -26,10 +26,10 @@ using namespace ozonedb;
 namespace {
 std::string const kDir = testenv::path("cache_test/");
 
-// Builds an SSTable of n records with value_bytes-long values (600 bytes
-// and the 4 KiB block target give about 6 records per block) and returns
-// key -> value. A write-through cache, when given, sees every block the
-// way a compaction's output builder publishes it.
+// Builds an SSTable of n records with value_bytes-long values and returns
+// key -> value. With 600-byte values and 4 KiB blocks, about 6 records fit
+// per block. A write-through cache, when given, sees every block the way
+// a compaction's output builder publishes it.
 std::map<std::string, std::string> buildTable(Storage* storage, std::string const& file, int n,
                                               size_t value_bytes, LRUCache* write_through = nullptr) {
   std::vector<std::string> keys;
@@ -81,9 +81,9 @@ TEST(LRUCacheTest, LevelSlotParsesSSTableNames) {
   EXPECT_EQ(LRUCache::levelSlot(""), 0);
 }
 
-// One miss and one hit on a level-1 file, one miss on a level-2 file:
-// the per-level counters must say so. Then a View that lists only the
-// level-1 file makes the level-2 block dead weight.
+// One miss and one hit on a level-1 file, one miss on a level-2 file: the
+// per-level counters must agree. A View that lists only the level-1 file
+// then makes the level-2 block dead.
 TEST(LRUCacheTest, PerLevelCountersAndDeadBytes) {
   CacheFixture fx;
   std::string const f1 = "sstable1/" + stamp() + ".sst";
@@ -124,8 +124,8 @@ TEST(LRUCacheTest, PerLevelCountersAndDeadBytes) {
   s = fx.cache.stats();
   EXPECT_EQ(s.dead_files, 1u);
   EXPECT_EQ(s.dead_blocks, 1u);
-  // The two files hold identical records, so the two cached blocks (the
-  // one with key0 in each file) are the same size: the dead one is half.
+  // The two files hold identical records, so the two cached blocks are the
+  // same size: the dead one is half.
   EXPECT_EQ(s.dead_bytes * 2, s.current_size);
   EXPECT_EQ(s.warm_files, 0u);
   EXPECT_EQ(s.warm_hits, 0u);
@@ -133,9 +133,9 @@ TEST(LRUCacheTest, PerLevelCountersAndDeadBytes) {
   fx.cache.setLatestView(nullptr);
 }
 
-// A read of a file the View lists that fails at the storage layer moves
-// readFailures(): a block read on a removed file, an open of a missing
-// file, a log read of a missing file. A miss on a readable file does not.
+// A storage-layer failure on a file the View lists counts in readFailures():
+// a block read on a removed file, an open of a missing file, a log read of
+// a missing file. A miss on a readable file does not count.
 TEST(LRUCacheTest, ReadFailuresCountRemovedFiles) {
   CacheFixture fx;
   std::string const f = "sstable1/" + stamp() + ".sst";
@@ -148,10 +148,10 @@ TEST(LRUCacheTest, ReadFailuresCountRemovedFiles) {
   ASSERT_EQ(t->get("nokey", rec), Status::kNotFound);  // a plain miss
   EXPECT_EQ(fx.cache.readFailures(), 0u);
 
-  // The file goes away under the open Table (a peer's REMOVE): a block
-  // not yet cached cannot be read. Truncated rather than unlinked,
-  // because FileStorage keeps an open stream per file and an unlinked
-  // file still reads through it.
+  // The file goes away under the open Table, as on a peer's REMOVE: a block
+  // not yet cached cannot be read. The file is truncated, not unlinked:
+  // FileStorage keeps an open stream per file, and an unlinked file still
+  // reads through it.
   std::filesystem::resize_file(kDir + f, 0);
   ASSERT_EQ(t->get("key150", rec), Status::kNotFound);
   EXPECT_EQ(fx.cache.readFailures(), 1u);
@@ -170,9 +170,9 @@ TEST(LRUCacheTest, ReadFailuresCountRemovedFiles) {
   EXPECT_EQ(fx.cache.readFailures(), 3u);
 }
 
-// invalidateSSTable: the blocks leave the budget, the Table* is retired
-// (not freed: a reader may hold it), the entry is gone, and the return
-// value is the number of blocks that were cached.
+// invalidateSSTable: the blocks leave the budget, the Table* is retired but
+// not freed (a reader may hold it), the entry is gone, and the return value
+// is the number of blocks that were cached.
 TEST(LRUCacheTest, InvalidateSSTableDropsBlocksAndRetiresTable) {
   CacheFixture fx;
   std::string const f1 = "sstable1/" + stamp() + ".sst";
@@ -199,7 +199,7 @@ TEST(LRUCacheTest, InvalidateSSTableDropsBlocksAndRetiresTable) {
   // The retired Table still answers a reader that kept the pointer.
   EXPECT_EQ(t1->get("key0", rec), Status::kSuccess);
 
-  // A log entry (records only) is not this method's business.
+  // A log entry holds records only; invalidateSSTable ignores it.
   std::unordered_map<std::string, std::shared_ptr<Record>> records;
   fx.cache.putLogRecords("datalog/7", records, 10, false);
   EXPECT_EQ(fx.cache.invalidateSSTable("datalog/7"), 0u);
@@ -365,8 +365,8 @@ TEST(LRUCacheTest, WarmPublishesEveryBlock) {
 
 // The worker: a live file is warmed, a file no longer in the View is
 // skipped, a file the local builder wrote through is skipped, a level-2
-// output is refused by the policy, and an offer before start (or after
-// stop) counts as disabled.
+// output is refused by the policy. An offer before start or after stop
+// counts as disabled.
 TEST(LRUCacheTest, WarmWorkerQueueAndSkips) {
   CacheFixture fx;
   std::string const f_live = "sstable1/live_" + stamp() + ".sst";
@@ -391,8 +391,8 @@ TEST(LRUCacheTest, WarmWorkerQueueAndSkips) {
   fx.cache.setLiveFileCheck([&live](std::string const& name) { return live.count(name) > 0; });
 
   auto sz = [&](std::string const& name) { return fx.storage.size(name); };
-  // Offered before the worker exists: disabled, whatever the policy says
-  // (a level-2 output too, which the level rule would otherwise count).
+  // Offered before the worker exists: disabled, whatever the policy says.
+  // The level rule would otherwise count the level-2 output.
   fx.cache.onCompactionApplied({f_live, f_l2}, {sz(f_live), sz(f_l2)}, 1, 5);
   EXPECT_EQ(fx.cache.stats().warm_skipped_disabled, 2u);
   EXPECT_EQ(fx.cache.stats().warm_skipped_level, 0u);
@@ -434,8 +434,8 @@ TEST(LRUCacheTest, WarmWorkerQueueAndSkips) {
   fx.cache.stopWarmWorker();  // idempotent
 }
 
-// A log -> L1 compaction has no cached input blocks by construction; its
-// affinity is the number of L1 lookups since the previous such event.
+// A log -> L1 compaction has no cached input blocks. Its affinity is the
+// number of L1 lookups since the previous such event.
 TEST(LRUCacheTest, WarmAffinityForLogInputs) {
   CacheFixture fx;
   std::string const f_out = "sstable1/out_" + stamp() + ".sst";
@@ -474,9 +474,9 @@ TEST(LRUCacheTest, WarmAffinityForLogInputs) {
   fx.cache.stopWarmWorker();
 }
 
-// The queue is bounded: with max_queue 2, offering 5 files drops the 3
-// oldest. Checked with the worker stopped so nothing is consumed
-// (the entries are dropped by stop; only the counter matters here).
+// The queue is bounded: with max_queue 2, an offer of 5 files drops the 3
+// oldest. The worker is parked on the live check, so nothing is consumed;
+// only the counter matters here.
 TEST(LRUCacheTest, WarmQueueIsBounded) {
   CacheFixture fx;
   LRUCache::WarmPolicy p;

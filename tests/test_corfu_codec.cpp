@@ -131,10 +131,9 @@ TEST(CorfuCodecTest, hole_and_empty) {
 }
 
 TEST(CorfuCodecTest, java_layout_with_thread_id_and_zstd_codec) {
-  // An entry as the Java runtime writes it with the ZSTD
-  // default: metadata in id order including THREAD_ID and PAYLOAD_CODEC
-  // = 2. The payload bytes are opaque here (a compressed frame). The
-  // decoder must report the codec, not fail.
+  // An entry as the Java runtime writes it with the ZSTD default: metadata
+  // in id order, THREAD_ID included, PAYLOAD_CODEC = 2. The payload bytes
+  // are opaque here. The decoder must report the codec, not fail.
   Uuid stream = streamIdOf("ozonedb-ycsb");
   std::string b;
   b.push_back(0);                 // DATA

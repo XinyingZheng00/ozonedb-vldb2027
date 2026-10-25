@@ -38,9 +38,9 @@ TEST(FrequencySketchTest, WidthRoundsUpToAPowerOfTwo) {
 }
 
 TEST(FrequencySketchTest, AnUnseenKeyStaysNearZeroUnderLoad) {
-  // count-min over-estimates only on a collision in all four rows: with 1000
-  // keys in 4096 slots per row that is about 0.4 % per key. The keys are
-  // fixed, the hash is fixed, so this is deterministic.
+  // count-min over-estimates only on a collision in all four rows. With 1000
+  // keys in 4096 slots per row that is about 0.4 % per key. Fixed keys and a
+  // fixed hash make the result deterministic.
   FrequencySketch s(4096, 1u << 20);
   for (int i = 0; i < 1000; ++i) s.record("sstable1/" + std::to_string(i) + ".sst#0");
   EXPECT_LE(s.estimate("sstable1/never.sst#0"), 2u);

@@ -11,11 +11,11 @@
 #include <vector>
 
 // Forks numProcesses children, releases them together through a pipe, runs
-// func(prefix, i) in each, and waits for all of them. Used by StorageTest to
-// hammer one file from many processes at once.
+// func(prefix, i) in each, and waits for all of them. StorageTest uses it to
+// write one file from many processes at once.
 void multipleProcessorTester(int const numProcesses, void (*func)(std::string, int), std::string prefix);
 
-#if 0  // unused bench helper, kept for reference
+#if 0  // unused bench helper
 template <typename Func, typename... Args>
 void multipleProcessorBenchTester(int const numProcesses, Func func, std::vector<int> const& differentInputs, Args... args) {
   int pipe_fd[2];
@@ -33,29 +33,29 @@ void multipleProcessorBenchTester(int const numProcesses, Func func, std::vector
       // Child process
       close(pipe_fd[1]);
 
-      // Wait for the signal to start
+      // Wait for the start signal.
       char buf;
       read(pipe_fd[0], &buf, 1);
 
-      // Call the function with the provided arguments and the current process index
+      // Run func with this child's input and the extra args.
       auto boundFunc = std::bind(func, differentInputs[i], args...);
       boundFunc();
       exit(0);
     } else {
-      // Parent process continues to next iteration to fork another child
+      // Parent: fork the next child.
     }
   }
 
-  // Parent process closes the read end of the pipe and signals all children to start
-  close(pipe_fd[0]);          // Close the read end of the pipe in the parent
-  sleep(1);                   // Optional: give all children time to set up
-  write(pipe_fd[1], "s", 1);  // Signal all children to start
-  close(pipe_fd[1]);          // Close the write end of the pipe in the parent
+  // Release all children at once.
+  close(pipe_fd[0]);          // parent keeps only the write end
+  sleep(1);                   // let every child reach read()
+  write(pipe_fd[1], "s", 1);  // start signal
+  close(pipe_fd[1]);          // done with the pipe
 
-  // Parent process waits for all child processes to complete
+  // Wait for every child and report failures.
   for (int i = 0; i < numProcesses; ++i) {
     int status;
-    pid_t terminated_pid = wait(&status);  // Wait for each child process to complete
+    pid_t terminated_pid = wait(&status);  // reaps one child
     if (WIFEXITED(status)) {
       if (WEXITSTATUS(status) != 0) {
         std::cerr << "Child process with pid " << terminated_pid << " exited with status " << WEXITSTATUS(status) << std::endl;

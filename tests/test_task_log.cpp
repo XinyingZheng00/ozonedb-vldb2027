@@ -1,7 +1,6 @@
-// Dead-task discovery and takeover through the task log, without a DB:
-// two TaskLogHandlers over one FileStorage stand in for two writer
-// processes. The handler's own heartbeat thread ticks every 100 ms, so
-// the timings below are in those units.
+// Dead-task detection and takeover through the task log, without a DB: two
+// TaskLogHandlers over one FileStorage stand in for two writer processes.
+// The heartbeat thread ticks every 100 ms; the timings below are in ticks.
 #include "storage.h"
 #include "task_log_handler.h"
 #include "test_env.h"
@@ -72,7 +71,7 @@ TEST_F(TaskLogTest, dead_task_is_claimed_at_the_next_generation) {
   survivor.rollForwardTaskLog();
   EXPECT_TRUE(survivor.isFirstWriterForTask(claim.mutable_task_id(), "survivor", 1));
 
-  // The ghost, replaying the same log, sees that it lost the task.
+  // The ghost replays the same log and sees that it lost the task.
   ghost.rollForwardTaskLog();
   EXPECT_FALSE(ghost.isFirstWriterForTask(claim.mutable_task_id(), "ghost", 0));
 }

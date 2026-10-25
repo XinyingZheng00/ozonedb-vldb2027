@@ -12,13 +12,10 @@ using namespace ozonedb;
 class DBTest : public ::testing::Test {
  protected:
   void SetUp() override {
-    // This will run before each test
     std::filesystem::remove_all(testenv::path("db/"));
   }
 
-  // You can also add a TearDown method if needed
   void TearDown() override {
-    // Code here will be called after each test
   }
 };
 
@@ -255,12 +252,11 @@ int countStatus(std::vector<TaskRecord::TaskStatus> const& v, TaskRecord::TaskSt
   return static_cast<int>(std::count(v.begin(), v.end(), s));
 }
 
-// Put `count` keys in rounds with a pause between rounds. The data log
-// rolls on a tail size the view thread refreshes every 100 ms, so a burst
-// of puts that finishes inside one refresh lands in ONE log file however
-// small the limit (on a tmpfs test root all 300 puts below did), and a
-// test that needs several log files, and so a compaction, then has none.
-// Each round here exceeds the 1 KiB limit of test_db.json on its own.
+// Puts `count` keys in rounds of `per_round` with a pause between rounds.
+// The data log rolls on a tail size the view thread refreshes every 100 ms.
+// A burst of puts inside one refresh lands in one log file, so a test that
+// needs several log files gets none. Each round exceeds the 1 KiB log limit
+// of test_db.json.
 void putInRounds(DB* db, int count, std::string const& value, int per_round = 25) {
   for (int i = 0; i < count; i++) {
     ASSERT_EQ(Status::kSuccess, db->put("key" + std::to_string(i), value)) << "key" << i;
@@ -269,11 +265,10 @@ void putInRounds(DB* db, int count, std::string const& value, int per_round = 25
 }
 }  // namespace
 
-// Fault injection: with compaction_abort_rate = 1 every claimed task is
-// abandoned, so the task log holds claims (at rising generations, as the
-// abandoned ones are reclaimed) but never a TASK_COMPLETE, and every key
-// stays readable from the log files. Reopened with the knob off and a
-// short threshold, the stale claims lapse and compaction finishes.
+// With compaction_abort_rate = 1 every claimed task is abandoned. The task
+// log holds claims but no TASK_COMPLETE, and every key stays readable from
+// the log files. Reopened with the knob off, the stale claims lapse and
+// compaction finishes.
 TEST_F(DBTest, abort_rate_one_leaves_claims_unfinished_and_data_readable) {
   std::string const name = "db_abort";
   std::filesystem::remove_all(testenv::path(name + "/"));
@@ -315,7 +310,7 @@ TEST_F(DBTest, abort_rate_one_leaves_claims_unfinished_and_data_readable) {
 }
 
 // compaction_enabled = false opens a DB that never compacts: the log
-// files pile up and stay readable, and the task log stays empty.
+// files accumulate and stay readable, and the task log stays empty.
 TEST_F(DBTest, compaction_disabled_leaves_the_log_files_alone) {
   std::string const name = "db_nocompact";
   std::filesystem::remove_all(testenv::path(name + "/"));
@@ -340,10 +335,9 @@ TEST_F(DBTest, compaction_disabled_leaves_the_log_files_alone) {
   EXPECT_GT(log_files, 2) << "300 x 100 B puts in rounds at a 1 KiB log limit must leave many log files";
 }
 
-// Last-level compactions merge two same-version files into one file of
-// the next version (sstable3/1_<name>.sst from two 0_ files), and the
-// level converges to at most last_file_number_limit files. Every key stays
-// readable throughout.
+// A last-level compaction merges two version-k files into one version-(k+1)
+// file (sstable3/1_<name>.sst from two 0_ files). The level converges to at
+// most last_file_number_limit files. Every key stays readable throughout.
 TEST_F(DBTest, last_level_compaction_emits_one_versioned_output) {
   std::string const name = "db_lastlevel";
   std::filesystem::remove_all(testenv::path(name + "/"));

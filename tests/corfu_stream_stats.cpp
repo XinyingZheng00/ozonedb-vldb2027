@@ -3,14 +3,14 @@
 // Usage:
 //   corfu_stream_stats <corfu-endpoint> <stream-name>
 //
-// Replays the stream through CorfuDBStorage (which prints the replay line,
-// including how many peer APPENDs were dropped because a SEAL preceded
-// them), then walks metadata.log in address order and simulates the View
-// rollforward the way MetadataLogHandler applies COMPACT records: a COMPACT
-// applies only when its first input is at the front of its level's deque.
-// Prints every record, then the COMPACTs that never applied, and whether
-// another COMPACT with the same inputs did (a duplicate execution, no
-// data lost) or not (the outputs hold records no View can reach).
+// Replays the stream through CorfuDBStorage, which prints the replay line
+// with the count of peer APPENDs dropped above a SEAL. Then walks
+// metadata.log in address order and simulates the View rollforward as
+// MetadataLogHandler applies COMPACT records: a COMPACT applies only when
+// its first input is at the front of its level's deque. Prints every
+// record, then the COMPACTs that never applied. For each of those, says
+// whether another COMPACT with the same inputs applied (a duplicate, no
+// data lost) or not (its outputs are unreachable).
 #include "corfu_storage.h"
 #include "protobuf/record.pb.h"
 #include "protobuf_serializer.h"
@@ -56,8 +56,8 @@ int main(int argc, char** argv) {
             << " applied_addr=" << storage.lastAppliedAddr()
             << " dropped_above_seal=" << storage.droppedAboveSeal()
             << " dropped_above_seal_KB=" << (storage.droppedAboveSealBytes() >> 10) << "\n";
-  // A digest of every live file: two processes replaying the same stream
-  // must print the same line.
+  // Digest of metadata.log and task.log: two processes that replay the
+  // same stream must print the same line.
   {
     unsigned char* all = nullptr;
     size_t all_size = 0;
@@ -137,7 +137,7 @@ int main(int argc, char** argv) {
     if (ok) {
       ++applied;
       ++applied_input_sets[ins];
-      // Retry buffered records until none applies (what the rollforward loop does).
+      // Retry buffered records until none applies, as the rollforward loop does.
       bool progress = true;
       while (progress) {
         progress = false;

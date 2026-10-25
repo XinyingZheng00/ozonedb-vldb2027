@@ -4,29 +4,27 @@
 //   corfu_multiwriter_smoke <path-to-shared-config.json> [keys_per_writer] [--kill-one]
 //
 // Forks two child processes. Each writes a disjoint key range
-// (W0: key_0..key_{N-1}, W1: key_{N}..key_{2N-1}) to the same
-// Corfu stream. After both children exit, the parent reopens the DB
-// and verifies all 2N keys are readable. Exercises:
-//   - Phase 1: concurrent LOGCREATE / tail rollover
-//   - Phase 2: cross-writer read fencing (parent sees both writers' data)
-//   - Phase 4: distributed compaction claim (if compaction fires)
-//   - Phase 0.5: SSTable split to S3 (if sstable_backend is set)
+// (W0: key_0..key_{N-1}, W1: key_{N}..key_{2N-1}) to the same Corfu stream.
+// After both children exit, the parent reopens the DB and reads all 2N keys.
+// The binary verifies:
+//   - concurrent LOGCREATE and tail rollover
+//   - cross-writer read fencing: the parent sees both writers' data
+//   - the distributed compaction claim, if compaction fires
+//   - the SSTable split to S3, if sstable_backend is set
+//   - the --kill-one dead-writer takeover
 //
-// --kill-one is the dead-writer demo of the paper's section 4.4. Writer 1
-// runs alone first; once it is past half its range, the parent SIGKILLs it
-// the moment it appends a compaction claim (the engine's
-// [COMPACTION_NEEDED] line on stderr), so the claim is in the task log and
-// its TASK_COMPLETE never will be. Only then does writer 0 open the DB: it
-// writes its own range and stays open past task_heartbeat_threshold_ticks,
-// so its watcher declares the dead claim dead and reclaims it at the next
-// owner_generation. The parent counts those takeovers in writer 0's output
-// ("Found dead task"), then reopens the DB and checks every key writer 0
-// wrote and every key writer 1 had acked before it was killed. PASS needs
-// both: full integrity and at least one takeover.
+// --kill-one (paper §4.4): writer 1 runs alone first. Once it is past half
+// its range, the parent SIGKILLs it when it appends a compaction claim (the
+// [COMPACTION_NEEDED] line on stderr). The claim is then in the task log
+// with no TASK_COMPLETE. Writer 0 opens the DB after the kill, writes its
+// range and stays open past task_heartbeat_threshold_ticks, so its watcher
+// reclaims the dead claim at the next owner_generation. The parent counts
+// the takeovers in writer 0's output ("Found dead task"), reopens the DB and
+// checks every key writer 0 wrote and every key writer 1 acked. PASS needs
+// full integrity and at least one takeover.
 //
-// Exits non-zero on any failure. Not a gtest — this is a minimal probe
-// you can run by hand or from a script against a live corfu_server +
-// optional MinIO instance.
+// Exits non-zero on any failure. Not a gtest: run it by hand or from a
+// script against a live corfu_server and an optional MinIO instance.
 #include "db.h"
 #include <chrono>
 #include <cstdio>
@@ -44,10 +42,9 @@
 using namespace ozonedb;
 
 // report_progress: print "[writer-progress] <i>" to stderr after every
-// acked put, so the parent knows how far a writer got before it was
-// killed. linger_ms > 0: keep the DB open that long after the last put,
-// so the compaction watcher can take over a dead peer's task (or, for the
-// victim, keep claiming tasks from its backlog).
+// acked put, so the parent knows how far a writer got before the kill.
+// linger_ms > 0: keep the DB open that long after the last put, so the
+// compaction watcher can take over a dead peer's task.
 static int run_writer(std::string const& config, int start, int end, bool report_progress, int linger_ms) {
   DB* db = nullptr;
   if (DB::openDB(db, config) != Status::kSuccess) {
@@ -74,8 +71,7 @@ static int run_writer(std::string const& config, int start, int end, bool report
   return 0;
 }
 
-// Read the heartbeat threshold the config sets, to size the survivor's
-// linger. Metadata is the same parser the DB uses.
+// Read the heartbeat threshold from the config, to size the survivor's linger.
 static int heartbeatThresholdTicks(std::string const& config) {
   try {
     Metadata md(config);
@@ -130,12 +126,11 @@ int main(int argc, char** argv) {
 
   auto t0 = std::chrono::steady_clock::now();
 
-  // --kill-one plumbing. Writer 1 (the victim) reports progress and the
-  // engine's claim lines on a stderr pipe; writer 0 (the survivor) waits
-  // for a byte on a start pipe before opening the DB, and its stdout goes
-  // through a pipe so the parent can count takeovers. The survivor stays
-  // open for the threshold, plus one replay interval (a third of it),
-  // plus a margin.
+  // --kill-one plumbing. Writer 1 (the victim) reports progress and claim
+  // lines on a stderr pipe. Writer 0 (the survivor) waits for a byte on a
+  // start pipe before it opens the DB; its stdout goes through a pipe so
+  // the parent can count takeovers. The survivor stays open for the
+  // threshold, one replay interval (a third of it), and a margin.
   int threshold_ticks = kill_one ? heartbeatThresholdTicks(config) : 0;
   int linger_ms = kill_one ? threshold_ticks * 100 * 4 / 3 + 5000 : 0;
   int victim_pipe[2] = {-1, -1};    // victim stderr -> parent
@@ -159,7 +154,7 @@ int main(int argc, char** argv) {
       return 1;
     }
     if (pid == 0) {
-      // Child — run writer and exit.
+      // Child: run the writer and exit.
       int start = w * keys_per_writer;
       int end = start + keys_per_writer;
       bool report_progress = false;
@@ -209,8 +204,7 @@ int main(int argc, char** argv) {
       }
       std::cerr << line << '\n';
       // Its own claim, past the half-way mark: kill it before the
-      // compaction can complete (a compaction takes tens of ms; this
-      // reacts in well under one).
+      // compaction can complete.
       if (!killed && victim_acked >= kill_after &&
           line.find("[COMPACTION_NEEDED]") != std::string::npos &&
           line.find(victim_tag) != std::string::npos) {
@@ -257,7 +251,7 @@ int main(int argc, char** argv) {
     close(start_pipe[1]);
   }
 
-  // Parent — wait for both children.
+  // Parent: wait for both children.
   int failures = 0;
   for (int w = 0; w < 2; ++w) {
     int status = 0;

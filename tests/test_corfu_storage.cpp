@@ -153,13 +153,10 @@ TEST(CorfuStorageTest, remove_clears_file) {
   delete storage;
 }
 
-// Multi-writer read miss: an append that a peer's SEAL
-// outran must not be acked. Writer A appends in a tight loop while B seals
-// the same file a few milliseconds in. Whatever A got kSuccess for must be
-// exactly what B (and everyone else) holds for the file — no more, no
-// less. If the ack did not wait for the tailer, A would ack appends that were
-// sequenced above B's SEAL whenever A's tailer had not applied the SEAL
-// yet, and every other process would drop those bytes.
+// An append that a peer's SEAL outran must not be acked. Writer A appends
+// in a tight loop while B seals the same file a few milliseconds in. The
+// bytes A got kSuccess for must be exactly what every process holds for
+// the file.
 TEST(CorfuStorageTest, ack_never_outruns_a_peer_seal) {
   SKIP_IF_NO_CORFU();
   std::string stream = CorfuStorageEnv::uniqueStream("corfu_seal_race");
@@ -206,8 +203,7 @@ TEST(CorfuStorageTest, ack_never_outruns_a_peer_seal) {
     a->clearSync();
     EXPECT_EQ(acked, own) << "round " << round;
   }
-  // The seal must have cut A off in most rounds, or the race was not
-  // exercised.
+  // The seal must cut A off in most rounds, or the race was not exercised.
   EXPECT_GE(rounds_with_seal_refusal, 10);
   delete b;
   delete a;
@@ -226,13 +222,11 @@ std::vector<unsigned char> readAllFenced(CorfuDBStorage* s, std::string const& f
 }
 }  // namespace
 
-// The fast path: a data append is acked on the
-// sequencer's answer, not after the tailer applied it, because its token
-// request carries the file's conflict key. Checks that the fast path is
-// taken on a warm stream, that a peer's SEAL turns the next append into
-// kSealed with no bytes landing (the sequencer refused the token, or the
-// seal was already known locally), that a second file keeps flowing fast,
-// and that both processes read exactly the acked bytes.
+// The fast path: a data append is acked on the sequencer's answer because
+// its token request carries the file's conflict key. Checks that a warm
+// stream takes the fast path, that a peer's SEAL turns the next append into
+// kSealed with no bytes landing, that a second file keeps flowing fast, and
+// that both processes read exactly the acked bytes.
 TEST(CorfuStorageTest, fast_ack_taken_and_refused_by_a_peer_seal) {
   SKIP_IF_NO_CORFU();
   std::string stream = CorfuStorageEnv::uniqueStream("corfu_fast_ack");
@@ -245,8 +239,7 @@ TEST(CorfuStorageTest, fast_ack_taken_and_refused_by_a_peer_seal) {
     if (s == Status::kSuccess && file == "f") acked.insert(acked.end(), p.begin(), p.end());
     return s;
   };
-  // Warm-up: the first appends of a fresh stream may take the slow path
-  // (a snapshot below the tail at sequencer bootstrap).
+  // Warm-up: the first appends of a fresh stream may take the slow path.
   for (int i = 0; i < 5; ++i) ASSERT_EQ(Status::kSuccess, put("f", i));
   uint64_t const fast_before = a->fastAcks();
   for (int i = 5; i < 50; ++i) ASSERT_EQ(Status::kSuccess, put("f", i));
@@ -273,10 +266,9 @@ TEST(CorfuStorageTest, fast_ack_taken_and_refused_by_a_peer_seal) {
 }
 
 // ---------------------------------------------------------------------------
-// Checkpoints and trimming. These trim the shared test
-// server's log, so they sit at the end of the file: a later test on a
-// fresh stream is unaffected (the sequencer's per-stream mark for a new
-// stream is empty), but a reopen of an EARLIER stream would not be.
+// Checkpoints and trimming. These trim the shared test server's log, so they
+// sit at the end of the file: a later test on a fresh stream is unaffected,
+// but a reopen of an earlier stream would not be.
 // ---------------------------------------------------------------------------
 namespace {
 
@@ -417,8 +409,7 @@ TEST(CorfuStorageTest, snapshot_under_concurrent_writes_is_a_prefix) {
   ASSERT_TRUE(a->prefixTrim(snap.covered_addr));
 
   // The joiner restores the snapshot and replays covered_addr+1..tail. If
-  // the snapshot were not an exact prefix, bytes would be duplicated or
-  // missing and the two reads would differ.
+  // the snapshot is not an exact prefix, the two reads differ.
   CorfuDBStorage* b = makeStorageWithStore(stream, &store);
   EXPECT_EQ(static_cast<size_t>(kWrites) * 4, readAll(a, "f").size());
   EXPECT_EQ(readAll(a, "f"), readAll(b, "f"));

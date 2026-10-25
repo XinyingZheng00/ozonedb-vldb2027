@@ -5,8 +5,8 @@
 //
 // Opens the DB, does num_keys put()s, closes, reopens, and get()s each key
 // back to verify durability across an open/close cycle. Exits non-zero on
-// any failure. Not a gtest — this is a minimal probe you can run by hand
-// or from a script against a live corfu_server.
+// any failure. Not a gtest: run it by hand or from a script against a live
+// corfu_server.
 #include "db.h"
 #include <chrono>
 #include <cstdlib>

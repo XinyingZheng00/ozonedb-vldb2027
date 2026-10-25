@@ -1,7 +1,6 @@
 #ifndef OZONEDB_TEST_ENV_H
 #define OZONEDB_TEST_ENV_H
-// Where the tests write. OZONEDB_TEST_ROOT overrides the default of
-// /tank/test/ so the suite runs without root on a machine that has no /tank.
+// Where the tests write. OZONEDB_TEST_ROOT overrides the default /tank/test/.
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -48,10 +47,9 @@ inline std::string const& dbConfig() {
   return out;
 }
 
-// Like dbConfig(), but writes <name>.json with `extra` key/value lines
-// appended to the base config (values verbatim: numbers unquoted, strings
-// quoted by the caller) and db_path under root()/<name>/. For tests that
-// need a knob the base config does not set.
+// Like dbConfig(), but writes <name>.json with db_path under root()/<name>/
+// and the `extra` key/value pairs appended verbatim: numbers unquoted,
+// strings quoted by the caller.
 inline std::string dbConfigWith(std::string const& name,
                                 std::vector<std::pair<std::string, std::string>> const& extra) {
   std::ifstream in("../src/config/local/test_db.json");
