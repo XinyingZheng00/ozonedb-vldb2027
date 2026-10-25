@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
-"""Generate resource_usage.pdf: peak server-side RSS memory vs P, log-y,
-from ray_mlflow_swapin_resource_usage/trials.csv.
+"""Generate resource_usage.pdf: peak server-side RSS memory versus P, with
+a log y-axis, from ray_mlflow_swapin_resource_usage/trials.csv.
 
-sqlite/ozonedb are 0 by construction -- no separate server process exists
-for them at all, not just "small" -- so their lines sit on the x-axis.
-postgres/postgres_serialized show the real, measured peak RSS summed
-across every real `postgres` OS process (background + per-connection
-backends) during each trial. This is the resource cost a client-server
-architecture pays that an embedded store structurally cannot.
+sqlite and ozonedb are 0 by construction. No separate server process
+exists for them at all, they are not only "small". So their lines sit on
+the x-axis. postgres and postgres_serialized show the real, measured peak
+RSS during each trial. It is summed across every real `postgres` OS
+process (background plus per-connection backends). This is the resource cost
+that a client-server architecture pays and that an embedded store
+structurally cannot pay.
 
 Usage:
     python3 plot_resource_usage.py [--csv PATH] [--out PATH]

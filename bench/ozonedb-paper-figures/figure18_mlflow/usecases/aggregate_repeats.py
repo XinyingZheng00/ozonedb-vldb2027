@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""Aggregate a phase's trials.csv (multiple repeats per configuration) into
-mean +/- stddev per configuration, plus min/max so a reviewer can see the
-actual spread, not just a smoothed average.
+"""Aggregate the trials.csv of a phase into one row per configuration.
+The input has multiple repeats per configuration. The output gives the
+mean +/- stddev per configuration, plus min and max. The min and max show
+a reviewer the real spread, not only a smoothed average.
 
-Groups by every column except a fixed set of per-trial metric columns and
-"repeat" itself, so this works unmodified across Phase 1/2/3's CSVs (they
-share the same shape: some key columns + repeat + metric columns).
+The script groups by every column except a fixed set of per-trial metric
+columns and "repeat" itself. So it works unmodified on the CSVs of Phase
+1, 2 and 3. These CSVs share the same shape: some key columns, a repeat
+column and metric columns.
 """
 import argparse
 import csv
@@ -56,7 +58,8 @@ def main():
     for key, grp in sorted(groups.items()):
         out = dict(zip(key_cols, key))
         out["n_repeats"] = len(grp)
-        # also carry verify totals summed across repeats (correctness should be checked over ALL repeats, not averaged)
+        # Also carry the verify totals, summed across repeats. Check correctness
+        # over ALL repeats. Do not average it.
         vmis = sum(int(r.get("verify_mismatches", 0) or 0) for r in grp)
         vchk = sum(int(r.get("verify_checked", 0) or 0) for r in grp)
         if "verify_checked" in rows[0]:

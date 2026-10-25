@@ -1,0 +1,72 @@
+[syncd w16] /usr/bin/python3 $HOME/crsqlite/bench/scripts/sync_daemon.py --db /tank/crsqlite/ycsb_data/visx-reader-visibility-xnode-20260821-170528-w16/replica.db --port 8317 --peers 10.10.1.1:8301,10.10.1.1:8302,10.10.1.1:8303,10.10.1.1:8304,10.10.1.1:8305,10.10.1.1:8306,10.10.1.1:8307,10.10.1.1:8308,10.10.1.1:8309,10.10.1.1:8310,10.10.1.1:8311,10.10.1.1:8312,10.10.1.1:8313,10.10.1.1:8314,10.10.1.1:8315,10.10.1.1:8316 --interval-ms 50.0 --batch 4096 --extension $HOME/crsqlite/lib/crsqlite --synchronous FULL --metrics $HOME/crsqlite/bench/results/consistency/visibility-xnode-20260821-170528/w16.csv
+{
+  "engine": "cr-sqlite",
+  "linearizable_reads": false,
+  "read_barrier": false,
+  "cross_node": true,
+  "channel": "tcp",
+  "inserts": 4620,
+  "checked": 4620,
+  "misses_first_read": 4620,
+  "miss_first_read_fraction": 1.0,
+  "timeouts": 0,
+  "visibility_ms_p50": 34.382,
+  "visibility_ms_p90": 51.702,
+  "visibility_ms_p95": 55.416,
+  "visibility_ms_p99": 84.081,
+  "visibility_ms_max": 176.393,
+  "first_check_age_ms_p50": 0.668,
+  "first_check_age_ms_p99": 1.301,
+  "pbs": [
+    {
+      "age_ms_le": 0.5,
+      "p_stale": 1.0
+    },
+    {
+      "age_ms_le": 1,
+      "p_stale": 1.0
+    },
+    {
+      "age_ms_le": 2,
+      "p_stale": 1.0
+    },
+    {
+      "age_ms_le": 5,
+      "p_stale": 0.9991341991341991
+    },
+    {
+      "age_ms_le": 10,
+      "p_stale": 0.9777056277056277
+    },
+    {
+      "age_ms_le": 20,
+      "p_stale": 0.8525974025974026
+    },
+    {
+      "age_ms_le": 50,
+      "p_stale": 0.1331168831168831
+    },
+    {
+      "age_ms_le": 100,
+      "p_stale": 0.004761904761904762
+    },
+    {
+      "age_ms_le": 200,
+      "p_stale": 0.0
+    },
+    {
+      "age_ms_le": 500,
+      "p_stale": 0.0
+    }
+  ],
+  "sync_interval_ms": 50.0,
+  "rate_per_s": 20.0,
+  "writers": 16,
+  "aggregate_rate_per_s": 320.0,
+  "replicas": 17,
+  "duration_s": 15,
+  "value_size": 1000,
+  "poll_ms": 1.0
+}
+
+=> 4620 of 4620 first reads on replica 16 missed a key some writer replica had already acked (100.0%); visibility p50 34.382 ms (16 writers, sync interval 50.0 ms). Results in $HOME/crsqlite/bench/results/consistency/visibility-xnode-20260821-170528

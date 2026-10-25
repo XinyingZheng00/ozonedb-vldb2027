@@ -258,11 +258,12 @@ def plot_figure(data, output_path: Path):
 
 # ---------------------------------------------------------------------------
 # Independent path: reproduce the ORIGINAL 5-system fig1_single_writer.pdf
-# (OzoneKV/RocksDB/SQLite-trunk/BCW2/HCTree, 7 groups: Load, Load tmpfs,
-# A-D, F, single log-y throughput panel) directly from the aggregated CSVs
-# that already live in fig1-single-writer-local/ -- no raw-log re-parsing,
-# and no dependency on the *.result files collect_metrics() expects (which
-# don't exist in that directory).
+# directly from the aggregated CSVs that already live in
+# fig1-single-writer-local/. The systems are OzoneKV/RocksDB/SQLite-trunk/
+# BCW2/HCTree. The 7 groups are Load, Load tmpfs, A-D and F, in a single
+# log-y throughput panel. This path does not re-parse the raw logs. It does
+# not depend on the *.result files that collect_metrics() expects. Those
+# files do not exist in that directory.
 # ---------------------------------------------------------------------------
 
 FIG1_CSV_GROUPS = ["load", "load_tmpfs", "a", "b", "c", "d", "f"]
@@ -290,11 +291,11 @@ FIG1_CSV_SYSTEM_COLORS = {
 
 def collect_metrics_fig1_csv(results_dir: Path):
     """Merge results.csv (workloads a/b/c/d/f) with load_results.csv and
-    load_tmpfs_results.csv (the "Load"/"Load tmpfs" groups) into the same
-    data[system][group] = {"throughput_mean", "throughput_std"} shape the
-    other collectors use. n_repeats is 1 for every row in these CSVs, so
-    throughput_stddev is empty -- std is reported as 0.0, not NaN, so a
-    missing stddev doesn't silently drop the bar."""
+    load_tmpfs_results.csv (the "Load" and "Load tmpfs" groups). The result has
+    the same data[system][group] = {"throughput_mean", "throughput_std"} shape
+    that the other collectors use. n_repeats is 1 for every row in these CSVs,
+    so throughput_stddev is empty. The function reports std as 0.0, not NaN.
+    A missing stddev then does not drop the bar without notice."""
     data = {
         system: {g: {"throughput_mean": math.nan, "throughput_std": 0.0}
                  for g in FIG1_CSV_GROUPS}
@@ -325,8 +326,8 @@ def collect_metrics_fig1_csv(results_dir: Path):
 
 
 def plot_figure_fig1_csv(data, output_path: Path):
-    """Single log-y throughput bar chart, 5 systems x 7 groups. Shorter and
-    with the legend on the right (same treatment applied to plot_figure())."""
+    """A single log-y throughput bar chart, 5 systems x 7 groups. It is shorter
+    and has the legend on the right. plot_figure() got the same treatment."""
     n_sys = len(FIG1_CSV_SYSTEM_ORDER)
     x = np.arange(len(FIG1_CSV_GROUPS))
     width = 0.8 / n_sys
@@ -344,17 +345,18 @@ def plot_figure_fig1_csv(data, output_path: Path):
     ax.set_ylabel("Throughput (ops/sec)", fontsize=22)
     ax.tick_params(axis="y", labelsize=19)
     ax.set_xticks(x)
-    # Global rcParams at the top of this file set an 18pt tick font sized for
-    # the old 18x9in figure; on this shorter/narrower one, "Load"/"Load tmpfs"
-    # crowd into each other at that size, so override it down for this panel.
+    # The global rcParams at the top of this file set an 18pt tick font. That
+    # size fits the old 18x9in figure. On this shorter and narrower figure,
+    # "Load" and "Load tmpfs" crowd into each other at that size. So this
+    # panel overrides the size to a smaller value.
     ax.set_xticklabels([FIG1_CSV_GROUP_LABELS[g] for g in FIG1_CSV_GROUPS], fontsize=17)
-    # Title dropped -- the paper's subfigure caption ("Single writer
+    # No title. The subfigure caption in the paper ("Single writer
     # performance in local deployment") already says it.
     ax.grid(axis="y", linestyle="--", alpha=0.4)
-    # fontsize override: the file-level rcParams sets legend.fontsize=20,
-    # sized for the old 18x9in figure -- far too large for this one.
-    # Smaller handles/padding (not just fontsize) so the legend column itself
-    # is narrower -- constrained_layout gives the axes whatever room that frees.
+    # fontsize override: the file-level rcParams set legend.fontsize=20. That
+    # size fits the old 18x9in figure, and it is far too large for this one.
+    # Smaller handles and padding, not only a smaller fontsize, make the legend
+    # column narrower. constrained_layout gives the axes the room that this frees.
     ax.legend(loc="center left", bbox_to_anchor=(1.0, 0.5), frameon=False, fontsize=17,
               handlelength=1.2, handletextpad=0.4, borderpad=0.3, labelspacing=0.5)
 
@@ -371,7 +373,7 @@ def plot_figure_fig1_csv(data, output_path: Path):
 
 
 # ---------------------------------------------------------------------------
-# Independent path: HCTree / BCW2 / RocksDB single-writer results produced by
+# Independent path: HCTree / BCW2 / RocksDB single-writer results. These scripts produce them:
 #   YCSB-cpp/run_benchmark_hctree.sh
 #   YCSB-cpp/run_benchmark_bcw2.sh
 #   YCSB-cpp/run_benchmark_rocksdb.sh
@@ -427,13 +429,13 @@ def build_workload_labels_hbr():
 def parse_result_file_ycsbcpp(file_path: Path, thread_count: int = 1):
     """Parse a YCSB-cpp native-format result file.
 
-    YCSB-cpp emits per-run lines:
+    YCSB-cpp emits these per-run lines:
       Run runtime(sec): <float>
       Run operations(ops): <int>
       Run throughput(ops/sec): <float>
 
-    Avg op latency (ms) is derived as thread_count * 1000 / throughput,
-    i.e. the per-op wall latency assuming threads are saturated.
+    The function derives the average op latency (ms) as thread_count * 1000 /
+    throughput. That is the per-op wall latency if the threads are saturated.
     """
     text = file_path.read_text(encoding="utf-8", errors="ignore")
     throughput_values = []
@@ -458,7 +460,7 @@ def parse_result_file_ycsbcpp(file_path: Path, thread_count: int = 1):
 def collect_metrics_hbr(results_dir: Path, thread_count: int = 1):
     """Parse HCTree/BCW2/RocksDB result files for a fixed thread count.
 
-    Returns nested dict: data[system][workload] -> metric dict.
+    Returns a nested dict: data[system][workload] gives a metric dict.
     """
     data = {
         system: {

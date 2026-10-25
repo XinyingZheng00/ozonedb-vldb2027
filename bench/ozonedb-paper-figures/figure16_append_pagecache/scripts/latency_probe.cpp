@@ -1,12 +1,12 @@
-// latency_probe: single-writer per-operation latencies, used to sanity-check
-// what limits each Figure 16 curve. Every probe writes 4 KiB records and
-// reports mean / p50 / p99 per step in microseconds.
+// latency_probe: single-writer per-operation latencies. The sanity checks use
+// them to find what limits each Figure 16 curve. Every probe writes 4 KiB records
+// and reports mean / p50 / p99 per step in microseconds.
 //
 //   append-fsync          buffered O_APPEND write, then fsync      (fsync · Buffered, N=1)
 //   direct-append-fsync   O_DIRECT O_APPEND write, then fsync      (fsync · O_DIRECT, N=1)
 //   direct-append         O_DIRECT O_APPEND write                  (no-sync · O_DIRECT)
 //   direct-overwrite      O_DIRECT pwrite into preallocated space  (same write, no file growth)
-//   device-flush          O_DIRECT overwrite, then fdatasync: no metadata changes, so the
+//   device-flush          O_DIRECT overwrite, then fdatasync. No metadata changes, so the
 //                         fdatasync is only the device cache flush
 //
 // Output: CSV lines  probe,step,ops,mean_us,p50_us,p99_us
@@ -74,13 +74,13 @@ void Check(bool ok, const char* what) {
   }
 }
 
-// Fresh empty file; returns an fd opened with O_APPEND.
+// Creates a fresh empty file. Returns an fd that is open with O_APPEND.
 int FreshAppend(const std::string& path, bool direct) {
   close(Open(path, O_WRONLY | O_CREAT | O_TRUNC, false));
   return Open(path, O_WRONLY | O_APPEND, direct);
 }
 
-// File of `ops` records, written and synced, so overwrites change no metadata.
+// Creates a file of `ops` records, written and synced. So overwrites change no metadata.
 int Preallocated(const std::string& path, int ops, const char* buf) {
   int fd = Open(path, O_WRONLY | O_CREAT | O_TRUNC, false);
   for (int i = 0; i < ops; i++) Check(write(fd, buf, kRecord) == (ssize_t)kRecord, "prealloc");

@@ -1,30 +1,33 @@
-"""Background resource sampler for the "what does the client-server
-architecture actually cost" question: real RSS memory and CPU usage,
-sampled from the live OS during a trial, not estimated.
+"""Background resource sampler for one question: what does the
+client-server architecture actually cost? It samples real RSS memory and
+CPU usage from the live OS during a trial. It does not estimate them.
 
-Two groups, sampled every `interval_s` while a trial's `Tuner.fit()` runs:
+Two groups are sampled every `interval_s` while the `Tuner.fit()` of a
+trial runs:
 
   - `postgres` processes (matched by `name() == "postgres"`, real): every
-    real `postgres` OS process on this host, background (checkpointer,
-    walwriter, autovacuum launcher, stats collector, ...) and per-
-    connection backends alike -- the true total cost of having a Postgres
-    server available to serve this workload, including its fixed idle
-    overhead. Only meaningful (and only sampled) for the `postgres`/
-    `postgres_serialized` arms; for `sqlite`/`ozonedb` this is exactly
-    zero by construction -- no such process exists at all, not just
-    "small" -- so it's not sampled for those arms rather than reporting a
-    misleading nonzero number from Postgres's *other*, unrelated idle
-    presence on this shared host.
-  - the driver's own process tree (`psutil.Process().children(recursive=True)`):
-    Ray's own infrastructure (raylet, GCS, dashboard/runtime-env agents)
-    plus every `train_and_log` trial worker -- the real training compute
-    common to all four backends, sampled for all of them to check (not
-    assume) whether it's actually similar across backends.
+    real `postgres` OS process on this host. This includes the background
+    processes (checkpointer, walwriter, autovacuum launcher, stats
+    collector, ...) and the per-connection backends. This is the true
+    total cost of a Postgres server that is available to serve this
+    workload, including its fixed idle overhead. It is only meaningful
+    (and only sampled) for the `postgres` and `postgres_serialized` arms.
+    For `sqlite` and `ozonedb` this is exactly zero by construction. No
+    such process exists at all, it is not only "small". So the sampler
+    does not sample it for those arms. Otherwise it would report a
+    misleading nonzero number from the *other*, unrelated idle presence
+    of Postgres on this shared host.
+  - the own process tree of the driver (`psutil.Process().children(recursive=True)`):
+    the own infrastructure of Ray (raylet, GCS, dashboard/runtime-env
+    agents) plus every `train_and_log` trial worker. This is the real
+    training compute common to all four backends. The sampler samples it
+    for all of them, to check (not assume) that it is actually similar
+    across backends.
 
-Peak RSS (not mean) is reported for both groups, since provisioning for a
-workload means provisioning for its peak, not its average; mean CPU% is
-reported since that's the steady-state cost that matters for a shared
-host.
+Peak RSS (not mean) is reported for both groups. To provision for a
+workload means to provision for its peak, not its average. Mean CPU% is
+reported, because that is the steady-state cost that matters for a
+shared host.
 """
 import threading
 import time
@@ -43,10 +46,10 @@ class ResourceSampler:
         self.client_rss_mb_samples = []
         self.client_cpu_pct_samples = []
         self._driver = psutil.Process()
-        # cpu_percent(interval=None) reports the delta since that *same*
-        # Process object's previous call -- a freshly-constructed Process
-        # always reports 0.0 on its first call. Cache by pid so repeated
-        # ticks reuse the same object and get real deltas.
+        # cpu_percent(interval=None) reports the delta since the previous call
+        # on that *same* Process object. A freshly constructed Process always
+        # reports 0.0 on its first call. Cache by pid, so repeated ticks reuse
+        # the same object and get real deltas.
         self._client_proc_cache = {}
         self._pg_proc_cache = {}
 
@@ -99,9 +102,9 @@ class ResourceSampler:
             self.pg_cpu_pct_samples.append(pg_cpu)
 
     def _run(self):
-        # Prime cpu_percent() -- its first call per process returns the
-        # average since process start, not since-last-call; discard that
-        # sample rather than let a stale pre-trial average pollute peak/mean.
+        # Prime cpu_percent(). Its first call per process returns the average
+        # since process start, not since the last call. Discard that sample.
+        # Otherwise a stale pre-trial average would pollute peak and mean.
         self._sample_once()
         self.client_rss_mb_samples.clear()
         self.client_cpu_pct_samples.clear()

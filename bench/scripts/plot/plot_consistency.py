@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
 """Plots for the consistency experiments.
 
-  staleness    CDF of read staleness, one curve per probe run (labelled by
-               sync interval) -- from bench.py probe-staleness output dirs
-  lost-updates grouped bars of final counter vs increments issued -- from
-               bench.py check-lost-updates output dirs (control + crsqlite)
-  visibility   left: CDF of insert-visibility latency (its complement is the
-               PBS P[stale at age a] curve); right: first-read miss fraction
-               -- from check-visibility output dirs of either engine
-  table        print the [CONSISTENCY] lines of every aggregate in a results
-               dir as one CSV (divergence at run end, convergence time)
+staleness    CDF of read staleness, one curve per probe run (labelled by
+             sync interval) -- from bench.py probe-staleness output dirs
+lost-updates grouped bars of final counter vs increments issued -- from
+             bench.py check-lost-updates output dirs (control + crsqlite)
+visibility   left: CDF of insert-visibility latency (its complement is the
+             PBS P[stale at age a] curve); right: first-read miss fraction
+             -- from check-visibility output dirs of either engine
+table        print the [CONSISTENCY] lines of every aggregate in a results
+             dir as one CSV (divergence at run end, convergence time)
 
-  python3 plot_consistency.py staleness bench/results/consistency/staleness-*
-  python3 plot_consistency.py lost-updates bench/results/consistency/lost-updates-*
-  python3 plot_consistency.py visibility bench/results/consistency/visibility-*
-  python3 plot_consistency.py table bench/results/local/<run_tag>
+python3 plot_consistency.py staleness bench/results/consistency/staleness-*
+python3 plot_consistency.py lost-updates bench/results/consistency/lost-updates-*
+python3 plot_consistency.py visibility bench/results/consistency/visibility-*
+python3 plot_consistency.py table bench/results/local/<run_tag>
 """
 
 import argparse
@@ -105,8 +105,12 @@ def plot_lost_updates(dirs, out_name):
     for x, (f, k) in enumerate(zip(finals, issued)):
         lost = k - f
         ax.text(
-            x, f, f"{lost} lost\n({lost / k:.0%})" if lost else "0 lost",
-            ha="center", va="bottom", fontsize=8,
+            x,
+            f,
+            f"{lost} lost\n({lost / k:.0%})" if lost else "0 lost",
+            ha="center",
+            va="bottom",
+            fontsize=8,
         )
     ax.set_xticks(list(xs))
     ax.set_xticklabels(labels, fontsize=8)
@@ -147,8 +151,7 @@ def plot_visibility(dirs, out_name):
         # is exactly what "never became visible within the timeout" means.
         n = len(vis_ms) + timeouts
         ys = [(i + 1) / n for i in range(len(vis_ms))]
-        label = (f"{_visibility_label(s)} "
-                 f"({s['miss_first_read_fraction']:.1%} missed)")
+        label = f"{_visibility_label(s)} ({s['miss_first_read_fraction']:.1%} missed)"
         ax_cdf.plot(vis_ms, ys, label=label)
 
         labels.append(_visibility_label(s).replace(", ", "\n"))
@@ -160,8 +163,9 @@ def plot_visibility(dirs, out_name):
     ax_cdf.set_ylabel("CDF")
     ax_cdf.set_ylim(0, 1)
     ax_cdf.legend(fontsize=7)
-    ax_cdf.set_title("Insert visibility latency\n(1 - CDF = PBS P[stale at age a])",
-                     fontsize=9)
+    ax_cdf.set_title(
+        "Insert visibility latency\n(1 - CDF = PBS P[stale at age a])", fontsize=9
+    )
 
     xs = range(len(labels))
     ax_miss.bar(xs, fracs, color="#d62728")
@@ -171,10 +175,182 @@ def plot_visibility(dirs, out_name):
     ax_miss.set_xticklabels(labels, fontsize=7)
     ax_miss.set_ylabel("first-read miss fraction")
     ax_miss.set_ylim(0, max(0.05, max(fracs) * 1.25) if fracs else 1)
-    ax_miss.set_title("Acked key not found on first read\n(read-latest violations)",
-                      fontsize=9)
+    ax_miss.set_title(
+        "Acked key not found on first read\n(read-latest violations)", fontsize=9
+    )
 
     fig.tight_layout()
+    os.makedirs(OUT_DIR, exist_ok=True)
+    out = os.path.join(OUT_DIR, out_name)
+    fig.savefig(out, dpi=300)
+    print(f"wrote {out}")
+
+
+def _pub_label(label):
+    # Publication names for _visibility_label output: OzoneKV,
+    # CR-SQLite-sync (fenced read path), CR-SQLite-async-<interval>ms.
+    if label.startswith("ozonedb"):
+        return "OzoneKV"
+    if "syncread" in label:
+        return "CR-SQLite-sync"
+    m = re.search(r"sync ([0-9.]+)", label)
+    if m:
+        return f"CR-SQLite-async-{float(m.group(1)):g}ms"
+    return label
+
+
+def _scaling_sort_key(label):
+    # OzoneKV first, then fenced CR-SQLite-sync, then async by ascending
+    # interval (string sort would order 10 < 200 < 50).
+    if label.startswith("OzoneKV"):
+        return (0, 0.0)
+    m = re.search(r"async-([0-9.]+)ms", label)
+    if m:
+        return (2, float(m.group(1)))
+    return (1, 0.0)
+
+
+def plot_visibility_scaling(dirs, out_name, layout="grid", legend_pos="bottom"):
+    """CDF-only insert-visibility figure, one facet per writer count.
+
+    The scaling claim in one picture: ozonedb writers all share one log
+    and the reader's fence cost is writer-count-independent, so its curve
+    stays pinned at apply-lag milliseconds across facets; each cr-sqlite
+    reader must merge every writer replica's changes, so its curves sit
+    at ~interval/2 and shift right as writers grow. Timeouts keep a curve
+    below 1.0 (never-visible mass), as in plot_visibility.
+    """
+    groups = {}  # writer count -> [(label, sorted vis_ms, total keys)]
+    labels_seen = set()
+    any_xnode = False
+    for d in sorted(dirs):
+        s = _load_summary(d)
+        w = int(s.get("writers", 1))
+        # Cross-node runs must reference the reader-side notify receipt:
+        # t_ack is on the writer host's clock, t_found on the reader's,
+        # and the two CLOCK_MONOTONIC domains are incomparable (the
+        # difference can even be negative). Same convention as the
+        # summary analysis.
+        xnode = bool(s.get("cross_node"))
+        any_xnode = any_xnode or xnode
+        ref_col = "t_notify_ns" if xnode else "t_ack_ns"
+        vis_ms, timeouts = [], 0
+        with open(os.path.join(d, "visibility.csv")) as f:
+            for row in csv.DictReader(f):
+                t_found = int(row["t_found_ns"])
+                if t_found < 0:
+                    timeouts += 1
+                else:
+                    vis_ms.append((t_found - int(row[ref_col])) / 1e6)
+        vis_ms.sort()
+        # The topology is uniform across a scaling figure (the -xnode
+        # engine suffix folds into the caption), so the legend carries
+        # publication engine names only.
+        label = _pub_label(_visibility_label(s))
+        labels_seen.add(label)
+        groups.setdefault(w, []).append((label, vis_ms, len(vis_ms) + timeouts))
+
+    ordered_labels = sorted(labels_seen, key=_scaling_sort_key)
+    colors = {lab: f"C{i}" for i, lab in enumerate(ordered_labels)}
+    ws = sorted(groups)
+    ncols = len(ws) if layout == "row" else min(2, len(ws))
+    nrows = (len(ws) + ncols - 1) // ncols
+    # Rendered 1:1 so the point sizes below are the printed sizes.
+    # grid: 3.5 in total = one IEEE column; row: 7 in = full text width
+    # (a figure* strip), which is the narrowest a 1x4 log-axis row stays
+    # legible at.
+    facet_w, facet_h = (1.75, 1.7) if layout == "row" else (1.75, 1.2)
+    if legend_pos == "right":
+        # The right-hand legend frees the bottom band, so the facets can
+        # be shorter; the width cost comes out of the facets via rect,
+        # so the grid gets a little extra width back.
+        facet_h = 1.35 if layout == "row" else 1.05
+        if layout != "row":
+            facet_w = 1.9
+    fig, axes = plt.subplots(
+        nrows,
+        ncols,
+        figsize=(facet_w * ncols, facet_h * nrows),
+        sharex=True,
+        sharey=True,
+        squeeze=False,
+    )
+    for ax, w in zip(axes.flat, ws):
+        for label, vis, n in sorted(groups[w], key=lambda t: _scaling_sort_key(t[0])):
+            ys = [(i + 1) / n for i in range(len(vis))]
+            ax.plot(vis, ys, label=label, color=colors[label])
+        ax.set_xscale("log")
+        # Narrow one-column facets prune the auto ticks down to two;
+        # pin one tick per decade and the 0/0.5/1 CDF gridlines.
+        ax.set_xticks([1, 10, 100, 1000])
+        ax.set_yticks([0, 0.5, 1])
+        ax.set_title(f"{w} writers", fontsize=9, pad=2)
+        ax.set_ylim(0, 1.02)
+        ax.tick_params(labelsize=8)
+        if legend_pos == "right":
+            # The legend column narrows the facets; 8 pt decade labels
+            # collide at that width, and the sub-0.4 ms region is empty
+            # in every run, so trade it for tick spacing.
+            ax.tick_params(axis="x", labelsize=7)
+            ax.set_xlim(0.4, 1500)
+        ax.grid(alpha=0.25)
+    for ax in list(axes.flat)[len(ws) :]:
+        ax.set_visible(False)
+    # Cross-node runs still reference reader-side notify receipt (see the
+    # ref_col comment above); the label says "ack" and the caption carries
+    # the clock-domain detail.
+    xlabel = "time from ack to first successful read (ms)"
+    for row in axes:
+        row[0].set_ylabel("CDF", fontsize=9)
+    from matplotlib.lines import Line2D
+
+    handles = [Line2D([0], [0], color=colors[lab], label=lab) for lab in ordered_labels]
+    fig_h = facet_h * nrows
+    fig_w = facet_w * ncols
+    if legend_pos == "right":
+        # One top-down column at the right edge; the bottom band then
+        # holds only the x label, which is what buys the height back.
+        legend_w_in, xlabel_in = 1.45, 0.24
+        axes_right = 1 - legend_w_in / fig_w
+        fig.legend(
+            handles=handles,
+            loc="center right",
+            bbox_to_anchor=(1.0, 0.5 + xlabel_in / fig_h / 2),
+            ncol=1,
+            fontsize=8,
+            frameon=False,
+            handlelength=1.2,
+            handletextpad=0.4,
+            labelspacing=0.4,
+            borderpad=0.1,
+            borderaxespad=0.1,
+        )
+        # The label is wider than the facet region, so center it on the
+        # full figure width and let it run under the legend column.
+        fig.text(0.5, 0.015, xlabel, ha="center", va="bottom", fontsize=9)
+        fig.tight_layout(
+            pad=0.4, h_pad=0.7, rect=(0, xlabel_in / fig_h, axes_right, 1)
+        )
+    else:
+        # One figure-level x-label above the legend: at publication font
+        # sizes the per-facet label no longer fits inside a facet's width.
+        legend_in, xlabel_in = (0.24, 0.16) if layout == "row" else (0.56, 0.13)
+        fig.legend(
+            handles=handles,
+            loc="lower center",
+            ncol=len(ordered_labels) if layout == "row" else min(2, len(ordered_labels)),
+            fontsize=8,
+            frameon=False,
+            handlelength=1.2,
+            handletextpad=0.4,
+            columnspacing=1.0,
+            labelspacing=0.25,
+            borderpad=0.1,
+        )
+        fig.text(0.5, legend_in / fig_h, xlabel, ha="center", va="bottom", fontsize=9)
+        fig.tight_layout(
+            pad=0.4, h_pad=0.7, rect=(0, (legend_in + xlabel_in) / fig_h, 1, 1)
+        )
     os.makedirs(OUT_DIR, exist_ok=True)
     out = os.path.join(OUT_DIR, out_name)
     fig.savefig(out, dpi=300)
@@ -192,12 +368,22 @@ def plot_visibility_sweep(dirs, out_name):
         s = _load_summary(d)
         rate = s["checked"] / s["duration_s"] if s.get("duration_s") else 0
         if s.get("engine", "").startswith("cr-sqlite"):
-            cr.append((s["sync_interval_ms"], s["visibility_ms_p50"],
-                       s["miss_first_read_fraction"]))
+            cr.append(
+                (
+                    s["sync_interval_ms"],
+                    s["visibility_ms_p50"],
+                    s["miss_first_read_fraction"],
+                )
+            )
         else:
             oz[bool(s.get("linearizable_reads"))].append(
-                (rate, s["miss_first_read_fraction"],
-                 s["misses_first_read"], s["checked"]))
+                (
+                    rate,
+                    s["miss_first_read_fraction"],
+                    s["misses_first_read"],
+                    s["checked"],
+                )
+            )
 
     fig, (ax_oz, ax_cr) = plt.subplots(1, 2, figsize=(8.5, 3.2))
 
@@ -210,8 +396,14 @@ def plot_visibility_sweep(dirs, out_name):
         label = "linearizable_reads (all 0)" if lin else "default"
         ax_oz.plot(xs, ys, marker=marker, color=color, label=label)
         for x, y, m, c in pts:
-            ax_oz.annotate(f"{m}/{c}", (x, y), textcoords="offset points",
-                           xytext=(0, 5), ha="center", fontsize=6)
+            ax_oz.annotate(
+                f"{m}/{c}",
+                (x, y),
+                textcoords="offset points",
+                xytext=(0, 5),
+                ha="center",
+                fontsize=6,
+            )
     ax_oz.set_xscale("log")
     ax_oz.set_xlabel("achieved insert rate (keys/s)")
     ax_oz.set_ylabel("first-read miss fraction")
@@ -224,12 +416,22 @@ def plot_visibility_sweep(dirs, out_name):
         xs = [c[0] for c in cr]
         ys = [c[1] for c in cr]
         ax_cr.plot(xs, ys, marker="o", color="#d62728", label="measured p50")
-        ax_cr.plot(xs, [x / 2 for x in xs], linestyle="--", color="#888888",
-                   label="interval / 2")
+        ax_cr.plot(
+            xs,
+            [x / 2 for x in xs],
+            linestyle="--",
+            color="#888888",
+            label="interval / 2",
+        )
         for x, y, miss in cr:
-            ax_cr.annotate(f"{miss:.0%} missed", (x, y),
-                           textcoords="offset points", xytext=(0, -12),
-                           ha="center", fontsize=6)
+            ax_cr.annotate(
+                f"{miss:.0%} missed",
+                (x, y),
+                textcoords="offset points",
+                xytext=(0, -12),
+                ha="center",
+                fontsize=6,
+            )
         ax_cr.set_xscale("log")
         ax_cr.set_yscale("log")
         ax_cr.set_xlabel("sync interval (ms)")
@@ -281,6 +483,12 @@ def main():
     sp.add_argument("dirs", nargs="+")
     sp.add_argument("--out", default="visibility_sweep.pdf")
 
+    sp = sub.add_parser("visibility-scaling")
+    sp.add_argument("--layout", choices=("grid", "row"), default="grid")
+    sp.add_argument("--legend", choices=("bottom", "right"), default="bottom")
+    sp.add_argument("dirs", nargs="+")
+    sp.add_argument("--out", default="visibility_scaling.pdf")
+
     sp = sub.add_parser("table")
     sp.add_argument("results_dir")
 
@@ -293,6 +501,8 @@ def main():
         plot_visibility(args.dirs, args.out)
     elif args.cmd == "visibility-sweep":
         plot_visibility_sweep(args.dirs, args.out)
+    elif args.cmd == "visibility-scaling":
+        plot_visibility_scaling(args.dirs, args.out, args.layout, args.legend)
     elif args.cmd == "table":
         print_table(args.results_dir)
 

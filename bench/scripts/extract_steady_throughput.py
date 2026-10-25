@@ -52,6 +52,26 @@ def writer_steady(path, window):
                 failed += int(fm.group(2))
     if not samples:
         return None, failed, 0
+    # Drop the dead tail. YCSB keeps printing one status line per second while
+    # it closes the client, so every run ends with a few samples that report 0
+    # operations. Those seconds are after the last operation, not slow seconds,
+    # and averaging them into the window under-reports the rate. The tail is
+    # 3 or 4 samples, so it costs about 3 % at a 120 s window on both systems.
+    while len(samples) > 1 and samples[-1][1] == 0.0:
+        samples.pop()
+    # Drop YCSB's cleanup sample. The client prints one last status line a few
+    # milliseconds after the final full second, repeating that second:
+    #   300 sec: 20464 operations; 76 current ops/sec ...
+    #   300 sec: 20465 operations; 333.33 current ops/sec ... [CLEANUP: Count=1]
+    # Its rate is one operation divided by a 3 ms interval, so it is 4x to 5x
+    # the real rate. One such sample in a 120 s window overstates a slow series
+    # by up to 6.5 %. Slow clients print it; fast ones fill the last second, so
+    # the bias is asymmetric across systems. Any trailing sample that repeats
+    # the previous elapsed second is this artifact.
+    while len(samples) > 1 and samples[-1][0] == samples[-2][0]:
+        samples.pop()
+    if not samples:
+        return None, failed, 0
     last_t = samples[-1][0]
     cutoff = last_t - window
     win = [ops for (t, ops) in samples if t >= cutoff]

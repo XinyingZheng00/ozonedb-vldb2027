@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Generate avg_latency.pdf (mean log_metric() latency vs P, log-y) from
-trials.csv.
+"""Generate avg_latency.pdf from trials.csv. The plot shows the mean
+log_metric() latency versus P, with a log y-axis.
 
 Usage:
     python3 plot_avg_latency.py [--csv PATH] [--out PATH]

@@ -1,28 +1,42 @@
 # Figure 1a: first-generation embedded DB (RocksDB reopen-per-op)
 
 Paper: `images/first_generation.pdf`, `\label{fig:first_generation}` (§2 Motivation).
+Caption: "Write throughput as the number of writers increases."
 
 | File | What it is |
 |---|---|
 | `paper_figure.pdf` | the figure as it appears in the paper |
-| `plot_reopen_results.py` | plot script |
+| `data/results_20260219_180411.csv` | db_bench `updaterandom`, 5 repeats per (mode, workers), 1 to 24 workers, 30 s each |
+| `scripts/plot_reopen_results.py` | the plot script. Each point is the mean after the script drops the min and the max. The error bars show the stdev |
+| `scripts/reopen_benchmark.sh` | the sweep that wrote the CSV. Run it from the root of the RocksDB fork as `tools/reopen_benchmark.sh` |
+| `scripts/db_bench_reopen_after_each_op.patch` | the fork's `--reopen_after_each_op` / `--report_open_timing` change to `tools/db_bench_tool.cc` |
 
 ## Reproduce the plot
 
 ```bash
-uv run plot_reopen_results.py results_20260219_180411.csv -o paper_figure.pdf
-# or: python3 plot_reopen_results.py results_20260219_180411.csv -o paper_figure.pdf   (needs matplotlib)
+cd scripts
+python3 plot_reopen_results.py ../data/results_20260219_180411.csv -o ../first_generation.pdf
 ```
 
-With no CSV argument the script picks the newest `results_*.csv` in the current directory.
+The script needs matplotlib. You can also run `uv run plot_reopen_results.py ...`. The
+PEP 723 header lists the dependency. If you give no CSV argument, the script picks the
+newest `results_*.csv` in the current directory. The paper's copy is the same plot at a
+wider aspect ratio.
 
-## Status: data missing
+Notes on the data:
 
-`results_20260219_180411.csv` is not in this folder. It was produced by
-`reopen_benchmark.sh`, which runs RocksDB `db_bench` with `--threads=T`, once as a
-baseline and once with `--reopen_after_each_op`. Neither the CSV nor the script
-was found anywhere under `revision/`; they are probably still on the machine
-that ran the benchmark.
+- Both curves come from **one** `db_bench` process with `--threads=N`. The "processes"
+  curve differs only by `--reopen_after_each_op`. This flag closes and reopens the DB
+  around every operation. The paper calls this the multi-process setting. The CSV's
+  `mode` values are misnomers. `multi-thread` is the baseline. `multi-process` is the
+  reopen run.
+- At 24 workers, all five reopen repeats recorded 0 ops/s. The script drops these points
+  because the y axis is log-scaled.
 
-Note: the CSV's `mode` values are misnomers. `multi-thread` is the baseline and
-`multi-process` is the reopen-per-op run (both are one `db_bench` process).
+## Regenerate the data (one node)
+
+Use the RocksDB fork `github.com/oliverrogalski1001/rocksdb`, branch `main` (`fbfb6eced`).
+This branch carries the db_bench patch. Build `db_bench` with
+`make db_bench DEBUG_LEVEL=0 -j$(nproc)`. Copy `reopen_benchmark.sh` to `tools/`. Run it
+from the repo root. The script writes `results_<timestamp>.csv` to the working directory.
+It keeps its databases under `/tmp/rocksdbtest`.

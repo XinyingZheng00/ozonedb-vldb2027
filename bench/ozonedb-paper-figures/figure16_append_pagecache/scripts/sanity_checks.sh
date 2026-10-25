@@ -3,10 +3,10 @@
 #
 #   bash sanity_checks.sh <dir on the ext4 SSD used for the sweep>
 #
-# About 4 minutes. Writes everything to ../data/sanity_<host>_<time>/:
+# The script takes about 4 minutes. It writes everything to ../data/sanity_<host>_<time>/:
 #   system.txt      kernel, disk model, write-cache mode, mount options, dirty-page limits
 #   latency.csv     single-writer per-operation latencies (latency_probe.cpp)
-#   jbd2_<run>.txt  ext4 journal stats before/after fsync runs (group commit)
+#   jbd2_<run>.txt  ext4 journal stats before and after fsync runs (group commit)
 #   io_<run>.csv    0.5 s samples of Dirty/Writeback pages and device bytes written
 #   runs.csv        the append_bench runs the stats belong to
 set -euo pipefail

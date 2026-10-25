@@ -1,17 +1,18 @@
 #!/usr/bin/env python3
-"""Paper-style architecture diagram via Graphviz (not matplotlib): auto-
-layout means no hand-computed box/text coordinates, which is what kept
+"""Paper-style architecture diagram via Graphviz (not matplotlib). The auto
+layout means no hand-computed box/text coordinates. Those coordinates kept
 causing overflow/spacing bugs in an earlier matplotlib version.
 
-All three columns share the same two-boxes-on-top visual shape, but two
-distinct relationships, drawn because they ARE architecturally different:
+All three columns share the same two-boxes-on-top visual shape. But the
+diagram draws two distinct relationships, because they ARE architecturally
+different:
   - SQLite / OzoneDB: the daemon and the N CLI workers are independent
-    peers that each open the store directly -- two boxes converging on
-    one DB box (undirected lines; the store is what they share, not what
-    either of them calls).
+    peers. Each opens the store directly. Two boxes converge on one DB box
+    with undirected lines. The store is what they share, not what either
+    of them calls.
   - Server-based solution: the N CLI workers and the daemon-like client
-    are not peers of each other or of the store -- both call INTO the
-    RESTful API-based server (directed arrows), and only that server ever
+    are not peers of each other or of the store. Both call INTO the
+    RESTful API-based server (directed arrows). Only that server ever
     touches the file below it.
 
 Usage:
@@ -46,8 +47,8 @@ def status_node(name, kind):
 
 
 def peers_converge(g, prefix, accent, subtitle, title, top_a, top_b, db_label, tag):
-    """SQLite/OzoneDB shape: two independent peer boxes, each opening the
-    store directly, converging on one DB box."""
+    """SQLite/OzoneDB shape: two independent peer boxes. Each opens the
+    store directly. They converge on one DB box."""
     with g.subgraph(name=f"cluster_{prefix}") as c:
         c.attr(label=cluster_title(title, subtitle), labelloc="t", fontname="Helvetica",
                color=accent, penwidth="1.4", style="rounded", margin="18")
@@ -65,10 +66,10 @@ def peers_converge(g, prefix, accent, subtitle, title, top_a, top_b, db_label, t
 
 
 def linear_chain(g, prefix, accent, subtitle, title, top_a, top_b, server, db_label, tag):
-    """Re-architected shape: same two-box top row as the other columns
-    (visual consistency), but the relationship is different -- both boxes
-    call INTO the server (directed arrows), they are not independent peers
-    opening the store directly. Only the server ever touches the file."""
+    """Re-architected shape: the same two-box top row as the other columns,
+    for visual consistency. But the relationship is different. Both boxes
+    call INTO the server (directed arrows). They are not independent peers
+    that open the store directly. Only the server ever touches the file."""
     with g.subgraph(name=f"cluster_{prefix}") as c:
         c.attr(label=cluster_title(title, subtitle), labelloc="t", fontname="Helvetica",
                color=accent, penwidth="1.4", style="rounded", margin="18")

@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
-"""Ray Tune-driven MLflow swap-in benchmark: real training, real Ray
-worker processes (not a synthetic loop mimicking the shape), one run per
-trial, one thread per trial -- the pattern confirmed via Ray Tune's own
-docs/source and MLflow's own thread-safety guidance during this
-investigation. Supersedes run_mlflow_swapin.py's synthetic multi-threaded
-design for the reasons documented in that investigation.
+"""Ray Tune-driven MLflow swap-in benchmark. It uses real training and
+real Ray worker processes (not a synthetic loop that mimics the shape). It
+runs one run per trial and one thread per trial. We confirmed this pattern
+via the own docs and source of Ray Tune and the own thread-safety guidance
+of MLflow during this investigation. It supersedes the synthetic
+multi-threaded design of run_mlflow_swapin.py, for the reasons documented
+in that investigation.
 
-Each Ray Tune trial = one real OS process, training a real (small, fast)
-SGDClassifier via partial_fit, logging its real per-step training loss.
+Each Ray Tune trial = one real OS process. It trains a real (small, fast)
+SGDClassifier via partial_fit and logs its real per-step training loss.
 """
 import argparse
 import csv

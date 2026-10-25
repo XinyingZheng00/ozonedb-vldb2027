@@ -1,16 +1,16 @@
-// append_bench: N processes append fixed-size records to ONE shared file
-// opened with O_APPEND (POSIX atomic append), for a fixed duration, and
-// report the aggregate append throughput (paper section 5.6, Figure 16).
+// append_bench: N processes append fixed-size records to ONE shared file for a
+// fixed duration. The file is open with O_APPEND (POSIX atomic append). The
+// program reports the aggregate append throughput (paper section 5.6, Figure 16).
 //
 //   --mode buffered   writes go through the OS page cache
-//   --mode direct     O_DIRECT, bypasses the page cache (Linux). On macOS,
-//                     which has no O_DIRECT, F_NOCACHE is used instead.
+//   --mode direct     O_DIRECT, bypasses the page cache (Linux). macOS has no
+//                     O_DIRECT. There the program uses F_NOCACHE instead.
 //   --sync fsync      fsync() after every append (durable append)
 //   --sync none       no fsync
 //
-// Every record starts with (magic, writer id, sequence number), so with
-// --verify the file is re-read after the run to check that its size matches
-// the appends counted and that no record was torn or interleaved.
+// Every record starts with (magic, writer id, sequence number). With --verify,
+// the program re-reads the file after the run. It checks that the file size
+// matches the counted appends, and that no record was torn or interleaved.
 //
 // Output: one CSV line on stdout:
 //   mode,sync,procs,record_bytes,seconds,total_ops,ops_per_sec,verified
@@ -49,7 +49,7 @@ struct RecordHeader {
   uint64_t seq;
 };
 
-// Lives in an anonymous MAP_SHARED mapping, visible to every forked writer.
+// This struct lives in an anonymous MAP_SHARED mapping. Every forked writer can see it.
 struct Shared {
   std::atomic<bool> start;
   std::atomic<bool> stop;
@@ -114,7 +114,7 @@ int OpenShared(const std::string& path, bool direct) {
 }
 
 // Every record must carry MAGIC, a valid writer id, that writer's next
-// sequence number and its fill byte; the record count must equal `total`.
+// sequence number and its fill byte. The record count must equal `total`.
 bool Verify(const Options& opt, uint64_t total) {
   int fd = open(opt.path.c_str(), O_RDONLY);
   struct stat st {};

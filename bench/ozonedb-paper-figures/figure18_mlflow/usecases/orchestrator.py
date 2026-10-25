@@ -3,18 +3,19 @@
 
 A "trial" = one (backend, concurrency) combination. It spawns:
   - optionally, one long-running daemon process (kv_writer --role daemon)
-  - a pool of independently-launched short-lived "cli" processes
-    (kv_writer --role cli), kept at a target steady-state concurrency for
-    the trial's wall-clock duration by immediately replacing any that exit.
+  - a pool of short-lived "cli" processes (kv_writer --role cli), each
+    launched on its own. The pool is kept at a target steady-state
+    concurrency for the trial's wall-clock duration. Any process that exits
+    is replaced at once.
 
-Each spawned process is a genuinely separate OS process (subprocess.Popen),
-confirmed by PID -- not a thread within this orchestrator.
+Each spawned process is a separate OS process (subprocess.Popen), confirmed
+by PID. It is not a thread within this orchestrator.
 
-Every op emits one JSON line to its own file (per-process file, to avoid any
-risk of interleaved partial writes across processes sharing one file). After
-the trial, analyze_trial() aggregates throughput/latency/errors and builds a
-verification manifest that kv_writer --role verify checks against the
-store's actual final state.
+Every op emits one JSON line to its own file. The file is per process, to
+avoid any risk of interleaved partial writes across processes that share one
+file. After the trial, analyze_trial() aggregates throughput/latency/errors.
+It also builds a verification manifest. kv_writer --role verify checks the
+manifest against the store's actual final state.
 """
 import glob
 import json
@@ -48,25 +49,27 @@ def run_trial(binary, backend, config, n_processes, duration_s, trial_dir,
               value_bytes=128, putdel_frac=0.2, daemon_rate=20,
               busy_timeout_ms=1000, with_daemon=True, poll_s=0.002,
               key_namespace="cli", mode="percli"):
-    """Run one trial. Returns dict with pids seen and wall time.
+    """Run one trial. Returns a dict with the pids seen and the wall time.
 
     mode="percli"    -- (the literal Rhizome-bug shape) each writer besides
-                         the daemon is an independently-launched short-lived
-                         process: open, ONE put/putdel, close, exit. A fresh
-                         process is spawned immediately to replace any that
-                         finishes, holding steady-state concurrency.
+                         the daemon is a short-lived process that is launched
+                         on its own: open, ONE put/putdel, close, exit. When
+                         a process finishes, a fresh process is spawned at
+                         once to replace it. This holds steady-state
+                         concurrency.
     mode="persistent" -- each non-daemon writer instead holds ONE open
                          handle for the whole trial and loops ops on it (like
-                         a second daemon). Included because OzoneDB's
-                         DB::closeDB() blocks on stopViewUpdate()->join(),
-                         which waits for the view-update thread's
-                         100ms-period poll loop (metadata_log_handler.cpp,
-                         rollForwardMetadataLogPeriodically) -- i.e. every
+                         a second daemon). This mode is included because
+                         OzoneDB's DB::closeDB() blocks on
+                         stopViewUpdate()->join(). That join waits for the
+                         100ms-period poll loop of the view-update thread
+                         (metadata_log_handler.cpp,
+                         rollForwardMetadataLogPeriodically). That is, every
                          open/close cycle pays a real ~50-100ms fixed cost.
                          "percli" faithfully reproduces the real bug's
-                         process shape and is the primary result; "persistent"
-                         isolates whether that fixed teardown cost (not
-                         genuine lock contention) is what dominates.
+                         process shape and is the primary result. "persistent"
+                         isolates whether that fixed teardown cost, and not
+                         genuine lock contention, is what dominates.
     """
     trial_dir = Path(trial_dir)
     trial_dir.mkdir(parents=True, exist_ok=True)
@@ -163,7 +166,7 @@ def load_ops(trial_dir):
                 try:
                     ops.append(json.loads(line))
                 except json.JSONDecodeError:
-                    pass  # partial/torn line -- flagged separately by caller if frequent
+                    pass  # partial or torn line. The caller flags it separately if it is frequent
     return ops
 
 
@@ -179,14 +182,14 @@ def percentile(sorted_vals, p):
 
 
 def classify_error(error_text):
-    """Which SQL statement/table an MLflow write failure actually occurred
-    on, parsed from the real exception text (not inferred from call
-    structure) -- real, unmodified SqlAlchemyStore does the `metrics`
-    history insert and the `latest_metrics` upsert as two separate
-    statements in one call, so a single log_metric() failure needs the
-    error text itself to say which one it was. Checks "latest_metrics"
-    before the bare "metrics" table name, since the former contains the
-    latter as a substring.
+    """Return which SQL statement/table an MLflow write failure occurred on.
+    The function parses the real exception text. It does not infer the table
+    from the call structure. The real, unmodified SqlAlchemyStore does the
+    `metrics` history insert and the `latest_metrics` upsert as two separate
+    statements in one call. So for a single log_metric() failure, only the
+    error text itself can say which one it was. The function checks
+    "latest_metrics" before the bare "metrics" table name, because the former
+    contains the latter as a substring.
     """
     if not error_text:
         return "unknown"
@@ -204,26 +207,26 @@ def analyze_trial(trial_dir, wall_s):
     oks = [o for o in ops if o.get("ok")]
     fails = [o for o in ops if not o.get("ok")]
     lat_ms = sorted(o["latency_us"] / 1000.0 for o in oks)
-    # Pure training-compute time (partial_fit/predict_proba/log_loss) --
-    # only present on the main training thread's step records (ray_trainable.py),
-    # not on monitor-thread records, and identical code regardless of
-    # backend, so any difference across backends reflects host resource
-    # contention (e.g. a client-server backend's own processes competing
-    # for CPU), not the training code itself.
+    # Pure training-compute time (partial_fit/predict_proba/log_loss). It is
+    # only present on the step records of the main training thread
+    # (ray_trainable.py), not on monitor-thread records. The code is identical
+    # for every backend. So any difference across backends reflects host
+    # resource contention (for example a client-server backend's own processes
+    # that compete for CPU), not the training code itself.
     compute_lat_ms = sorted(o["compute_latency_us"] / 1000.0 for o in oks if "compute_latency_us" in o)
     error_counts = {}
     error_counts_by_category = {}
     for o in fails:
-        # Grouping key capped at 160 chars deliberately -- ray_trainable.py
-        # captures up to 600 chars per error (needed for classify_error()
-        # to see the failing SQL statement), but full error text includes
-        # per-call parameters (values/timestamps/run_uuid), making every
-        # instance's full text unique. Grouping on the full text blew up
+        # The grouping key is capped at 160 chars on purpose. ray_trainable.py
+        # captures up to 600 chars per error, because classify_error() needs
+        # to see the failing SQL statement. But the full error text includes
+        # per-call parameters (values/timestamps/run_uuid). They make the full
+        # text of every instance unique. Grouping on the full text blew up
         # error_counts to one entry per failure (hundreds of near-duplicate
-        # ~600-char keys), which broke CSV serialization outright (a real
-        # field-size-limit error, not just an unwieldy report) -- 160 chars
-        # keeps the generic error shape (exception type + "database is
-        # locked" etc.) without the per-call parameter tail.
+        # ~600-char keys). That broke CSV serialization outright, with a real
+        # field-size-limit error, not only an unwieldy report. 160 chars keep
+        # the generic error shape (exception type + "database is locked" etc.)
+        # without the per-call parameter tail.
         error_text = o.get("error", "?")
         error_counts[error_text[:160]] = error_counts.get(error_text[:160], 0) + 1
         category = classify_error(error_text)
@@ -238,13 +241,13 @@ def analyze_trial(trial_dir, wall_s):
         "error_rate": (len(fails) / total) if total else None,
         "error_counts": error_counts,
         "error_counts_by_category": error_counts_by_category,
-        # Error rate counting only failures on the `metrics` history write
-        # (the operation actually being swapped between backends) --
-        # excludes `latest_metrics` failures, which happen on real SQL for
-        # every backend including ozonedb and aren't part of what's being
-        # compared. "unknown"-category failures (message didn't match
-        # either pattern) are counted here rather than silently dropped,
-        # so this number is a ceiling, not an undercount.
+        # Error rate that counts only failures on the `metrics` history write.
+        # That write is the operation that is swapped between backends. It
+        # excludes `latest_metrics` failures. Those happen on real SQL for
+        # every backend, including ozonedb, and they are not part of the
+        # comparison. "unknown"-category failures (the message matched neither
+        # pattern) are counted here, not silently dropped. So this number is
+        # a ceiling, not an undercount.
         "error_rate_metrics_only": (fails_metrics_table / total) if total else None,
         "throughput_ops_sec": total / wall_s if wall_s > 0 else None,
         "successful_throughput_ops_sec": len(oks) / wall_s if wall_s > 0 else None,
@@ -260,11 +263,11 @@ def analyze_trial(trial_dir, wall_s):
 
 
 def build_manifest(ops, manifest_path):
-    """Only the *last write intent* per key needs checking; since every key
-    in this workload is generated uniquely per process invocation, there is
-    at most one state-bearing op per key, so no last-writer-wins logic is
-    needed -- we simply take whichever op recorded a non-empty final_state
-    for that key (should be exactly one, or zero if the op itself failed)."""
+    """Only the *last write intent* per key needs a check. Every key in this
+    workload is generated once per process invocation. So there is at most
+    one state-bearing op per key, and no last-writer-wins logic is needed.
+    We take whichever op recorded a non-empty final_state for that key. That
+    should be exactly one op, or zero if the op itself failed."""
     with open(manifest_path, "w") as f:
         for o in ops:
             state = o.get("final_state", "")

@@ -198,7 +198,8 @@ runs every trial from that snapshot with `compaction_abort_rate` set; it parses 
   `_make_corfu_config_per_writer` template `src/config/{local,corfu}/shared_config_base.json` into
   `shared_config_w{i}.json`. Never point multiple writers at a single config file.
 - Results go to `bench/results/local` (gitignored); plotting scripts live in `bench/scripts/plot/`.
-  The tracked `bench/results-*.tsv` files are the cost-model inputs `plot_cost_model.py` reads.
+  The cost-model input TSVs that `plot_cost_model.py` reads live with the paper figure in
+  `bench/ozonedb-paper-figures/figure12_cost/data/`.
 - `bench/ansible/` fans out to every `cloudlab.hosts` entry in parallel. `bootstrap.yml` pushes the
   tree (without `vcpkg/` and `build/`) and then runs `setup.sh`, which clones vcpkg and builds on
   the node — no GitHub credentials on the node. `sync.yml` is the incremental follow-up and

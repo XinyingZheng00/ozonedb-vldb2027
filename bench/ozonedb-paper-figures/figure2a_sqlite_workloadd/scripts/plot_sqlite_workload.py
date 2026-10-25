@@ -7,24 +7,24 @@
 """Plot SQLite trunk (WAL) vs BEGIN CONCURRENT+WAL2 vs HCTree write throughput
 against the number of concurrent writer processes, for a YCSB workload.
 
-Run with `uv run plot_sqlite_workload.py d` (uv installs matplotlib per the
-header above), or with any Python 3.11+ that already has matplotlib:
-`python3 plot_sqlite_workload.py d`.
+Run the script with `uv run plot_sqlite_workload.py d`. uv installs matplotlib
+from the header above. You can also use any Python 3.11+ that already has
+matplotlib: `python3 plot_sqlite_workload.py d`.
 
     plot_sqlite_workload.py d              # one workload -> sqlite_workloadd.pdf
     plot_sqlite_workload.py all            # every workload
     plot_sqlite_workload.py d --csv path/to/results.csv --outdir figs/
 
-Input is a CSV with one row per (system, workload, thread count); the columns
-read here are:
+The input is a CSV with one row per (system, workload, thread count). The
+script reads these columns:
 
     system            one of the keys in SYSTEMS below
-    workload          YCSB workload letter, lowercase
-    threads           number of concurrent writer processes
-    throughput_mean   ops/sec, averaged over repeats
-    throughput_stddev ops/sec; blank is treated as zero (drawn as no error bar)
+    workload          the YCSB workload letter, lowercase
+    threads           the number of concurrent writer processes
+    throughput_mean   ops/sec, the mean over repeats
+    throughput_stddev ops/sec. A blank value counts as zero and draws no error bar
 
-Other columns and other systems in the file are ignored.
+The script ignores other columns and other systems in the file.
 """
 
 from __future__ import annotations
@@ -38,8 +38,8 @@ import matplotlib.pyplot as plt
 
 HERE = Path(__file__).resolve().parent
 
-# Looked up in order, so the script works both inside the source tree and when
-# it is shipped next to a copy of results.csv.
+# The script tries these in order. It then works inside the source tree and
+# also when it ships next to a copy of results.csv.
 DEFAULT_CSV_CANDIDATES = (
     HERE / "results.csv",
     HERE.parent / "results" / "fig2-multi-writer-local" / "results.csv",
@@ -54,9 +54,9 @@ SYSTEMS = [
     ("hctree", "HCTree", "#2ca02c", "^"),
 ]
 
-# Sized to drop straight into one column of an IEEE two-column paper at 100%,
-# i.e. \includegraphics[width=\columnwidth]{...} with no rescaling -- rescaling
-# in LaTeX would throw off every font size set below.
+# The size fits one column of an IEEE two-column paper at 100%. That is
+# \includegraphics[width=\columnwidth]{...} with no rescaling. A rescale in
+# LaTeX would change every font size set below.
 FIG_SIZE = (3.4, 0.9)
 
 plt.rcParams.update(
@@ -73,7 +73,7 @@ plt.rcParams.update(
         "ytick.major.width": 0.6,
         "savefig.bbox": "tight",
         "savefig.pad_inches": 0.01,
-        # TrueType rather than Type 3, which some conference PDF checks reject.
+        # Use TrueType, not Type 3. Some conference PDF checks reject Type 3.
         "pdf.fonttype": 42,
     }
 )
@@ -144,9 +144,9 @@ def plot_workload(rows: list[dict[str, str]], workload: str, outdir: Path) -> Pa
     ticks = sorted(all_threads)
     ax.set_xscale("log", base=2)
     ax.set_yscale("log")
-    # A tick (and gridline) at every power of 10 spanned by the data, but
-    # only the top and bottom decade get a number, so the axis doesn't get
-    # crowded with labels at this figure height.
+    # Put a tick and a gridline at every power of 10 that the data spans. Only
+    # the top and the bottom decade get a number. This keeps the axis free of
+    # crowded labels at this figure height.
     lo_exp = math.floor(math.log10(min(all_means)))
     hi_exp = math.ceil(math.log10(max(all_means)))
     decades = range(lo_exp, hi_exp + 1)
@@ -161,8 +161,8 @@ def plot_workload(rows: list[dict[str, str]], workload: str, outdir: Path) -> Pa
     ax.grid(which="major", linestyle="--", alpha=0.5)
     ax.grid(which="minor", linestyle=":", alpha=0.3)
     ax.tick_params(pad=1.5)
-    # No title: the LaTeX caption names the figure, and at this height a title
-    # would cost most of the plotting area.
+    # No title. The LaTeX caption names the figure. At this height a title
+    # would cost most of the plot area.
     ax.legend(
         loc="center right",
         frameon=False,

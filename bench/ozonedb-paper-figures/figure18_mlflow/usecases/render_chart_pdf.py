@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """Render one of the self-contained HTML charts under bench/usecases/charts/
-to a PDF snapshot, via a headless Chromium (Playwright).
+to a PDF snapshot. The script uses a headless Chromium (Playwright).
 
-The charts are interactive (hover tooltips, legend click-to-isolate, a
-table-view toggle) — none of that survives a PDF, which is a flat image of
-whatever state the page is in at render time (default state, nothing
-hovered/toggled). Use the .html file directly (open it in a browser) if you
-want the interactive version.
+The charts are interactive: hover tooltips, legend click-to-isolate, and a
+table-view toggle. None of that survives a PDF. A PDF is a flat image of
+the state of the page at render time (the default state, nothing hovered
+or toggled). If you want the interactive version, open the .html file
+in a browser.
 
 One-time setup:
     pip3 install playwright

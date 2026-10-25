@@ -1,6 +1,6 @@
 # Table 4: reassignment count under churn
 
-Paper: `\label{tab:reassignment}` (§5, Churn Recovery). The numbers are typed into the `.tex` file.
+Paper: `\label{tab:reassignment}` (§5, Churn Recovery). The numbers are typed directly into the `.tex` file.
 
 | Abort ratio | 1% | 5% | 10% | 25% | 50% |
 |---|---|---|---|---|---|
@@ -9,10 +9,10 @@ Paper: `\label{tab:reassignment}` (§5, Churn Recovery). The numbers are typed i
 | File | What it is |
 |---|---|
 | `data/v4_20260501T003206/trials.csv` | one row per trial (4 writers, abort ratio 1-50%, 5 trials each) |
-| `data/v4_20260501T003206/per_trial/`, `run_config.json`, `plots/` | per-trial logs, configuration, plots |
-| `scripts/` | same runner and plot scripts as figures 13 and 15 |
+| `data/v4_20260501T003206/per_trial/`, `run_config.json`, `plots/` | the per-trial logs, the configuration and the plots |
+| `scripts/` | the same runner and plot scripts as figures 13 and 15 |
 
-## Reproduce the table (verified)
+## Reproduce the table
 
 Each value is the mean of `n_tasks_with_reassignment` over the 5 trials at that abort ratio:
 
@@ -36,4 +36,4 @@ This prints 8.8, 44.4, 87.0, 211.8 and 401.6.
 python3 scripts/churn_runner.py --vary abort
 ```
 
-See `figure13_dist_compaction/README.md` for setup.
+See `figure13_dist_compaction/README.md` for the setup.

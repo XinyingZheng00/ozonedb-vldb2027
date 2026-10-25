@@ -1,5 +1,5 @@
-"""Build a per-trial OzoneDB shared_config JSON from the same defaults the
-paper's own multi-process YCSB experiment uses (src/config/local/shared_config_rocksdb_base.json):
+"""Build a per-trial OzoneDB shared_config JSON. It uses the same defaults as the
+paper's own multi-process YCSB experiment (src/config/local/shared_config_rocksdb_base.json):
 mode=1 (MultipleProcesses), compaction_policy=0 (kHoAl), cloud=0."""
 import json
 from pathlib import Path

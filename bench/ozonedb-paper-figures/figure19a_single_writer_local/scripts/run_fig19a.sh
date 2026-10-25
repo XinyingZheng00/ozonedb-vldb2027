@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
-# Run the Figure 19a experiment on a node prepared by
+# Run the Figure 19a experiment on a node that these two scripts prepared:
 #   $OZONEDB_HOME/bench/scripts/setup_node.sh              (OzoneDB, /tank)
 #   $OZONEDB_HOME/bench/scripts/local/build_baselines.sh   (RocksDB, SQLite variants, YCSB-cpp)
 #
 #   bash run_fig19a.sh
 #
-# Same steps and settings as the paper's run (2026-04-28):
-#   1. load 1M x 1 KB records into each system on /tank  -> load_results.csv
-#      (the loaded DBs become the cached_* copies the run phase restores)
-#   2. the same load on tmpfs (/dev/shm)                  -> load_tmpfs_results.csv
-#   3. YCSB A, B, C, D, F with 1 writer, 120 s, 1 repeat  -> results.csv + per-run logs
+# The steps and settings are the same as in the paper's run (2026-04-28):
+#   1. Load 1M x 1 KB records into each system on /tank. Writes load_results.csv.
+#      The loaded DBs become the cached_* copies that the run phase restores.
+#   2. Do the same load on tmpfs (/dev/shm). Writes load_tmpfs_results.csv.
+#   3. Run YCSB A, B, C, D, F with 1 writer, 120 s, 1 repeat. Writes results.csv and per-run logs.
 # Systems: ozonedb, rocksdb, trunkcpp (SQLite WAL), bcw2 (BEGIN CONCURRENT + WAL2), hctree.
-# Takes about 1.5 hours. Run it inside tmux so a dropped SSH session doesn't stop it.
+# The run takes about 1.5 hours. Run it inside tmux, so that a dropped SSH session does not stop it.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"

@@ -1,11 +1,11 @@
 """ctypes wrapper over libozonedb_pyshim.so (bench/usecases/mlflow/ozonedb_pyshim.cpp).
 
-Only exposes what the MLflow metric-write bridge needs: open/put/get/
-remove/close. Each OzoneDB() instance holds its own handle -- open one per
-thread/process, matching the T/P convention documented in
-PHASE_REPORT.md Phase 0 (each thread/process opens its own independent
-DB* to the same on-disk directory; there is no internal cross-handle
-locking to rely on instead).
+It only exposes what the MLflow metric-write bridge needs: open, put, get,
+remove and close. Each OzoneDB() instance holds its own handle. Open one
+per thread or process. This matches the T/P convention documented in
+PHASE_REPORT.md Phase 0: each thread or process opens its own independent
+DB* to the same on-disk directory. There is no internal cross-handle
+locking to rely on instead.
 """
 import ctypes
 import os

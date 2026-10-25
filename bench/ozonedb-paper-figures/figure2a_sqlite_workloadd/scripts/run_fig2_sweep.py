@@ -1,24 +1,26 @@
 #!/usr/bin/env python3
-"""Fig 2 multi-writer scaling sweep orchestrator.
+"""The Fig 2 multi-writer scaling sweep orchestrator.
 
-Drives a (system x workload x threadcount x repeat) matrix for the
-five-system multi-writer experiment.  For every cell:
+The script drives a (system x workload x threadcount x repeat) matrix for the
+five-system multi-writer experiment. For every cell, it does these steps:
 
-    1. Ensure no stragglers (sqlite3 / ycsb processes from a previous attempt).
+    1. Make sure that no stragglers remain. Stragglers are sqlite3 or ycsb
+       processes from a previous attempt.
     2. Restore the cached DB into a fresh working location.
-    3. sync && drop OS page cache.
-    4. Sample /proc/diskstats, then exec the YCSB binary under /usr/bin/time
-       -v to capture max RSS.
-    5. Sample /proc/diskstats again, parse run-throughput, append to per-cell
-       log.
-    6. On non-zero exit OR missing throughput line: retry once after fresh
-       state.  If still failing, mark FAILED and append to skipped_runs.md.
-    7. After all repeats of a cell, compute throughput stddev and re-queue
-       the cell up to once if variance > 10%%.
+    3. Run sync and drop the OS page cache.
+    4. Sample /proc/diskstats. Then exec the YCSB binary under /usr/bin/time
+       -v to capture the max RSS.
+    5. Sample /proc/diskstats again. Parse the run throughput. Append it to
+       the per-cell log.
+    6. If the exit code is non-zero, or the throughput line is missing, retry
+       once from fresh state. If the retry also fails, mark the cell FAILED
+       and append it to skipped_runs.md.
+    7. After all repeats of a cell, compute the throughput stddev. If the
+       variance is more than 10%%, re-queue the cell one time at most.
 
 Logs land in $RESULTS_DIR/{system}_{workload}_{threads}_{repeat}.log
 Skips land in $RESULTS_DIR/skipped_runs.md
-Summary lands in $RESULTS_DIR/results.csv
+The summary lands in $RESULTS_DIR/results.csv
 """
 
 from __future__ import annotations
@@ -42,15 +44,15 @@ from typing import Optional
 #  Static configuration
 # --------------------------------------------------------------------------
 
-YCSB_CPP_DIR = Path("/users/Xinying/YCSB-cpp")
+YCSB_CPP_DIR = Path(os.environ.get("YCSB_CPP_DIR", Path.home() / "YCSB-cpp"))
 YCSB_CPP_BIN = YCSB_CPP_DIR / "ycsb"
-ROCKSDB_PREFIX = Path("/users/Xinying/rocksdb-9.6.1")
+ROCKSDB_PREFIX = Path(os.environ.get("ROCKSDB_PREFIX", Path.home() / "rocksdb-9.6.1"))
 
-OZONEDB_HOME = Path("/users/Xinying/ozonedb")
+OZONEDB_HOME = Path(os.environ.get("OZONEDB_HOME", Path.home() / "ozonedb"))
 OZONEDB_YCSB = OZONEDB_HOME / "ycsb"
 OZONEDB_BIN = OZONEDB_YCSB / "bin" / "ycsb"
 
-RESULTS_DIR = Path("/users/Xinying/ozonedb/bench/results/local/fig2-multi-writer-local")
+RESULTS_DIR = OZONEDB_HOME / "bench" / "results" / "local" / "fig2-multi-writer-local"
 DATA_ROOT = Path("/tank/ycsb_data")
 
 DEFAULT_RECORD_COUNT = 1_000_000
@@ -77,10 +79,11 @@ class SystemSpec:
     aux_suffixes: tuple = ()
 
     def restore_cached(self) -> None:
-        """Copy cached DB into the working location before each repeat."""
+        """Copy the cached DB into the working location before each repeat."""
         self._wipe_work()
         if self.cached_path.is_dir():
-            # cp --reflink=auto where supported (btrfs/xfs); plain copy otherwise.
+            # cp --reflink=auto makes a reflink copy on btrfs/xfs. On other
+            # filesystems it makes a plain copy.
             run_quiet(["cp", "-r", "--reflink=auto", str(self.cached_path), str(self.work_path)])
         else:
             run_quiet(["cp", "--reflink=auto", str(self.cached_path), str(self.work_path)])
@@ -102,7 +105,7 @@ class SystemSpec:
                 p.unlink(missing_ok=True)
 
     def post_run_cleanup(self) -> None:
-        """Remove the working DB after each repeat; cached_* is preserved."""
+        """Remove the working DB after each repeat. The cached_* copy stays."""
         self._wipe_work()
 
 
@@ -192,8 +195,8 @@ def build_run_cmd(system: SystemSpec, workload: str, threads: int,
         return cmd, env, cwd
 
     if system.name == "ozonedb":
-        # Generate a workload file on the fly (same convention used by
-        # /users/Xinying/ozonedb/bench/scripts/local/run_local_ycsb.py).
+        # Generate a workload file on the fly. This uses the same convention as
+        # $OZONEDB_HOME/bench/scripts/local/run_local_ycsb.py.
         env["OZONEDB_HOME"] = str(OZONEDB_HOME)
         wl_dir = OZONEDB_YCSB / "workloads" / "generated_workloads"
         wl_dir.mkdir(parents=True, exist_ok=True)
@@ -227,9 +230,9 @@ def build_run_cmd(system: SystemSpec, workload: str, threads: int,
             "-p", "operationcount=0",
             "-p", f"shared_config={out}",
         ]
-        # The bin/ycsb python wrapper invokes Maven from cwd; it must be run
-        # from the YCSB root that contains pom.xml, otherwise classpath
-        # resolution fails with "Could not find the selected project ...".
+        # The bin/ycsb python wrapper invokes Maven from cwd. Run it from the
+        # YCSB root that contains pom.xml. Otherwise the classpath resolution
+        # fails with "Could not find the selected project ...".
         cwd = OZONEDB_YCSB
         return cmd, env, cwd
 
@@ -254,13 +257,13 @@ def drop_caches() -> None:
 
 
 def kill_stragglers() -> None:
-    # Best-effort: nuke any leftover YCSB worker processes from a previous
-    # attempt.  Use specific patterns and exclude this orchestrator's own pid
-    # (the script lives under /users/Xinying/ozonedb/, so a naive `-f ozonedb`
-    # would match and kill ourselves).
+    # Best effort: kill any leftover YCSB worker processes from a previous
+    # attempt. Use specific patterns and exclude the pid of this orchestrator.
+    # The script lives under the ozonedb checkout, so a naive `-f ozonedb`
+    # would match this process and kill it.
     self_pid = os.getpid()
     for pat in (r"^.*YCSB-cpp/ycsb\b", r"^.*site\.ycsb\.Client"):
-        # pgrep -f to identify, then kill all but our own pid.
+        # Use pgrep -f to find the pids. Then kill all but our own pid.
         try:
             out = subprocess.check_output(["pgrep", "-f", pat], text=True).strip()
         except subprocess.CalledProcessError:
@@ -282,14 +285,15 @@ _DISKSTATS_RE = re.compile(r"\s*\d+\s+\d+\s+(\S+)\s+(\d+\s+){13,17}")
 
 
 def _physical_devices_for(path: Path) -> list[str]:
-    """Return the kernel block-device name(s) backing the given path.
+    """Return the kernel block-device name(s) that back the given path.
 
-    Handles both plain block devices (e.g. /dev/sda3 -> ['sda3']) and ZFS
-    pools (-> the list of physical vdevs from `zpool status <pool>`).  Returns
-    [] if the device cannot be determined.
+    The function handles plain block devices (for example /dev/sda3 gives
+    ['sda3']) and ZFS pools. For a ZFS pool it returns the list of physical
+    vdevs from `zpool status <pool>`. If it cannot determine the device, it
+    returns [].
     """
     if not path.exists():
-        path = path.parent  # df needs an existing path; parent dir is fine.
+        path = path.parent  # df needs a path that exists. The parent dir is fine.
     try:
         out = subprocess.check_output(["df", "--output=source,fstype", str(path)],
                                       text=True).splitlines()
@@ -309,7 +313,7 @@ def _physical_devices_for(path: Path) -> list[str]:
         if name in diskstats_names:
             return [name]
 
-    # ZFS pool — resolve to its physical vdevs.
+    # ZFS pool. Resolve it to its physical vdevs.
     if fstype == "zfs":
         try:
             zout = subprocess.check_output(["zpool", "status", name], text=True)
@@ -318,7 +322,7 @@ def _physical_devices_for(path: Path) -> list[str]:
         devs = []
         for line in zout.splitlines():
             tok = line.strip().split()
-            # Lines listing vdevs look like "  sda6  ONLINE  0  0  0".
+            # Lines that list vdevs look like "  sda6  ONLINE  0  0  0".
             if len(tok) >= 5 and tok[1] in ("ONLINE", "DEGRADED") and tok[0] not in (name,):
                 devs.append(tok[0])
         return devs
@@ -336,7 +340,7 @@ def diskstats_sectors_written(devices: list[str]) -> int:
             for line in f:
                 parts = line.split()
                 # Format: major minor name reads(0..3) writes(4..7) ...
-                # field 9 (0-indexed) is sectors_written.
+                # Field 9 (0-indexed) is sectors_written.
                 if len(parts) >= 14 and parts[2] in targets:
                     total += int(parts[9])
     except Exception:
@@ -346,7 +350,7 @@ def diskstats_sectors_written(devices: list[str]) -> int:
 
 # RocksDB throughput line:           "Run throughput(ops/sec): 41815"
 # OzoneDB / YCSB-Java summary line:  "[OVERALL], Throughput(ops/sec), 41815.32"
-# Throughputs ≥ 1M ops/sec render in scientific notation (e.g. "1.11796e+06").
+# Throughputs of 1M ops/sec or more render in scientific notation (for example "1.11796e+06").
 _NUM = r"[\d.]+(?:[eE][+-]?\d+)?"
 _THROUGHPUT_PATTERNS = [
     re.compile(rf"Run throughput\(ops/sec\):\s*({_NUM})"),
@@ -535,7 +539,7 @@ def run_cell(spec: SystemSpec, workload: str, threads: int, repeats: int,
                        f"FAILED after retry: {summary.failures[-1] if summary.failures else 'unknown'}",
                        log_paths)
     elif (var := summary.relative_stddev_pct()) is not None and var > variance_pct:
-        # Re-run cell once if variance is high.
+        # If the variance is high, re-run the cell once.
         print(f"  variance {var:.1f}% > {variance_pct}%, re-running once.", flush=True)
         rerun_result = run_one_repeat(spec, workload, threads, repeats + 1, duration, record_count, results_dir)
         log_paths.append(rerun_result.log_path)
@@ -609,7 +613,7 @@ def main() -> int:
                                    args.duration, args.record_count, skipped_md,
                                    args.variance_pct, args.results_dir)
                 summaries.append(summary)
-                # Write CSV after every cell so a partial sweep is still useful.
+                # Write the CSV after every cell, so that a partial sweep is still useful.
                 write_results_csv(args.results_dir / "results.csv", summaries)
 
     print("\n=== sweep done ===")

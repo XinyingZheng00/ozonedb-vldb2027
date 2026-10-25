@@ -10,9 +10,9 @@ Top-level worklog. Each phase has its own subdir with logs/, results.csv, plots/
 - Phase 3: extended process sweep on Load — {ozonedb}, N from 16 to bottleneck.
 
 **Reference materials surveyed:**
-- Existing multi-thread sweep: [/users/Xinying/ozonedb/bench/results/local/fig2-multi-writer-local](/users/Xinying/ozonedb/bench/results/local/fig2-multi-writer-local) — 92 cells, 8 hard failures (trunkcpp/bcw2 A/F at T≥2 SIGABRT under WAL-index contention).
-- Paper draft: `/users/Xinying/654ac88fa59ce996418ca20c/sections/5.experiment.tex:112-124` — Figure 2 description, `synchronous=FULL`, 128 MB per-instance, 120s × 3 repeats, 1M × 1KB Zipfian.
-- Multi-thread orchestrator we're modeling on: [run_fig2_sweep.py](/users/Xinying/ozonedb/bench/scripts/local/run_fig2_sweep.py).
+- Existing multi-thread sweep: [$HOME/ozonedb/bench/results/local/fig2-multi-writer-local]($HOME/ozonedb/bench/results/local/fig2-multi-writer-local) — 92 cells, 8 hard failures (trunkcpp/bcw2 A/F at T≥2 SIGABRT under WAL-index contention).
+- Paper draft: `$HOME/654ac88fa59ce996418ca20c/sections/5.experiment.tex:112-124` — Figure 2 description, `synchronous=FULL`, 128 MB per-instance, 120s × 3 repeats, 1M × 1KB Zipfian.
+- Multi-thread orchestrator we're modeling on: [run_fig2_sweep.py]($HOME/ozonedb/bench/scripts/local/run_fig2_sweep.py).
 
 **Host context** (captured 2026-04-29):
 - 32 cores, 125 GB RAM, /tank with 353 GB free.
@@ -29,14 +29,14 @@ Top-level worklog. Each phase has its own subdir with logs/, results.csv, plots/
 **Phase 1 implementation strategy:**
 - Single Python orchestrator `run_phase1_multiproc_sweep.py` (modeled on `run_fig2_sweep.py`) handles all three systems.
 - Per cell: copy cached DB to N independent work paths; spawn N independent `subprocess.Popen` workers in tight succession; wait for all; parse per-process logs; aggregate.
-- OzoneDB needs a per-process `shared_config_rocksdb_P{i}.json` to avoid the orchestrator-shared-config-file collision noted in [run_fig2_sweep.py:211-228](/users/Xinying/ozonedb/bench/scripts/local/run_fig2_sweep.py#L211).
+- OzoneDB needs a per-process `shared_config_rocksdb_P{i}.json` to avoid the orchestrator-shared-config-file collision noted in [run_fig2_sweep.py:211-228]($HOME/ozonedb/bench/scripts/local/run_fig2_sweep.py#L211).
 - Drop OS page cache **once per cell** (not per-process) before spawning workers.
 - Start synchronization: back-to-back `Popen()` plus YCSB's 120s `maxexecutiontime` window absorbs the ~ms start skew (<0.1% of measurement window). No file barrier needed.
 
 **Open questions / risks:**
 - Whether spawning 16 OzoneDB JVMs simultaneously triggers any host-level contention (CPU saturation during JVM warmup, memory fragmentation).
 - Whether SQLite `locking_mode=EXCLUSIVE` interacts badly with our cached-DB-copy approach (it shouldn't — each process has its own DB file). Smoke test will confirm.
-- OzoneDB YCSB wrapper requires CWD = `/users/Xinying/ozonedb/ycsb`; multiple concurrent invocations from same CWD should be safe (Maven invokes are read-only on shared classpath caches) but I'll watch the smoke test.
+- OzoneDB YCSB wrapper requires CWD = `$HOME/ozonedb/ycsb`; multiple concurrent invocations from same CWD should be safe (Maven invokes are read-only on shared classpath caches) but I'll watch the smoke test.
 
 ## 2026-04-29 — smoke + Maven race fix
 
@@ -64,15 +64,15 @@ Per-cell live progress goes to `phase1-multi-process/sweep.log`; results.csv is 
 
 User reversed the original prompt's "each process owns its own DB / no shared WAL" spec mid-sweep. New design: all N processes open the SAME on-disk DB simultaneously. This is the actual test of the multi-writer coordination protocols (OzoneDB's append-based task log; SQLite's WAL byte-lock; BCW2's WAL2+BEGIN CONCURRENT) and matches the paper's headline claim.
 
-Independent-DB sweep was 50/60 cells in when killed; preserved at [phase1-multi-process-INDEPENDENT-DB/](/users/Xinying/ozonedb/bench/results/local/multi-process-and-extended/phase1-multi-process-INDEPENDENT-DB/) for reference.
+Independent-DB sweep was 50/60 cells in when killed; preserved at [phase1-multi-process-INDEPENDENT-DB/]($HOME/ozonedb/bench/results/local/multi-process-and-extended/phase1-multi-process-INDEPENDENT-DB/) for reference.
 
 **Run protocol changed (per user):** 1 repeat × 90 s (was 3 repeats × 120 s).
 
 **Two source patches were required to make shared-DB work for SQLite:**
 
-1. **YCSB-cpp SQLite binding hardcoded VFS** — [sqlite_db.cc:190](/users/Xinying/YCSB-cpp/sqlite/sqlite_db.cc#L190) opens with `vfs=unix-excl`, which holds an OS-level exclusive lock for the lifetime of the connection. Multi-thread within one process works; multi-process does not. Patched to read `sqlite.vfs` property (default `unix-excl` to preserve previous behavior). Multi-process workers pass `-p sqlite.vfs=unix`.
+1. **YCSB-cpp SQLite binding hardcoded VFS** — [sqlite_db.cc:190]($HOME/YCSB-cpp/sqlite/sqlite_db.cc#L190) opens with `vfs=unix-excl`, which holds an OS-level exclusive lock for the lifetime of the connection. Multi-thread within one process works; multi-process does not. Patched to read `sqlite.vfs` property (default `unix-excl` to preserve previous behavior). Multi-process workers pass `-p sqlite.vfs=unix`.
 
-2. **busy_timeout applied too late** — [sqlite_db.cc:247](/users/Xinying/YCSB-cpp/sqlite/sqlite_db.cc#L247) sets `PRAGMA busy_timeout` *after* `PRAGMA cache_size` and `PRAGMA journal_mode`. With multi-process and `locking_mode=NORMAL`, init races caused immediate `SQLITE_BUSY: database is locked` on `cache_size`. Patched to call `sqlite3_busy_timeout()` via the C API right after `sqlite3_open_v2()`, before any PRAGMA. The later `PRAGMA busy_timeout = X` is now redundant but harmless (idempotent).
+2. **busy_timeout applied too late** — [sqlite_db.cc:247]($HOME/YCSB-cpp/sqlite/sqlite_db.cc#L247) sets `PRAGMA busy_timeout` *after* `PRAGMA cache_size` and `PRAGMA journal_mode`. With multi-process and `locking_mode=NORMAL`, init races caused immediate `SQLITE_BUSY: database is locked` on `cache_size`. Patched to call `sqlite3_busy_timeout()` via the C API right after `sqlite3_open_v2()`, before any PRAGMA. The later `PRAGMA busy_timeout = X` is now redundant but harmless (idempotent).
 
 YCSB-cpp rebuilt with `make BIND_SQLITE=1 BIND_HCTREE=1 HCTREE_BLD_DIR=$HOME/bcw2/bld`.
 

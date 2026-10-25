@@ -5,7 +5,7 @@ vs O_DIRECT, with and without fsync, in the paper's style.
     python3 plot_append_pagecache.py ../data/<run>/summary.csv --out fig.pdf
     python3 plot_append_pagecache.py ../data/<run>/summary.csv --compare ../data/paper_values.csv
 
---compare overlays a second summary (e.g. the paper's values) in gray.
+--compare overlays a second summary (for example the paper's values) in gray.
 """
 import argparse
 import csv
@@ -19,8 +19,9 @@ from matplotlib.ticker import FuncFormatter
 
 HERE = Path(__file__).resolve().parent
 COLOR = "#dd8452"
-# (sync, mode) -> legend label, marker, linestyle, filled. Legend columns
-# fill top to bottom, so this order puts the fsync series in the left column.
+# Each row is (sync, mode), then legend label, marker, linestyle, filled.
+# Legend columns fill top to bottom. So this order puts the fsync series in
+# the left column.
 SERIES = [
     ("fsync", "buffered", "fsync · Buffered", "o", "-", True),
     ("fsync", "direct", "fsync · O_DIRECT", "o", "--", False),

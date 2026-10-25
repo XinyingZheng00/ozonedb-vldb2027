@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 """Three Phase-1 paper-style plots.
 
-  (a) fig2_multi_process_bars.pdf   — multi-process bar chart, format mirrors
-                                       fig2-multi-writer-local/fig2_multi_writer.pdf
-                                       (2x3 grid, grouped bars per system per N)
-  (b) multi_thread_lines.pdf        — multi-thread scaling line chart
-                                       (2x3 grid, x = T, lines per system)
-  (c) multi_process_lines.pdf       — multi-process scaling line chart
-                                       (2x3 grid, x = N, lines per system)
+  (a) fig2_multi_process_bars.pdf   The multi-process bar chart. Its format
+                                    mirrors fig2-multi-writer-local/fig2_multi_writer.pdf
+                                    (2x3 grid, grouped bars per system per N).
+  (b) multi_thread_lines.pdf        The multi-thread scaling line chart
+                                    (2x3 grid, x = T, lines per system).
+  (c) multi_process_lines.pdf       The multi-process scaling line chart
+                                    (2x3 grid, x = N, lines per system).
 
-Three systems: ozonedb, trunkcpp, bcw2 (matches the user-requested subset).
-Five workloads: a, b, c, d, f (one panel each + 1 legend panel).
+Three systems: ozonedb, trunkcpp, bcw2. This matches the subset that the user requested.
+Five workloads: a, b, c, d, f. Each workload has one panel, and there is 1 legend panel.
 
 Reads:
   --thread-csv  fig2-multi-writer-local/results.csv          (multi-thread)
@@ -20,6 +20,7 @@ Reads:
 from __future__ import annotations
 
 import argparse
+import os
 import csv
 from collections import defaultdict
 from pathlib import Path
@@ -31,9 +32,12 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.ticker import FuncFormatter, MultipleLocator
 
+OZONEDB_HOME = Path(os.environ.get("OZONEDB_HOME", Path.home() / "ozonedb"))
+RESULTS_LOCAL = OZONEDB_HOME / "bench" / "results" / "local"
+
 
 def _sci_fmt(x: float, pos: int) -> str:
-    """Format y-tick as e.g. 2x10^5; collapses the long-zero counts."""
+    """Format a y-tick as, for example, 2x10^5. This shortens numbers that have many zeros."""
     if x == 0:
         return "0"
     exp = int(np.floor(np.log10(abs(x))))
@@ -42,7 +46,7 @@ def _sci_fmt(x: float, pos: int) -> str:
         return rf"${int(round(mantissa))}{{\times}}10^{{{exp}}}$"
     return rf"${mantissa:.1f}{{\times}}10^{{{exp}}}$"
 
-# Phase 1 (multi-process) has 3 systems; multi-thread has all 5.
+# Phase 1 (multi-process) has 3 systems. The multi-thread sweep has all 5.
 SYSTEM_ORDER_PROC = ["ozonedb", "trunkcpp", "bcw2"]
 SYSTEM_ORDER_THREAD = ["ozonedb", "rocksdb", "trunkcpp", "bcw2", "hctree"]
 
@@ -54,8 +58,8 @@ SYSTEM_LABELS = {
     "hctree":   "SQLite (HCTree)",
 }
 
-# Wrapped variants for the in-panel legend so the long bcw2 label
-# stays within its cell width.
+# Wrapped variants for the in-panel legend. They keep the long bcw2 label
+# within its cell width.
 SYSTEM_LABELS_LEGEND = {
     "ozonedb":  "OzoneKV    ",
     "rocksdb":  "RocksDB",
@@ -64,7 +68,7 @@ SYSTEM_LABELS_LEGEND = {
     "hctree":   "SQLite (HCTree)",
 }
 
-# Match fig2_multi_writer.pdf colors so the figures read as a set.
+# Use the fig2_multi_writer.pdf colors, so that the figures read as a set.
 SYSTEM_COLORS = {
     "ozonedb":  "#1f77b4",  # blue
     "rocksdb":  "#d62728",  # red
@@ -115,12 +119,13 @@ def load_csv(path: Path, x_col: str) -> dict:
 def plot_bars(rows: dict, x_counts: list[int], title: str, x_label: str,
               out_path: Path, system_order: list[str],
               log_y: bool = True) -> None:
-    """Multi-writer bar chart in fig2 format. 1x5 grid, grouped bars per system per N."""
-    # a and f run ~10x lower than b/c/d; on one shared linear y-axis their two
-    # SQLite bars collapse into indistinguishable slivers. So: group a+f on the
-    # LEFT with their own (smaller) shared y-limit, b/c/d keep the larger shared
-    # y-limit on the right. Each group factors its own power of 10 into the unit.
-    # (Swap the two halves of `workloads` to put a/f on the right instead.)
+    """The multi-writer bar chart in fig2 format. A 1x5 grid with grouped bars per system per N."""
+    # Workloads a and f run about 10x lower than b/c/d. On one shared linear
+    # y-axis, their two SQLite bars collapse into slivers that the reader cannot
+    # tell apart. So the plot groups a and f on the LEFT with their own smaller
+    # shared y-limit. Workloads b/c/d keep the larger shared y-limit on the right.
+    # Each group factors its own power of 10 into the unit.
+    # To put a/f on the right instead, swap the two halves of `workloads`.
     workloads = ["a", "f", "b", "c", "d"]
     small_wl = {"a", "f"}
     groups = [["a", "f"], ["b", "c", "d"]]
@@ -136,8 +141,8 @@ def plot_bars(rows: dict, x_counts: list[int], title: str, x_label: str,
 
     exp_small, exp_big = _group_exp(small_wl), _group_exp(groups[1])
 
-    # Spacer columns: tight gaps between panels of the same group, a wide gap
-    # between the two groups so each group's leading y-axis + label has room.
+    # Spacer columns: tight gaps between panels of the same group, and a wide gap
+    # between the two groups. The wide gap gives each group's first y-axis and label room.
     GAP_IN, GAP_MID = 0.06, 0.40
     fig = plt.figure(figsize=(28, 4.8))
     gs = fig.add_gridspec(
@@ -173,7 +178,7 @@ def plot_bars(rows: dict, x_counts: list[int], title: str, x_label: str,
         else:
             ax.yaxis.set_major_formatter(FuncFormatter(
                 lambda v, _p, e=e: f"{v / 10 ** e:g}"))
-            # Whole-number ticks for the a/f group, half-decade for b/c/d.
+            # Whole-number ticks for the a/f group. Half-decade ticks for b/c/d.
             step = (1.0 if wl in small_wl else 0.5) * 10 ** e
             ax.yaxis.set_major_locator(MultipleLocator(step))
         ax.set_title(WORKLOAD_LABELS.get(wl, f"Workload {wl}"), fontsize=28)
@@ -183,8 +188,8 @@ def plot_bars(rows: dict, x_counts: list[int], title: str, x_label: str,
     if log_y:
         axes[0].set_ylabel("Throughput\n(ops/sec)", fontsize=26)
     else:
-        # Share one y-limit per group; y-ticks + label only on each group's
-        # first panel (the reappearing y-axis marks the scale change).
+        # Share one y-limit per group. Show the y-ticks and the label only on each
+        # group's first panel. The y-axis that reappears marks the scale change.
         for grp in groups:
             idxs = [workloads.index(w) for w in grp]
             top = max(axes[k].get_ylim()[1] for k in idxs)
@@ -203,8 +208,8 @@ def plot_bars(rows: dict, x_counts: list[int], title: str, x_label: str,
                fontsize=24, frameon=False,
                handletextpad=1.0, columnspacing=2.5)
 
-    # Margins/gaps are set on add_gridspec above (tight_layout would fight the
-    # spacer columns, the mid-row y-label, and the figure legend).
+    # The add_gridspec call above sets the margins and the gaps. tight_layout would
+    # fight the spacer columns, the mid-row y-label, and the figure legend.
     fig.savefig(out_path)
     plt.close(fig)
 
@@ -212,7 +217,7 @@ def plot_bars(rows: dict, x_counts: list[int], title: str, x_label: str,
 def plot_lines(rows: dict, x_counts: list[int], title: str, x_label: str,
                out_path: Path, system_order: list[str],
                log_y: bool = True) -> None:
-    """Scaling line chart. 1x5 grid, x = N, one line per system."""
+    """The scaling line chart. A 1x5 grid, x = N, one line per system."""
     workloads = ["a", "b", "c", "d", "f"]
     fig, axes = plt.subplots(1, 5, figsize=(28, 6.5), sharey=True)
 
@@ -260,14 +265,14 @@ def main() -> int:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument(
         "--thread-csv", type=Path,
-        default=Path("/users/Xinying/ozonedb/bench/results/local/fig2-multi-writer-local/results.csv"),
+        default=RESULTS_LOCAL / "fig2-multi-writer-local" / "results.csv",
     )
     p.add_argument(
         "--proc-csv", type=Path,
-        default=Path("/users/Xinying/ozonedb/bench/results/local/multi-process-and-extended/phase1-multi-process/results.csv"),
+        default=RESULTS_LOCAL / "multi-process-and-extended" / "phase1-multi-process" / "results.csv",
     )
     p.add_argument("--out-dir", type=Path,
-                   default=Path("/users/Xinying/ozonedb/bench/results/local/multi-process-and-extended"))
+                   default=RESULTS_LOCAL / "multi-process-and-extended")
     p.add_argument("--linear-y", action="store_true")
     args = p.parse_args()
 
@@ -278,8 +283,8 @@ def main() -> int:
     log_y = not args.linear_y
     counts = [2, 4, 8, 16]
 
-    # (a) Multi-process bar chart in fig2 format. Phase 1 has 3 systems.
-    # Linear y for the multi-process plots (per user request).
+    # (a) The multi-process bar chart in fig2 format. Phase 1 has 3 systems.
+    # The multi-process plots use a linear y-axis. The user requested this.
     plot_bars(proc_rows, counts,
               title="Multi-process scaling",
               x_label="N", log_y=False,
@@ -287,9 +292,9 @@ def main() -> int:
               out_path=args.out_dir / "fig2_multi_process_bars.pdf")
     print(f"wrote {args.out_dir / 'fig2_multi_process_bars.pdf'}")
 
-    # (b) Multi-thread scaling line chart. All 5 systems. Log y so the
-    # multi-thread WAL collapse cells (~10 ops/s) and the HCTree-C peaks
-    # (~2M ops/s) coexist on the same axis.
+    # (b) The multi-thread scaling line chart. All 5 systems. The y-axis is log.
+    # The multi-thread WAL collapse cells (about 10 ops/s) and the HCTree-C
+    # peaks (about 2M ops/s) then fit on the same axis.
     plot_lines(thread_rows, counts,
                title="Multi-thread scaling",
                x_label="threads", log_y=log_y,
@@ -297,8 +302,8 @@ def main() -> int:
                out_path=args.out_dir / "multi_thread_lines.pdf")
     print(f"wrote {args.out_dir / 'multi_thread_lines.pdf'}")
 
-    # (c) Multi-process scaling line chart. Phase 1 has 3 systems.
-    # Linear y per user request.
+    # (c) The multi-process scaling line chart. Phase 1 has 3 systems.
+    # The y-axis is linear. The user requested this.
     plot_lines(proc_rows, counts,
                title="Multi-process scaling",
                x_label="processes", log_y=False,

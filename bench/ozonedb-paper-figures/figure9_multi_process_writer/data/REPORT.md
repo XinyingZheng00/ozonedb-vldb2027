@@ -62,7 +62,7 @@ OzoneDB shared-DB processes match or *slightly exceed* multi-thread throughput o
 | d | **284,192** | 200,950 | **1.41×** |
 | f | 49,999 | 46,327 | 1.08× |
 
-For SQLite trunkcpp/bcw2 on write workloads (A, D, F), the comparison is qualitative: **multi-thread T≥2 collapses to single-digit ops/s on every write-heavy cell** (8 cells SIGABRTed every repeat in [fig2-multi-writer-local](/users/Xinying/ozonedb/bench/results/local/fig2-multi-writer-local/REPORT.md)) due to WAL-index contention, while multi-process N=2..16 holds steady at ~5–6 k ops/s. Multi-process is *more robust* but capped by WAL serialization.
+For SQLite trunkcpp/bcw2 on write workloads (A, D, F), the comparison is qualitative: **multi-thread T≥2 collapses to single-digit ops/s on every write-heavy cell** (8 cells SIGABRTed every repeat in [fig2-multi-writer-local]($HOME/ozonedb/bench/results/local/fig2-multi-writer-local/REPORT.md)) due to WAL-index contention, while multi-process N=2..16 holds steady at ~5–6 k ops/s. Multi-process is *more robust* but capped by WAL serialization.
 
 For SQLite reads (workload C), multi-thread is faster than multi-process (363 k vs 217 k at T/N=16) because process overhead dominates when reads scale freely.
 
@@ -138,7 +138,7 @@ This is consistent with the paper's RQ2 phrasing — multi-writer scalability is
 
 **Source patches required:**
 
-1. [YCSB-cpp/sqlite/sqlite_db.cc](/users/Xinying/YCSB-cpp/sqlite/sqlite_db.cc) — VFS made configurable (`sqlite.vfs` property, default `unix-excl`) so multi-process can use the standard `unix` VFS; busy_timeout applied via `sqlite3_busy_timeout()` immediately after `sqlite3_open_v2()`, before any PRAGMA, so init races don't fail with `SQLITE_BUSY`.
+1. [YCSB-cpp/sqlite/sqlite_db.cc]($HOME/YCSB-cpp/sqlite/sqlite_db.cc) — VFS made configurable (`sqlite.vfs` property, default `unix-excl`) so multi-process can use the standard `unix` VFS; busy_timeout applied via `sqlite3_busy_timeout()` immediately after `sqlite3_open_v2()`, before any PRAGMA, so init races don't fail with `SQLITE_BUSY`.
 
 2. The OzoneDB YCSB wrapper at `bin/ycsb` runs `mvn package` on every invocation; with N parallel workers this races in `~/.m2`. The orchestrators warm the wrapper once at startup, capture the resolved `java -cp ...` prefix, and bypass the wrapper for parallel workers (see `warmup_ozonedb_classpath` in [run_phase1_multiproc_sweep.py](scripts/run_phase1_multiproc_sweep.py)).
 

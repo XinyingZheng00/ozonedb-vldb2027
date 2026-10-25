@@ -5,18 +5,18 @@ Paper: `images/experiment/fig_append_pagecache_merged_ext4.pdf`, `\label{fig:app
 > N processes append 4 KiB records to a single shared file on an ext4 filesystem.
 > *Buffered* uses the page cache; `O_DIRECT` bypasses it.
 
-The original script and data were lost (made on the CloudLab node on 2026-08-30).
+The original script and data are lost. They were made on the CloudLab node on 2026-08-30.
 The benchmark here was **rebuilt on 2026-10-20** from that description and the figure.
 
 | File | What it is |
 |---|---|
 | `paper_figure.pdf` | the figure as it appears in the paper |
 | `data/paper_values.csv` | the paper's values, read back from the figure's PDF (within about 1%) |
-| `scripts/append_bench.cpp` | the benchmark (C++17): N forked writers, one shared `O_APPEND` file, fixed duration, aggregate ops/s; `--verify` re-reads the file to check no record was torn. `run_sweep.py` compiles it on first use. |
-| `scripts/run_sweep.py` | runs {buffered, O_DIRECT} x {fsync, no-sync} x N with repeats; writes `runs.csv` and `summary.csv` |
+| `scripts/append_bench.cpp` | the benchmark (C++17). It forks N writers that append to one shared `O_APPEND` file for a fixed duration, and it reports aggregate ops/s. `--verify` re-reads the file to check that no record was torn. `run_sweep.py` compiles it on first use. |
+| `scripts/run_sweep.py` | runs {buffered, O_DIRECT} x {fsync, no-sync} x N with repeats. It writes `runs.csv` and `summary.csv`. |
 | `scripts/run_on_cloudlab.sh` | one-command wrapper for the c6525-25g node |
 | `scripts/latency_probe.cpp`, `scripts/sanity_checks.sh` | sanity checks: per-operation latencies, journal stats and I/O sampling (see below) |
-| `scripts/plot_append_pagecache.py` | plot in the paper's style; `--compare` overlays another summary |
+| `scripts/plot_append_pagecache.py` | plots in the paper's style. `--compare` overlays another summary. |
 
 Paper values (ops/s):
 
@@ -30,21 +30,22 @@ Paper values (ops/s):
 ## Rerun the experiment (CloudLab c6525-25g, ext4 on a SATA SSD)
 
 ```bash
-# on your laptop: copy this folder to the node
+# On your laptop, copy this folder to the node.
 scp -r figure16_append_pagecache <node>:~/
 
-# on the node
+# On the node:
 cd ~/figure16_append_pagecache/scripts
 lsblk -d -o NAME,ROTA,SIZE,MODEL          # find a spare SATA SSD (ROTA=0)
-# if it isn't mounted as ext4 yet (this ERASES that disk):
+# If the disk is not mounted as ext4 yet, run the next line. WARNING: it ERASES that disk.
 #   sudo mkfs.ext4 -F /dev/sdX && sudo mkdir -p /mnt/ssd && sudo mount /dev/sdX /mnt/ssd && sudo chown $USER /mnt/ssd
 bash run_on_cloudlab.sh /mnt/ssd/appendtest
 ```
 
-This takes about 15 minutes: 72 runs of 10 s each (3 repeats). The page cache
-is dropped before every run with `sudo`. The script refuses to run if the
-directory isn't on ext4. Results land in `data/cloudlab_<host>_<time>/`
-(`runs.csv`, `summary.csv`, `host.txt` with the machine and disk).
+The sweep takes about 15 minutes. It makes 72 runs of 10 s each (3 repeats).
+The script drops the page cache with `sudo` before every run. If the directory
+is not on ext4, the script refuses to run. Results go to
+`data/cloudlab_<host>_<time>/`. That directory holds `runs.csv`, `summary.csv`
+and `host.txt` with the machine and disk.
 
 ## Plot
 
@@ -56,12 +57,12 @@ python3 plot_append_pagecache.py ../data/<run>/summary.csv \
     --compare ../data/paper_values.csv --compare-label paper --out ../compare.pdf
 ```
 
-Needs matplotlib. Fed `data/paper_values.csv`, the script redraws the paper's figure.
+The script needs matplotlib. If you give it `data/paper_values.csv`, it redraws the paper's figure.
 
 ## Rebuild run: `data/cloudlab_node0_20261020_1608/`
 
 CloudLab c6525-25g, Linux 5.15, ext4 on `/dev/sdb` (SATA SSD). The C++
-benchmark ran with 3 repetitions × 10 s per point, and all 72 runs passed
+benchmark ran with 3 repetitions × 10 s per point. All 72 runs passed
 `--verify`.
 
 | File | What it is |
@@ -78,20 +79,20 @@ benchmark ran with 3 repetitions × 10 s per point, and all 72 runs passed
 | no-sync · O_DIRECT | 22,863 | 21,759 | 21,669 | 21,541 | 20,275 | 19,216 |
 
 **Matches the paper:**
-- **fsync:** buffered ≈ `O_DIRECT` at N ≤ 4 (1.0–1.4×), then buffered scales to 2.9× at N=32 (paper: 3.6×).
+- **fsync:** buffered ≈ `O_DIRECT` at N ≤ 4 (1.0–1.4×). Then buffered scales to 2.9× at N=32 (paper: 3.6×).
 
 **Doesn't match:**
-- **no-sync:** buffered is 6.7–9.3× faster than `O_DIRECT` (paper: 2.6–4.3×), because buffered appends reach 128–212k ops/s against the paper's 37–65k.
-- Earlier checks and the sanity checks below rule out interpreter overhead, dirty-page throttling and hardware limits as the cause. The original likely differed in a way §5.6 doesn't describe.
+- **no-sync:** buffered is 6.7–9.3× faster than `O_DIRECT` (paper: 2.6–4.3×). The cause is that buffered appends reach 128–212k ops/s, against the paper's 37–65k.
+- Earlier checks and the sanity checks below rule out three causes: interpreter overhead, dirty-page throttling and hardware limits. The original setup probably differed in a way that §5.6 does not describe.
 
 ## Sanity checks: `data/sanity_node0_20261021_1031/`
 
-These check what limits each curve, measured on the same node and disk as the
-rebuild run. They were produced by `scripts/sanity_checks.sh <dir>` (about
-6 minutes), which:
+These checks find what limits each curve. They ran on the same node and disk
+as the rebuild run. `scripts/sanity_checks.sh <dir>` produced them in about
+6 minutes. The script:
 - runs `scripts/latency_probe.cpp` for single-writer per-operation latencies
 - records the disk, kernel and dirty-page settings
-- repeats 7 `append_bench` runs while sampling ext4 journal stats, dirty pages and device writes
+- repeats 7 `append_bench` runs, and samples ext4 journal stats, dirty pages and device writes during them
 
 | File | What it is |
 |---|---|
@@ -101,10 +102,10 @@ rebuild run. They were produced by `scripts/sanity_checks.sh <dir>` (about
 | `io_<run>.csv` | 0.5 s samples of dirty pages, pages under writeback and MB written to the device |
 | `runs.csv` | the `append_bench` results those stats belong to |
 
-**1. There's no device cache flush on this node.**
-- The SSD's write cache is off (`write through`, `hdparm -W` = 0, no FUA). The PM883 has power-loss protection, so a write is durable when it completes.
+**1. There is no device cache flush on this node.**
+- The SSD's write cache is off (`write through`, `hdparm -W` = 0, no FUA). The PM883 has power-loss protection. So a write is durable when it completes.
 - `fdatasync` with nothing new to persist takes 1.0 µs.
-- So `fsync` costs ext4 journal-commit writes, not a cache flush: about 135 µs ≈ 3–4 serialized 4 KiB device writes of about 35–42 µs each, and about 6 logged blocks per commit.
+- So the cost of `fsync` is the ext4 journal-commit writes, not a cache flush. The cost is about 135 µs. That is about 3–4 serialized 4 KiB device writes of about 35–42 µs each, and about 6 logged blocks per commit.
 
 **2. Per-operation latency predicts each curve.**
 
@@ -122,19 +123,19 @@ rebuild run. They were produced by `scripts/sanity_checks.sh <dir>` (about
 | fsync · Buffered, N=32 | 195,898 | 64,403 | 3.04 |
 | fsync · O_DIRECT, N=32 | 69,129 | 68,950 | 1.0 |
 
-Buffered fsync scales because each commit carries about 3 writers' appends at
-N=32: 6,440 commits/s × 3.04 ≈ 19.6k/s. `O_DIRECT` gets one commit per
-append, so it stays flat.
+Buffered fsync scales because each commit carries the appends of about 3
+writers at N=32. The math is 6,440 commits/s × 3.04 ≈ 19.6k/s. `O_DIRECT`
+gets one commit per append. So it stays flat.
 
-**4. No-sync buffered: throttling exists but doesn't explain the paper.**
-- In a 120 s run, dirty pages climbed for about 70 s to the 20% limit (≈ 21.4 GB of 128 GB), then held.
-- After that the SSD wrote back at a steady ~500 MB/s, and writers were held to it: ≈ 122k appends/s, against ≈ 208k/s before the limit. 10 s sweep points never reach the limit.
-- Even throttled, that's about 2× the paper's 37–65k/s (150–265 MB/s). So the paper's no-sync buffered numbers aren't explained by throttling, the interpreter or the hardware measured here.
+**4. No-sync buffered: throttling exists but does not explain the paper.**
+- In a 120 s run, dirty pages climbed for about 70 s to the 20% limit (≈ 21.4 GB of 128 GB). Then they held there.
+- After that, the SSD wrote back at a steady ~500 MB/s. Throttling held the writers to that rate: ≈ 122k appends/s, against ≈ 208k/s before the limit. The 10 s sweep points never reach the limit.
+- Even with throttling, that rate is about 2× the paper's 37–65k/s (150–265 MB/s). So throttling, the interpreter and the hardware measured here do not explain the paper's no-sync buffered numbers.
 
 ## Choices the paper doesn't state
 
-The paper doesn't give these, so the rebuild picks them; change them in
-`run_on_cloudlab.sh` if you know the originals:
+The paper does not give these values, so the rebuild picks them. If you know
+the originals, change them in `run_on_cloudlab.sh`:
 - **Run length:** 10 s per point.
 - **Repeats:** 3, plotted as the mean.
 - **Page cache:** dropped before each run.
@@ -145,5 +146,5 @@ The paper doesn't give these, so the rebuild picks them; change them in
 ## Not on macOS
 
 The benchmark builds and runs on a Mac, and its correctness check passes.
-The numbers aren't comparable, though: macOS has no ext4 or `O_DIRECT`
-(`F_NOCACHE` stands in), and its `fsync` doesn't flush the drive's cache.
+But the numbers are not comparable. macOS has no ext4 or `O_DIRECT`
+(`F_NOCACHE` stands in). Its `fsync` does not flush the drive's cache.

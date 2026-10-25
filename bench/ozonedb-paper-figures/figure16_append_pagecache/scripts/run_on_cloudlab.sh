@@ -3,8 +3,8 @@
 #
 #   bash run_on_cloudlab.sh <dir on an ext4 SATA SSD>
 #
-# 2 modes x 2 sync policies x N in {1,2,4,8,16,32} x 3 repeats, 10 s each:
-# 72 runs, about 15 minutes. Results go to ../data/cloudlab_<host>_<time>/.
+# The sweep is 2 modes x 2 sync policies x N in {1,2,4,8,16,32} x 3 repeats, 10 s each.
+# That is 72 runs, about 15 minutes. Results go to ../data/cloudlab_<host>_<time>/.
 set -euo pipefail
 
 DIR="${1:?usage: $0 <dir on an ext4 SATA SSD, e.g. /mnt/ssd/appendtest>}"

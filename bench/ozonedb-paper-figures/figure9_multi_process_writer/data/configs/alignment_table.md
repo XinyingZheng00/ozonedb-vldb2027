@@ -26,13 +26,13 @@ These two overrides are passed via `-p` flags by the orchestrator. All other pro
 
 This table records the per-system configuration for the Phase 1 multi-process sweep and how each knob is matched (or deliberately not) across systems and against the prior multi-thread sweep.
 
-Source-of-truth for prior multi-thread alignment: [REPORT.md §1](/users/Xinying/ozonedb/bench/results/local/fig2-multi-writer-local/REPORT.md). This table mirrors that, with deltas explicitly noted.
+Source-of-truth for prior multi-thread alignment: [REPORT.md §1]($HOME/ozonedb/bench/results/local/fig2-multi-writer-local/REPORT.md). This table mirrors that, with deltas explicitly noted.
 
 ## 1. Per-instance memory budget
 
 | System    | Knob                          | Value                  | Notes |
 |-----------|-------------------------------|------------------------|-------|
-| ozonedb   | LRU cache (hardcoded)         | 32 MB                  | Hardcoded at [`ozonedb/src/db/db.cpp:21`](/users/Xinying/ozonedb/src/db/db.cpp#L21). Same as multi-thread; no JSON knob. JNI buffers + JVM heap drive RSS independently. |
+| ozonedb   | LRU cache (hardcoded)         | 32 MB                  | Hardcoded at [`ozonedb/src/db/db.cpp:21`]($HOME/ozonedb/src/db/db.cpp#L21). Same as multi-thread; no JSON knob. JNI buffers + JVM heap drive RSS independently. |
 | ozonedb   | log_file_size_limit           | 32 MB                  | From `shared_config_rocksdb_base.json`. Per-writer task log; with N=1 process this is the only writer. |
 | trunkcpp  | sqlite.cache_size             | -131072 (128 MB)       | Same as multi-thread. |
 | trunkcpp  | sqlite.mmap_size              | 0                      | Disabled — keeps memory budget honest, matches multi-thread. |
@@ -109,7 +109,7 @@ At N=16: total budget across all instances = 16 × 128 MB = 2 GB per system (SQL
 |-----------|--------------|
 | Each process has its own DB directory/file | `{work_path}_proc{i}` per process, copied from cached_DB at cell start. |
 | No shared SQLite WAL or shm files across processes | Different DB files → different sidecars. |
-| No shared OzoneDB config file | Per-process `shared_config_rocksdb_proc{i}.json` (one per process per cell). Avoids the orchestrator-shared-config-file collision in [run_fig2_sweep.py:211-228](/users/Xinying/ozonedb/bench/scripts/local/run_fig2_sweep.py#L211). |
+| No shared OzoneDB config file | Per-process `shared_config_rocksdb_proc{i}.json` (one per process per cell). Avoids the orchestrator-shared-config-file collision in [run_fig2_sweep.py:211-228]($HOME/ozonedb/bench/scripts/local/run_fig2_sweep.py#L211). |
 | No shared lock files | RocksDB excluded from Phase 1 (would have hit `LOCK` file issue); SQLite locks are per-DB-file. |
 | Workload generator race-free | Pre-generate all workload files before any worker spawns. |
 | Shared classpath / jar caches | Maven `~/.m2` is read-only at runtime; concurrent reads are safe. |

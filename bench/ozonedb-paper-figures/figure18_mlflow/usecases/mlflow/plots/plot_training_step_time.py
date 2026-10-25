@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
-"""Generate training_step_time.pdf: pure training-compute time (mean
-partial_fit()/predict_proba()/log_loss() per step, ms, log-y) vs P, from
-ray_mlflow_swapin_compute_time/trials.csv.
+"""Generate training_step_time.pdf: pure training-compute time versus P,
+with a log y-axis, from ray_mlflow_swapin_compute_time/trials.csv. The
+time is the mean of partial_fit(), predict_proba() and log_loss() per
+step, in ms.
 
-This code path never references the storage backend at all -- identical
-sklearn/numpy work regardless of which backend the trial is using. Any
-difference across backends here is host resource contention (a
-client-server backend's own OS processes competing for CPU with the
-training processes), not a difference in the training code itself.
+This code path never references the storage backend at all. The sklearn
+and numpy work is identical, regardless of which backend the trial uses.
+Any difference across backends here is host resource contention: the own
+OS processes of a client-server backend compete for CPU with the training
+processes. It is not a difference in the training code itself.
 
 Usage:
     python3 plot_training_step_time.py [--csv PATH] [--out PATH]

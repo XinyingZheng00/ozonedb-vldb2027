@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """Run the Figure 16 sweep: {buffered, direct} x {fsync, none} x N, with
-repeats, and write one CSV row per run plus a summary CSV (mean, stdev).
+repeats. Write one CSV row per run, plus a summary CSV (mean, stdev).
 
     python3 run_sweep.py --dir /mnt/ext4/appendtest --out ../data/<run_name>
 
 --dir must be on the filesystem under test (ext4 in the paper). Each run
-truncates <dir>/append.dat, so nothing else should live there. With
---drop-caches (Linux, uses sudo) the page cache is dropped before every run.
+truncates <dir>/append.dat, so keep nothing else there. With --drop-caches
+(Linux, uses sudo), the script drops the page cache before every run.
 """
 import argparse
 import csv
@@ -23,7 +23,7 @@ FIELDS = ["mode", "sync", "procs", "record_bytes", "seconds", "total_ops",
 
 
 def build():
-    # One binary per platform, so a copy built on a laptop is never run on the node.
+    # One binary per platform. So the node never runs a copy that was built on a laptop.
     exe = HERE / f"append_bench.{platform.system().lower()}-{platform.machine()}"
     src = HERE / "append_bench.cpp"
     if not exe.exists() or exe.stat().st_mtime < src.stat().st_mtime:

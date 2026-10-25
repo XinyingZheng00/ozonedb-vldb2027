@@ -1,36 +1,36 @@
-"""Ray Tune trainable: one real training trial, matching how Ray Tune is
-actually used in practice (confirmed via Ray's own docs + source during
-this investigation) -- one OS process per trial, one MLflow run per
-trial, log_metric called inline from the training loop. No replayed/
-synthetic metric values: this trains a real (small, fast) model and logs
-its real loss.
+"""Ray Tune trainable: one real training trial. This matches how Ray Tune
+is actually used in practice. We confirmed this via the own docs and
+source of Ray during this investigation. The pattern is one OS process
+per trial, one MLflow run per trial, and log_metric called inline from
+the training loop. There are no replayed or synthetic metric values. The
+trainable trains a real (small, fast) model and logs its real loss.
 
-Deliberately NOT using Ray's built-in MLflow integration
-(setup_mlflow/MLflowLoggerCallback) -- that resolves stores by URI scheme,
-and there is no "ozonedb://" scheme registered. Instead each trial
-instantiates our own store directly (SqlAlchemyStore or
-OzoneDBMetricStore), exactly like mlflow_swapin_worker.py did, so Ray
-handles process orchestration/scheduling and we keep control of which
-backend each trial talks to.
+The trainable deliberately does NOT use the built-in MLflow integration
+of Ray (setup_mlflow/MLflowLoggerCallback). That integration resolves
+stores by URI scheme, and there is no "ozonedb://" scheme registered.
+Instead, each trial instantiates our own store directly (SqlAlchemyStore
+or OzoneDBMetricStore), exactly like mlflow_swapin_worker.py did. So Ray
+handles process orchestration and scheduling, and we keep control of
+which backend each trial talks to.
 
-Optional additional threads, each independently toggleable, all sharing
-the same store instance/run as the main training thread, each writing
-its own distinct key(s):
+Optional additional threads exist. Each one can be toggled independently.
+All of them share the same store instance and run as the main training
+thread. Each one writes its own distinct key(s):
   - config["with_monitor"]=True: cpu_percent/mem_percent, via `psutil`.
   - config["with_disk_monitor"]=True: disk_read_mb_s/disk_write_mb_s, via
-    `psutil.disk_io_counters()` deltas (a real rate, not the raw
-    cumulative-since-boot counter psutil returns) -- a genuinely separate
-    thread, not more keys logged from the existing monitor thread, since
-    the point is more *concurrent writers* per process, not just more
-    metrics.
-All of this is a real, common MLflow usage pattern distinct from the
-earlier (discarded) T=5-threads-sharing-one-key design: different
-threads, different keys, same run. Per the earlier investigation, this
-does NOT reintroduce the latest_metrics race removed from
-ozonedb_metric_store.py: the UNIQUE constraint the race violated is
-scoped to (run_uuid, key), and no two threads here ever write the same
-key, however many threads are running -- confirmed by testing, not just
-reasoned about, and that reasoning generalizes to any thread count.
+    deltas of `psutil.disk_io_counters()`. This is a real rate, not the
+    raw cumulative-since-boot counter that psutil returns. It is a
+    genuinely separate thread, not more keys logged from the existing
+    monitor thread. The point is more *concurrent writers* per process,
+    not only more metrics.
+All of this is a real, common MLflow usage pattern. It is distinct from
+the earlier (discarded) design of T=5 threads that share one key: here,
+different threads write different keys in the same run. Per the earlier
+investigation, this does NOT reintroduce the latest_metrics race removed
+from ozonedb_metric_store.py. The UNIQUE constraint that the race
+violated is scoped to (run_uuid, key). No two threads here ever write the
+same key, however many threads run. Testing confirmed this, not only
+reasoning. That reasoning generalizes to any thread count.
 """
 import json
 import os
@@ -126,11 +126,11 @@ def train_and_log(config):
     records_lock = threading.Lock()
     extra_threads = []
     stop_events = []
-    # Same store instance, same run, genuinely different threads --
-    # OzoneDBMetricStore's _ozonedb() gives each thread its own OzoneDB
-    # handle via thread-local storage (the T-convention), same as the main
-    # thread gets its own. Each toggle below is a separate thread, not
-    # more keys logged from one thread -- the point is more concurrent
+    # Same store instance, same run, genuinely different threads.
+    # The _ozonedb() of OzoneDBMetricStore gives each thread its own OzoneDB
+    # handle via thread-local storage (the T-convention). The main thread
+    # gets its own in the same way. Each toggle below is a separate thread,
+    # not more keys logged from one thread. The point is more concurrent
     # writers per process.
     if config.get("with_monitor"):
         stop_event = threading.Event()
@@ -175,7 +175,7 @@ def train_and_log(config):
             model.partial_fit(Xb, yb, classes=classes)
         else:
             model.partial_fit(Xb, yb)
-        # real training loss on this batch -- not a replayed/synthetic value
+        # Real training loss on this batch. It is not a replayed or synthetic value.
         proba = model.predict_proba(Xb)
         loss_val = float(log_loss(yb, proba, labels=classes))
         compute_latency_us = (time.perf_counter() - t_compute0) * 1e6

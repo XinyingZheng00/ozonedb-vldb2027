@@ -1,9 +1,10 @@
 """Shared loading/styling helpers for the persistent-adder 3-way comparison
-plots. Each plot_*.py script imports this and produces exactly one PDF, so
-figures can be regenerated individually without touching the others.
+plots. Each plot_*.py script imports this module and produces exactly one
+PDF. So you can regenerate each figure on its own without touching the others.
 
-Colors match the categorical palette used throughout this investigation's
-earlier HTML charts (validated all-pairs colorblind-safe for a 3-series set):
+Colors match the categorical palette that the earlier HTML charts of this
+investigation used. The palette is validated all-pairs colorblind-safe for a
+3-series set:
   OzoneDB      #2a78d6  (blue)
   SQLite       #eb6834  (orange)
   sqlite_rest  #1baf7a  (aqua/green)
@@ -42,16 +43,17 @@ def all_ns(rows):
 
 
 def series_with_error(rows, backend, field, ns_all):
-    """Returns (x_positions, means, stds) sorted by N, for one backend/field,
-    aggregating across repeats (multiple rows sharing the same backend/N,
-    distinguished by the 'repeat' column when --repeats > 1). std is 0.0
-    for an N with only a single repeat -- never silently dropped, so a lone
-    point still renders (with an invisible error bar) rather than vanishing.
-    Skips rows where the field is missing/empty (e.g. daemon_* for
-    sqlite_rest). x_positions are ORDINAL (rank in ns_all), not the raw N
-    value -- N=1..8 doubles, then steps by 4 up to 32, so on a linear axis
-    the low end collapses into an unreadable cluster relative to the 1-32
-    range; the actual N values are still shown as tick labels."""
+    """Return (x_positions, means, stds) sorted by N, for one backend/field.
+    The function aggregates across repeats. Repeats are multiple rows with
+    the same backend/N. The 'repeat' column tells them apart when
+    --repeats > 1. std is 0.0 for an N with only a single repeat. It is
+    never silently dropped. So a lone point still renders, with an invisible
+    error bar, instead of vanishing. Rows where the field is missing or
+    empty are skipped (for example daemon_* for sqlite_rest). x_positions
+    are ORDINAL (rank in ns_all), not the raw N value. N doubles from 1 to 8,
+    then steps by 4 up to 32. So on a linear axis, the low end collapses
+    into an unreadable cluster relative to the 1-32 range. The tick labels
+    still show the actual N values."""
     by_n = defaultdict(list)
     for r in rows:
         if r["backend"] != backend:
@@ -70,10 +72,10 @@ def series_with_error(rows, backend, field, ns_all):
 
 
 def style_axes(ax, ns, ylabel, title, logy=True):
-    # Kept short deliberately -- it must fit under a compact paper figure.
+    # The label is short on purpose. It must fit under a compact paper figure.
     # The N+1-actors nuance (daemon adder for sqlite/ozonedb, extra REST
-    # client for sqlite_rest) belongs in the caption/analysis text, not
-    # crammed into the axis label.
+    # client for sqlite_rest) belongs in the caption/analysis text. Do not
+    # cram it into the axis label.
     ax.set_xlabel("N (concurrent CLI workers)")
     ax.set_ylabel(ylabel)
     ax.set_title(title)

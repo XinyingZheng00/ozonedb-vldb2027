@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Parse OzoneDB task.log into a JSON timeline.
 
-The task log is a sequence of varint32-length-prefixed protobuf TaskRecord
-messages (see src/util/protobuf_serializer.cpp). This module decodes the file
-into ordered records — the file offset of each record is preserved, since the
-shared log's total order is defined by file offset (Section 4.1 of the paper).
+The task log is a sequence of protobuf TaskRecord messages. Each message has a
+varint32 length prefix (see src/util/protobuf_serializer.cpp). This module
+decodes the file into ordered records. It keeps the file offset of each record,
+because the file offset defines the total order of the shared log (Section 4.1
+of the paper).
 
 Usage as a CLI:
     python3 task_log_parser.py /tank/test/churn/db/task.log > timeline.json
@@ -30,12 +31,12 @@ _STATUS_NAMES = {
 
 
 def task_id_key(task_id: record_pb2.TaskRecord.TaskIdentifier) -> str:
-    """Stable string key for a TaskIdentifier (used to group records)."""
+    """Return a stable string key for a TaskIdentifier. The key groups records."""
     return "|".join(task_id.input_files) + f"=>L{task_id.destinationLevel}"
 
 
 def parse_task_log(path: Path) -> list[dict]:
-    """Return ordered list of decoded records from task.log.
+    """Return the ordered list of decoded records from task.log.
 
     Each entry has: file_offset, owner, owner_generation, status, task_key,
     input_files, destination_level.
@@ -50,10 +51,10 @@ def parse_task_log(path: Path) -> list[dict]:
         except IndexError:
             break
         if new_pos + msg_len > len(data):
-            # truncated record — typically means a writer was killed mid-append.
-            # Stop here; everything before this is intact thanks to atomic
-            # append at the storage layer (a writer can't be killed *during* a
-            # single append on a local FS — append() is one syscall).
+            # This is a truncated record. Usually a writer was killed during an
+            # append. Stop here. Everything before this point is intact, because
+            # the storage layer appends atomically. On a local FS, a single
+            # append() is one syscall, so a kill cannot interrupt it.
             break
         rec = record_pb2.TaskRecord()
         rec.ParseFromString(data[new_pos:new_pos + msg_len])
@@ -74,7 +75,7 @@ def parse_task_log(path: Path) -> list[dict]:
 
 
 def group_by_task(records: list[dict]) -> dict[str, list[dict]]:
-    """Group decoded records by task_key, preserving append order."""
+    """Group the decoded records by task_key. Keep the append order."""
     groups: dict[str, list[dict]] = {}
     for r in records:
         groups.setdefault(r["task_key"], []).append(r)

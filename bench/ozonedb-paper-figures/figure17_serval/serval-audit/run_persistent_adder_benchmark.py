@@ -1,30 +1,31 @@
 #!/usr/bin/env python3
-"""Fixed-duration 3-way comparison, reproducing serval-dna issue #1's literal
-scenario (a persistent daemon connection racing independently-opened CLI
-connections on the same store) for `sqlite` and `ozonedb`, against the
-`sqlite_rest` re-architected fix.
+"""Fixed-duration 3-way comparison. It reproduces the literal scenario of
+serval-dna issue #1 for `sqlite` and `ozonedb`, against the `sqlite_rest`
+re-architected fix. In that scenario, a persistent daemon connection races
+CLI connections that open the same store on their own.
 
-sqlite / ozonedb: one real servald daemon runs for the whole trial with its
-benchmark-only persistent_adder_tick alarm active (server.c, gated by
-RHIZOME_PERSISTENT_ADD_INTERVAL_MS) -- a genuinely persistent, once-opened
-connection issuing real add-file operations on a fixed interval, exactly
-mirroring how the real daemon holds rhizome_database.db open for its whole
-lifetime. Concurrently, N independent CLI worker processes run `rhizome add
-file` / `rhizome extract file` against the SAME store, each a fresh
-subprocess per operation (matching how every real rhizome CLI invocation
-opens its own separate connection). Both actors race the same file for the
-whole trial.
+sqlite / ozonedb: one real servald daemon runs for the whole trial. Its
+benchmark-only persistent_adder_tick alarm is active (server.c, gated by
+RHIZOME_PERSISTENT_ADD_INTERVAL_MS). This is a persistent, once-opened
+connection that issues real add-file operations on a fixed interval. It
+mirrors exactly how the real daemon holds rhizome_database.db open for its
+whole lifetime. At the same time, N independent CLI worker processes run
+`rhizome add file` / `rhizome extract file` against the SAME store. Each
+operation is a fresh subprocess. This matches how every real rhizome CLI
+invocation opens its own separate connection. Both actors race the same file
+for the whole trial.
 
-sqlite_rest: one real servald daemon serves the REST API -- the ONLY
-process that ever opens the store, by construction, so there is no second
-connection to race. N+1 REST client processes (not N) hit it concurrently,
-volume-matched against the other two backends' "N CLI workers + 1 daemon
-adder" = N+1 total add-issuing actors, so all three backends face the same
-total request volume; the daemon itself still never originates a request.
+sqlite_rest: one real servald daemon serves the REST API. By construction, it
+is the ONLY process that ever opens the store. So there is no second
+connection to race. N+1 REST client processes (not N) hit it at the same time.
+This matches the volume of the other two backends: "N CLI workers + 1 daemon
+adder" = N+1 total add-issuing actors. So all three backends face the same
+total request volume. The daemon itself still never originates a request.
 
-Trials run for a FIXED WALL-CLOCK DURATION: the adder ticks the same number of
-times regardless of N, so N is the only thing varying across the sweep, and workers simply complete as many cycles as they can in the window (better latency-percentile sample sizes at low N
-too).
+Trials run for a FIXED WALL-CLOCK DURATION. The adder ticks the same number of
+times for every N. So N is the only thing that varies across the sweep. The
+workers complete as many cycles as they can in the window. This also gives
+better latency-percentile sample sizes at low N.
 """
 import argparse
 import csv
@@ -70,12 +71,13 @@ def wait_for_port(port, timeout_s=10):
 
 
 def parse_daemon_tick_durations(daemon_instance_dir):
-    """Returns the list of per-tick durations (ms, ints) for every
-    successful persistent_adder_tick, parsed from the daemon's own log
-    line: 'persistent_adder_tick: added bundle at <now> duration_ms=<n>'.
-    Measures the same span as a CLI worker's t_add (from just after the
-    interval/env gating checks to just before the log line), so it's
-    directly comparable to mean_add_ms/p99_add_ms."""
+    """Return the list of per-tick durations (ms, ints) for every
+    successful persistent_adder_tick. The function parses them from the
+    daemon's own log line:
+    'persistent_adder_tick: added bundle at <now> duration_ms=<n>'.
+    The duration measures the same span as a CLI worker's t_add. The span
+    runs from just after the interval/env gating checks to just before the
+    log line. So it is directly comparable to mean_add_ms/p99_add_ms."""
     log_path = daemon_instance_dir / "serval.log"
     if not log_path.exists():
         return []
@@ -165,7 +167,7 @@ def worker_main_direct(worker_id, deadline, backend, oz_config, sqlite_store, tr
 
 def run_trial_daemon_cli(backend, n_workers, duration_s, trial_dir, adder_interval_ms):
     """backend: 'sqlite' or 'ozonedb'. One real daemon (persistent_adder_tick
-    active) + N independent CLI workers, both racing the same store."""
+    active) + N independent CLI workers. Both race the same store."""
     short_root = Path(f"/tmp/persist_bench_{trial_dir.name}")
     if short_root.exists():
         shutil.rmtree(short_root)
@@ -216,9 +218,9 @@ def run_trial_daemon_cli(backend, n_workers, duration_s, trial_dir, adder_interv
 
 
 def run_trial_sqlite_rest(n_workers, duration_s, trial_dir, port):
-    """One real daemon serving the REST API (the sole writer, no adder
-    needed/possible), N+1 REST clients -- volume-matched against the other
-    two backends' N CLI workers + 1 daemon adder = N+1 total actors."""
+    """One real daemon serves the REST API. It is the sole writer, so no adder
+    is needed or possible. N+1 REST clients hit it. This matches the volume of
+    the other two backends: N CLI workers + 1 daemon adder = N+1 total actors."""
     actual_clients = n_workers + 1
     short_root = Path(f"/tmp/persist_bench_{trial_dir.name}")
     if short_root.exists():
@@ -302,10 +304,10 @@ def summarize(backend, n_workers, all_rows, wall_s, daemon_ticks, duration_s, da
         "p50_add_ms": pct(add_times_ms, 0.5), "p99_add_ms": pct(add_times_ms, 0.99),
         "mean_extract_ms": (sum(ext_times_ms) / len(ext_times_ms)) if ext_times_ms else None,
         "daemon_ticks": daemon_ticks,
-        # Directly comparable to mean_add_ms/p99_add_ms above -- same span
-        # (add-operation work only, not process/subprocess launch overhead
-        # on either side), parsed from persistent_adder_tick()'s own
-        # duration_ms= log field. None for sqlite_rest (no adder there).
+        # Directly comparable to mean_add_ms/p99_add_ms above. It covers the
+        # same span: the add-operation work only, not the process/subprocess
+        # launch overhead on either side. It is parsed from the duration_ms=
+        # log field of persistent_adder_tick(). None for sqlite_rest (no adder there).
         "daemon_mean_tick_ms": (sum(daemon_durs) / len(daemon_durs)) if daemon_durs else None,
         "daemon_p99_tick_ms": pct(daemon_durs, 0.99),
     }

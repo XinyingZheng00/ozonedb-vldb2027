@@ -1,0 +1,134 @@
+#!/usr/bin/env python3
+"""Steady-state throughput from a strict-mode sweep result directory.
+
+Why this script does not use the aggregate files: YCSB's Throughput(ops/sec)
+is total_ops / run_time. The OzoneDB linearizable path spends about the first
+45-90s of every run on the replay of the shared log (the tailer catch-up)
+before the first fenced read returns. That dead time drags the whole-run
+average down. It is not steady-state throughput. Cassandra has no such warmup.
+
+So this script reads the per-writer YCSB result files. They carry one status
+line per second (status.interval=1):
+
+    ... 120 sec: 69510 operations; 1124 current ops/sec; est completion ...
+
+The script averages `current ops/sec` over the LAST --window seconds of each
+writer's run. That window is past any catch-up for OzoneDB, and steady for
+Cassandra. The per-writer steady rates are summed into the cell's throughput.
+This is a rate, so the different cell durations of the two systems do not
+matter.
+
+Per-writer files are named (multi-node runner):
+  {ks}-{opcnt}-{rc}-workload{wl}-{label}_w{idx}of{total}_t{thread}_trial{trial}.result
+
+Usage:
+  extract_steady_throughput.py <results_dir> [--window 60] [--tsv out.tsv]
+"""
+import argparse
+import os
+import re
+import sys
+from collections import defaultdict
+
+STATUS_RE = re.compile(r"(\d+) sec: \d+ operations; ([\d.]+) current ops/sec")
+FAILED_RE = re.compile(r"\[(READ|UPDATE|INSERT|READ-MODIFY-WRITE)-FAILED\], Count=(\d+)")
+PERWRITER_RE = re.compile(
+    r"^(?P<ks>[^-]+)-(?P<opcnt>\d+)-(?P<rc>\d+)-workload(?P<wl>[^-]+)-"
+    r"(?P<label>.+?)_w(?P<widx>\d+)of(?P<total>\d+)_t(?P<thread>\d+)"
+    r"_trial(?P<trial>\d+)\.result$"
+)
+
+
+def writer_steady(path, window):
+    """Return the mean current-ops/sec over the last `window` seconds, and the total FAILED ops."""
+    samples = []  # (elapsed_sec, current_ops_sec)
+    failed = 0
+    with open(path, errors="replace") as f:
+        for line in f:
+            m = STATUS_RE.search(line)
+            if m:
+                samples.append((int(m.group(1)), float(m.group(2))))
+            fm = FAILED_RE.search(line)
+            if fm:
+                failed += int(fm.group(2))
+    if not samples:
+        return None, failed, 0
+    # Drop the dead tail. YCSB prints one status line per second while it
+    # closes the client, so every run ends with a few samples that report 0
+    # operations. Those seconds come after the last operation. They are not
+    # slow seconds. If they go into the window average, they under-report the
+    # rate. The tail is 3 or 4 samples, so it costs about 3 % at a 120 s window
+    # on both systems.
+    while len(samples) > 1 and samples[-1][1] == 0.0:
+        samples.pop()
+    # Drop YCSB's cleanup sample. The client prints one last status line a few
+    # milliseconds after the final full second. That line repeats the second:
+    #   300 sec: 20464 operations; 76 current ops/sec ...
+    #   300 sec: 20465 operations; 333.33 current ops/sec ... [CLEANUP: Count=1]
+    # Its rate is one operation divided by a 3 ms interval, so it is 4x to 5x
+    # the real rate. One such sample in a 120 s window overstates a slow series
+    # by up to 6.5 %. Slow clients print it. Fast clients fill the last second,
+    # so the bias is asymmetric across systems. Any trailing sample that repeats
+    # the previous elapsed second is this artifact.
+    while len(samples) > 1 and samples[-1][0] == samples[-2][0]:
+        samples.pop()
+    if not samples:
+        return None, failed, 0
+    last_t = samples[-1][0]
+    cutoff = last_t - window
+    win = [ops for (t, ops) in samples if t >= cutoff]
+    if not win:
+        win = [samples[-1][1]]
+    return sum(win) / len(win), failed, last_t
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("results_dir")
+    ap.add_argument("--window", type=int, default=60, help="trailing seconds to average (default 60)")
+    ap.add_argument("--tsv", help="also write a TSV here")
+    args = ap.parse_args()
+
+    if not os.path.isdir(args.results_dir):
+        sys.exit(f"no such dir: {args.results_dir}")
+
+    # cell key maps to {writers: {widx: rate}, failed: n, total: N, minlast: sec}
+    cells = defaultdict(lambda: {"writers": {}, "failed": 0, "total": None, "minlast": 1 << 30})
+    for fn in sorted(os.listdir(args.results_dir)):
+        m = PERWRITER_RE.match(fn)
+        if not m:
+            continue
+        rate, failed, last_t = writer_steady(os.path.join(args.results_dir, fn), args.window)
+        if rate is None:
+            continue
+        key = (m.group("label"), m.group("wl"), int(m.group("total")), m.group("trial"))
+        c = cells[key]
+        c["writers"][int(m.group("widx"))] = rate
+        c["failed"] += failed
+        c["total"] = int(m.group("total"))
+        c["minlast"] = min(c["minlast"], last_t)
+
+    rows = []
+    for (label, wl, total, trial), c in cells.items():
+        present = len(c["writers"])
+        cell_tps = sum(c["writers"].values())
+        rows.append((label, wl, total, present, cell_tps, c["failed"], c["minlast"]))
+    rows.sort(key=lambda r: (r[0], r[1], r[2]))
+
+    hdr = f"{'label':32} {'wl':3} {'writers':7} {'have':4} {'steady_ops_s':13} {'failed':7} {'run_s':5}"
+    print(hdr)
+    print("-" * len(hdr))
+    for label, wl, total, present, tps, failed, last in rows:
+        flag = "" if present == total else f"  <-- MISSING {total - present}/{total}"
+        print(f"{label:32} {wl:3} {total:7} {present:4} {tps:13.1f} {failed:7} {last:5}{flag}")
+
+    if args.tsv:
+        with open(args.tsv, "w") as f:
+            f.write("label\tworkload\twriters\thave\tsteady_ops_per_sec\tfailed\trun_seconds\n")
+            for label, wl, total, present, tps, failed, last in rows:
+                f.write(f"{label}\t{wl}\t{total}\t{present}\t{tps:.1f}\t{failed}\t{last}\n")
+        print(f"\nwrote {args.tsv}")
+
+
+if __name__ == "__main__":
+    main()

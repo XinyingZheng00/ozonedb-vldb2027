@@ -1,0 +1,72 @@
+[syncd w2] /usr/bin/python3 $HOME/crsqlite/bench/scripts/sync_daemon.py --db /tank/crsqlite/ycsb_data/visx-reader-visibility-xnode-20260821-170053-w2/replica.db --port 8303 --peers 10.10.1.1:8301,10.10.1.1:8302 --interval-ms 50.0 --batch 4096 --extension $HOME/crsqlite/lib/crsqlite --synchronous FULL --metrics $HOME/crsqlite/bench/results/consistency/visibility-xnode-20260821-170053/w2.csv
+{
+  "engine": "cr-sqlite-syncread",
+  "linearizable_reads": false,
+  "read_barrier": true,
+  "cross_node": true,
+  "channel": "tcp",
+  "inserts": 592,
+  "checked": 592,
+  "misses_first_read": 0,
+  "miss_first_read_fraction": 0.0,
+  "timeouts": 0,
+  "visibility_ms_p50": 4.457,
+  "visibility_ms_p90": 6.415,
+  "visibility_ms_p95": 6.901,
+  "visibility_ms_p99": 7.861,
+  "visibility_ms_max": 8.452,
+  "first_check_age_ms_p50": 4.412,
+  "first_check_age_ms_p99": 7.82,
+  "pbs": [
+    {
+      "age_ms_le": 0.5,
+      "p_stale": 1.0
+    },
+    {
+      "age_ms_le": 1,
+      "p_stale": 1.0
+    },
+    {
+      "age_ms_le": 2,
+      "p_stale": 1.0
+    },
+    {
+      "age_ms_le": 5,
+      "p_stale": 0.30405405405405406
+    },
+    {
+      "age_ms_le": 10,
+      "p_stale": 0.0
+    },
+    {
+      "age_ms_le": 20,
+      "p_stale": 0.0
+    },
+    {
+      "age_ms_le": 50,
+      "p_stale": 0.0
+    },
+    {
+      "age_ms_le": 100,
+      "p_stale": 0.0
+    },
+    {
+      "age_ms_le": 200,
+      "p_stale": 0.0
+    },
+    {
+      "age_ms_le": 500,
+      "p_stale": 0.0
+    }
+  ],
+  "sync_interval_ms": 50.0,
+  "rate_per_s": 20.0,
+  "writers": 2,
+  "aggregate_rate_per_s": 40.0,
+  "replicas": 3,
+  "duration_s": 15,
+  "value_size": 1000,
+  "poll_ms": 1.0
+}
+
+=> 0 of 592 first reads on replica 2 missed a key some writer replica had already acked (0.0%); visibility p50 4.457 ms (2 writers, sync interval 50.0 ms). Results in $HOME/crsqlite/bench/results/consistency/visibility-xnode-20260821-170053

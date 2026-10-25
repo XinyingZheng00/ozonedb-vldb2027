@@ -1,32 +1,33 @@
 #!/usr/bin/env python3
-"""Churn-tolerance experiment v4 — fixed-backlog completion-time.
+"""Churn-tolerance experiment v4: fixed-backlog completion time.
 
-The setup creates a known, uniform compaction backlog by loading 200k
-records with the compaction watcher DISABLED (compaction_policy=1, which
-makes db.cpp:107-110 skip startCompactionWatcher). After load, the DB has
-~250 log files in datalog/ and zero entries in any sstable level. metadata
+The setup creates a known, uniform compaction backlog. It loads 200k records
+with the compaction watcher DISABLED (compaction_policy=1). This setting makes
+db.cpp:107-110 skip startCompactionWatcher. After the load, the DB has about
+250 log files in datalog/ and zero entries in any sstable level. The metadata
 log records LOGCREATE but no COMPACT. task.log is empty.
 
-The same loaded DB is snapshot once and copied for every trial so the
-starting state is byte-identical across (N, R) combinations.
+The runner takes a snapshot of the loaded DB once. It copies the snapshot for
+every trial, so the starting state is byte-identical for all (N, R)
+combinations.
 
 Each trial then:
-  1. cp the snapshot to a per-trial DB dir
-  2. spawn N writers with compaction enabled (compaction_policy=0)
-     and OZONEDB_CHURN_ABORT_RATE=R, running YCSB workload-c (read-only,
-     no new compactions added)
-  3. poll task.log every 1 s; declare quiescent when:
+  1. copies the snapshot to a per-trial DB dir
+  2. spawns N writers with compaction enabled (compaction_policy=0)
+     and OZONEDB_CHURN_ABORT_RATE=R. The writers run YCSB workload-c,
+     which is read-only and adds no new compactions
+  3. polls task.log every 1 s, and declares the run quiescent when:
         * every task has at least one COMPLETE record
         * AND n_tasks_total has not changed for QUIESCENCE_GRACE_S seconds
         * AND no log-level files remain that would trigger more work
-  4. SIGTERM writers, single-process integrity check (sequential
-     read of all 200k keys)
-  5. tear down
+  4. sends SIGTERM to the writers, then runs a single-process integrity
+     check (a sequential read of all 200k keys)
+  5. tears down the trial
 
 Two `vary` modes:
   --vary writers   varies N at fixed R (default 0%)
   --vary abort     varies R at fixed N (default 4)
-  --vary both      runs both back-to-back
+  --vary both      runs both, one after the other
 """
 
 from __future__ import annotations
@@ -47,8 +48,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import IO, Optional
 
-sys.path.insert(0, str(Path("/users/Xinying/ozonedb/bench/results/local/"
-                            "multi-process-and-extended/scripts")))
+OZONEDB_HOME = Path(os.environ.get("OZONEDB_HOME", Path.home() / "ozonedb"))
+sys.path.insert(0, str(OZONEDB_HOME / "bench" / "results" / "local"
+                       / "multi-process-and-extended" / "scripts"))
 import run_phase1_multiproc_sweep as p1  # type: ignore
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -58,7 +60,6 @@ import task_log_parser  # type: ignore
 EXPERIMENT_DIR = Path(__file__).parent
 RESULTS_ROOT = EXPERIMENT_DIR / "results"
 
-OZONEDB_HOME = Path("/users/Xinying/ozonedb")
 OZONEDB_YCSB = OZONEDB_HOME / "ycsb"
 OZONEDB_BIN = OZONEDB_YCSB / "bin" / "ycsb"
 
@@ -66,7 +67,7 @@ DB_ROOT = Path("/tank/test/churn_v4")
 SNAPSHOT_DIR = DB_ROOT / "snapshot_loaded_no_compaction"
 CONFIG_TMP_ROOT = Path("/tmp/churn_v4_configs")
 
-DEFAULT_RECORD_COUNT = 50_000        # smaller than v3 — keeps trial wallclock tractable
+DEFAULT_RECORD_COUNT = 50_000        # smaller than v3, so the trial wallclock stays tractable
 DEFAULT_KEY_SIZE = "1KB"
 DEFAULT_COMPLETION_TIMEOUT_S = 600        # 10 min cap per completion phase
 DEFAULT_POLL_INTERVAL_S = 1.0
@@ -77,7 +78,7 @@ VERIFY_TIMEOUT_S = 600
 CHURN_BASE_CONFIG = EXPERIMENT_DIR / "churn_config.json"
 
 
-# Vary configs (each row of the CSV says which parameter the trial varies)
+# Vary configs. Each row of the CSV says which parameter the trial varies.
 DEFAULT_WRITERS_VALUES = [1, 2, 4, 8]   # for `--vary writers`
 DEFAULT_ABORT_VALUES = [0.0, 0.10, 0.20, 0.30, 0.50]
 DEFAULT_FIXED_R = 0.0   # held constant when varying writers
@@ -134,8 +135,8 @@ def kill_stragglers() -> None:
 
 def build_snapshot(record_count: int, key_size: str,
                    force_rebuild: bool = False) -> Path:
-    """Run YCSB load with compaction_policy=1 (no watcher started). Resulting
-    DB dir is snapshotted at SNAPSHOT_DIR for later per-trial cp."""
+    """Run the YCSB load with compaction_policy=1, so no watcher starts. Save
+    the resulting DB dir as a snapshot at SNAPSHOT_DIR for the per-trial cp."""
     if SNAPSHOT_DIR.exists() and not force_rebuild:
         marker = SNAPSHOT_DIR / ".snapshot_meta.json"
         if marker.exists():
@@ -178,7 +179,7 @@ def build_snapshot(record_count: int, key_size: str,
                   text, re.MULTILINE)
     tput = float(m.group(1)) if m else None
 
-    # Inventory final state
+    # Take an inventory of the final state.
     datalog_files = sorted((SNAPSHOT_DIR / "datalog").glob("*")) if (SNAPSHOT_DIR / "datalog").exists() else []
     sstable_dirs = [(SNAPSHOT_DIR / d).name for d in os.listdir(SNAPSHOT_DIR)
                     if d.startswith("sstable")]
@@ -204,7 +205,7 @@ def build_snapshot(record_count: int, key_size: str,
 
 
 def quiescent_state(task_log_path: Path) -> tuple[int, int]:
-    """Returns (n_total, n_pending) — pending = task without any COMPLETE."""
+    """Return (n_total, n_pending). A pending task has no COMPLETE record."""
     if not task_log_path.exists():
         return 0, 0
     records = task_log_parser.parse_task_log(task_log_path)
@@ -240,8 +241,8 @@ def run_completion(db_path: Path, cfg_path: Path, record_count: int,
               quiescence_grace_s: int, trial_dir: Path
               ) -> tuple[bool, float, int, int]:
     """Spawn n_writers writers (workload-c) with the given abort_rate.
-    Poll task.log until: every task has a COMPLETE record AND n_total has
-    been stable for quiescence_grace_s seconds. Returns
+    Poll task.log until every task has a COMPLETE record AND n_total has
+    been stable for quiescence_grace_s seconds. Return
     (completed, elapsed_s, n_total, n_pending)."""
     wl = ensure_workload("c", key_size, record_count, record_count)
     cmd = build_writer_cmd(wl, cfg_path, completion_timeout_s)
@@ -249,7 +250,7 @@ def run_completion(db_path: Path, cfg_path: Path, record_count: int,
     env = os.environ.copy()
     env["OZONEDB_HOME"] = str(OZONEDB_HOME)
     env["OZONEDB_CHURN_ABORT_RATE"] = str(abort_rate)
-    # PICK_TRACE: forward to the child if set in the parent (for diagnostics).
+    # If PICK_TRACE is set in the parent, forward it to the child (for diagnostics).
     if "OZONEDB_PICK_TRACE" in os.environ:
         env["OZONEDB_PICK_TRACE"] = os.environ["OZONEDB_PICK_TRACE"]
 
@@ -294,7 +295,7 @@ def run_completion(db_path: Path, cfg_path: Path, record_count: int,
                   f"stable_for={time_since_change:.1f}s", flush=True)
             last_progress_log = elapsed
 
-        # Quiescent: pending=0 AND n_total stable for grace seconds
+        # The run is quiescent when pending=0 AND n_total was stable for grace seconds.
         if n_pending == 0 and n_total > 0 and time_since_change >= quiescence_grace_s:
             completed = True
             break
@@ -403,11 +404,11 @@ def execute_trial(trial_id: str, vary: str, n_writers: int,
     db_path = DB_ROOT / f"db_{trial_id}"
     wipe(db_path)
 
-    # cp snapshot -> db_path
+    # Copy the snapshot to db_path.
     print(f"  [{trial_id}] copy snapshot...", flush=True)
     subprocess.run(["cp", "-r", "--reflink=auto", str(SNAPSHOT_DIR), str(db_path)],
                    check=True)
-    # Remove any stale .snapshot_meta.json from the working copy
+    # Remove any stale .snapshot_meta.json from the working copy.
     (db_path / ".snapshot_meta.json").unlink(missing_ok=True)
     (db_path / "load.log").unlink(missing_ok=True)
     res.setup_ok = True
@@ -431,7 +432,7 @@ def execute_trial(trial_id: str, vary: str, n_writers: int,
         res.notes.append(f"completion timed out / writers crashed; "
                          f"{n_pending} pending of {n_total} total")
 
-    # Parse final task.log for richer stats
+    # Parse the final task.log for richer stats.
     task_log_path = db_path / "task.log"
     if task_log_path.exists():
         records = task_log_parser.parse_task_log(task_log_path)
@@ -578,7 +579,7 @@ def main() -> int:
             trials.append((trial_id, "abort", args.fixed_n, r))
 
     # Expand each (trial_id, vary, n, r) base into args.repeats individual trial
-    # ids (suffixed with _rep<i>). Each rep gets its own DB dir + per_trial dir.
+    # ids with the suffix _rep<i>. Each rep gets its own DB dir and per_trial dir.
     expanded: list[tuple[str, str, int, float]] = []
     for trial_id, vary, n, r in trials:
         if args.repeats <= 1:

@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """One worker process for the 'sqlite_rest' (re-architected serval) trial.
-Genuinely a separate OS process (spawned via subprocess.Popen by the
-orchestrator, not a thread) -- issues real HTTP requests to the ONE
-running servald daemon's REST API (POST /restful/rhizome/insert, GET
-.../decrypted.bin), the real implementation of the "single process
-performs all Rhizome database operations" fix proposed in serval-dna
-issue #1. Writes one JSON line per cycle to --out.
+It is a separate OS process, not a thread. The orchestrator spawns it via
+subprocess.Popen. It issues real HTTP requests to the REST API of the ONE
+running servald daemon (POST /restful/rhizome/insert, GET
+.../decrypted.bin). This is the real implementation of the "single process
+performs all Rhizome database operations" fix that serval-dna issue #1
+proposes. It writes one JSON line per cycle to --out.
 """
 import argparse
 import json

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Load-phase orchestrator pointed at tmpfs (/dev/shm) instead of /tank.
+"""The load-phase orchestrator, pointed at tmpfs (/dev/shm) instead of /tank.
 
-The tank version of this benchmark is sustained-sync-write-bandwidth-limited
-on the SATA SSD; running the same load on tmpfs (where fsync is a no-op)
-isolates the engine-level bottleneck from the storage bottleneck.
+On the SATA SSD, the sustained sync-write bandwidth limits the tank version
+of this benchmark. On tmpfs, fsync is a no-op. The same load on tmpfs
+therefore separates the engine-level bottleneck from the storage bottleneck.
 
 Output:  /dev/shm/ycsb_tmpfs_load/load_results.csv
 """
@@ -20,15 +20,15 @@ import sys
 import time
 from pathlib import Path
 
-YCSB_CPP = Path("/users/Xinying/YCSB-cpp")
+YCSB_CPP = Path(os.environ.get("YCSB_CPP_DIR", Path.home() / "YCSB-cpp"))
 YCSB_CPP_BIN = YCSB_CPP / "ycsb"
-ROCKSDB_PREFIX = Path("/users/Xinying/rocksdb-9.6.1")
-OZONEDB_HOME = Path("/users/Xinying/ozonedb")
+ROCKSDB_PREFIX = Path(os.environ.get("ROCKSDB_PREFIX", Path.home() / "rocksdb-9.6.1"))
+OZONEDB_HOME = Path(os.environ.get("OZONEDB_HOME", Path.home() / "ozonedb"))
 OZONEDB_YCSB = OZONEDB_HOME / "ycsb"
 OZONEDB_BIN = OZONEDB_YCSB / "bin" / "ycsb"
 
 TMPFS_ROOT = Path("/dev/shm/ycsb_tmpfs_load")
-RESULTS_DIR = Path("/users/Xinying/ozonedb/bench/results/local/fig1-single-writer-local")
+RESULTS_DIR = OZONEDB_HOME / "bench" / "results" / "local" / "fig1-single-writer-local"
 RECORD_COUNT = 1_000_000
 TIME_BIN = "/usr/bin/time"
 
@@ -148,7 +148,7 @@ def run_one(name: str, work_path: Path) -> dict:
         f.write("\n=== STDOUT ===\n"); f.write(proc.stdout or "")
         f.write("\n=== STDERR ===\n"); f.write(proc.stderr or "")
 
-    # Cleanup tmpfs DB.
+    # Clean up the tmpfs DB.
     if work_path.exists():
         if work_path.is_dir():
             shutil.rmtree(work_path, ignore_errors=True)

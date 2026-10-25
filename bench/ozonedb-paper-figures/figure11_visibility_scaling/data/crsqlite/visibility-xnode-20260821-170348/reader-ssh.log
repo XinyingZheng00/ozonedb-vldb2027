@@ -1,0 +1,72 @@
+[syncd w8] /usr/bin/python3 $HOME/crsqlite/bench/scripts/sync_daemon.py --db /tank/crsqlite/ycsb_data/visx-reader-visibility-xnode-20260821-170348-w8/replica.db --port 8309 --peers 10.10.1.1:8301,10.10.1.1:8302,10.10.1.1:8303,10.10.1.1:8304,10.10.1.1:8305,10.10.1.1:8306,10.10.1.1:8307,10.10.1.1:8308 --interval-ms 10.0 --batch 4096 --extension $HOME/crsqlite/lib/crsqlite --synchronous FULL --metrics $HOME/crsqlite/bench/results/consistency/visibility-xnode-20260821-170348/w8.csv
+{
+  "engine": "cr-sqlite",
+  "linearizable_reads": false,
+  "read_barrier": false,
+  "cross_node": true,
+  "channel": "tcp",
+  "inserts": 2347,
+  "checked": 2347,
+  "misses_first_read": 2344,
+  "miss_first_read_fraction": 0.9987217724755006,
+  "timeouts": 0,
+  "visibility_ms_p50": 7.805,
+  "visibility_ms_p90": 11.544,
+  "visibility_ms_p95": 12.464,
+  "visibility_ms_p99": 14.143,
+  "visibility_ms_max": 18.171,
+  "first_check_age_ms_p50": 0.54,
+  "first_check_age_ms_p99": 1.117,
+  "pbs": [
+    {
+      "age_ms_le": 0.5,
+      "p_stale": 1.0
+    },
+    {
+      "age_ms_le": 1,
+      "p_stale": 0.9995739241585002
+    },
+    {
+      "age_ms_le": 2,
+      "p_stale": 0.9902002556455048
+    },
+    {
+      "age_ms_le": 5,
+      "p_stale": 0.7980400511291009
+    },
+    {
+      "age_ms_le": 10,
+      "p_stale": 0.23689816787388154
+    },
+    {
+      "age_ms_le": 20,
+      "p_stale": 0.0
+    },
+    {
+      "age_ms_le": 50,
+      "p_stale": 0.0
+    },
+    {
+      "age_ms_le": 100,
+      "p_stale": 0.0
+    },
+    {
+      "age_ms_le": 200,
+      "p_stale": 0.0
+    },
+    {
+      "age_ms_le": 500,
+      "p_stale": 0.0
+    }
+  ],
+  "sync_interval_ms": 10.0,
+  "rate_per_s": 20.0,
+  "writers": 8,
+  "aggregate_rate_per_s": 160.0,
+  "replicas": 9,
+  "duration_s": 15,
+  "value_size": 1000,
+  "poll_ms": 1.0
+}
+
+=> 2344 of 2347 first reads on replica 8 missed a key some writer replica had already acked (99.9%); visibility p50 7.805 ms (8 writers, sync interval 10.0 ms). Results in $HOME/crsqlite/bench/results/consistency/visibility-xnode-20260821-170348

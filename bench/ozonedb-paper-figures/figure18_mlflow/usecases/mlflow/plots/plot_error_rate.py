@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Generate error_rate.pdf (log_metric() failure rate vs P, linear-y) from
-trials.csv. Linear, not log, scale deliberately: most points are exactly
-0.0000 (log(0) is undefined, and clipping zeros to some epsilon floor
-would visually overstate near-zero error rates as if they were real) --
-this metric is "mostly zero, then a real, small nonzero tail," which a
-linear axis represents honestly.
+"""Generate error_rate.pdf from trials.csv. The plot shows the log_metric()
+failure rate versus P, with a linear y-axis. The scale is linear, not log,
+on purpose. Most points are exactly 0.0000. log(0) is undefined. A clip
+of the zeros to some epsilon floor would visually overstate near-zero
+error rates, as if they were real. This metric is "mostly zero, then a
+real, small nonzero tail". A linear axis represents that honestly.
 
 Usage:
     python3 plot_error_rate.py [--csv PATH] [--out PATH]
@@ -37,8 +37,8 @@ def main():
         xs, ys, errs = series_with_error(rows, backend, "error_rate", ps)
         if not xs:
             continue
-        # percent, not fraction -- 0.0006 as "0.06%" reads far more clearly
-        # than "6e-04" on a linear axis shared with a lot of exact zeros.
+        # Percent, not fraction. On a linear axis shared with many exact zeros,
+        # 0.0006 reads far more clearly as "0.06%" than as "6e-04".
         ys_pct = [y * 100 for y in ys]
         errs_pct = [e * 100 for e in errs]
         ax.errorbar(xs, ys_pct, yerr=errs_pct, marker="o", markersize=4, linewidth=1.6,

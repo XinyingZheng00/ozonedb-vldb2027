@@ -56,8 +56,8 @@ independent DB pointer while sharing the same on-disk DB file.
 | System | Per-thread independent DB pointer? | Mechanism |
 |---|---|---|
 | **OzoneDB**       | Yes | Each YCSB Java thread instantiates its own `site.ycsb.db.OzoneDBClient`; `init()` creates a per-thread `OzoneDBJNI` and calls `openDB(shared_config)` independently.  All N pointers see the same on-disk task log + level files. |
-| **SQLite trunk-cpp / BCW2 / HCTree** | Yes | `ycsbc::SqliteDB` holds a per-instance `sqlite3 *db_` member ([`sqlite_db.h:78`](/users/Xinying/YCSB-cpp/sqlite/sqlite_db.h#L78)).  `ycsbc::DBFactory::CreateDB` is invoked once per worker thread in `main()` ([`ycsbc.cc:110-117`](/users/Xinying/YCSB-cpp/core/ycsbc.cc#L110)), so each thread's `Init()` issues its own `sqlite3_open_v2` against the shared db path. |
-| **RocksDB**       | Yes — but only via per-op-DB-open mode.  RocksDB's default binding stores the handle in `static rocksdb::DB *db_` ([`rocksdb_db.h:132`](/users/Xinying/YCSB-cpp/rocksdb/rocksdb_db.h#L132)), shared across all threads.  RocksDB itself enforces a process-wide LOCK file on the DB directory and refuses simultaneous `DB::Open` calls, so structurally it cannot expose N independent pointers in one process.  We therefore set `rocksdb.per_op_db=true`; each operation opens its own `local_db_` handle, executes the op, and closes — threads serialise on the LOCK file with bounded retries.  This guarantees per-thread independence at the cost of paying RocksDB's open/close overhead on every operation, which dominates the result (see §5). |
+| **SQLite trunk-cpp / BCW2 / HCTree** | Yes | `ycsbc::SqliteDB` holds a per-instance `sqlite3 *db_` member ([`sqlite_db.h:78`]($HOME/YCSB-cpp/sqlite/sqlite_db.h#L78)).  `ycsbc::DBFactory::CreateDB` is invoked once per worker thread in `main()` ([`ycsbc.cc:110-117`]($HOME/YCSB-cpp/core/ycsbc.cc#L110)), so each thread's `Init()` issues its own `sqlite3_open_v2` against the shared db path. |
+| **RocksDB**       | Yes — but only via per-op-DB-open mode.  RocksDB's default binding stores the handle in `static rocksdb::DB *db_` ([`rocksdb_db.h:132`]($HOME/YCSB-cpp/rocksdb/rocksdb_db.h#L132)), shared across all threads.  RocksDB itself enforces a process-wide LOCK file on the DB directory and refuses simultaneous `DB::Open` calls, so structurally it cannot expose N independent pointers in one process.  We therefore set `rocksdb.per_op_db=true`; each operation opens its own `local_db_` handle, executes the op, and closes — threads serialise on the LOCK file with bounded retries.  This guarantees per-thread independence at the cost of paying RocksDB's open/close overhead on every operation, which dominates the result (see §5). |
 
 The `per_op_db=true` mode satisfies the letter of the
 "independent DB pointer" requirement but is _not_ how RocksDB is normally
@@ -323,16 +323,16 @@ ls /tank/ycsb_data/bcw2_ycsb/cached_bcw_ycsb.db
 ls /tank/ycsb_data/hctree_ycsb/cached_hctree_ycsb.db
 
 # 2. Build YCSB-cpp with all three bindings.
-cd /users/Xinying/YCSB-cpp && rm -f ycsb && make clean
+cd $HOME/YCSB-cpp && rm -f ycsb && make clean
 make BIND_SQLITE=1 BIND_HCTREE=1 BIND_ROCKSDB=1 \
      HCTREE_BLD_DIR=$HOME/bcw2/bld \
-     EXTRA_CXXFLAGS="-I/users/Xinying/rocksdb-9.6.1/include" \
-     EXTRA_LDFLAGS="-L/users/Xinying/rocksdb-9.6.1/lib -Wl,-rpath,/users/Xinying/rocksdb-9.6.1/lib" \
+     EXTRA_CXXFLAGS="-I$HOME/rocksdb-9.6.1/include" \
+     EXTRA_LDFLAGS="-L$HOME/rocksdb-9.6.1/lib -Wl,-rpath,$HOME/rocksdb-9.6.1/lib" \
      -j$(nproc)
 
 # 3a. Drive the multi-thread sweep (T={2,4,8,16}, 3 repeats).
-OZONEDB_HOME=/users/Xinying/ozonedb python3 \
-  /users/Xinying/ozonedb/bench/scripts/local/run_fig2_sweep.py \
+OZONEDB_HOME=$HOME/ozonedb python3 \
+  $HOME/ozonedb/bench/scripts/local/run_fig2_sweep.py \
   --systems ozonedb,trunkcpp,bcw2,hctree,rocksdb \
   --workloads a,b,c,d,f \
   --threads 2,4,8,16 \
@@ -340,22 +340,22 @@ OZONEDB_HOME=/users/Xinying/ozonedb python3 \
 
 # 3b. Drive the single-thread baseline (T=1, 1 repeat).  Note that this
 #     phase writes to the fig1 dir so results map onto the paper's Fig 1.
-OZONEDB_HOME=/users/Xinying/ozonedb python3 \
-  /users/Xinying/ozonedb/bench/scripts/local/run_fig2_sweep.py \
+OZONEDB_HOME=$HOME/ozonedb python3 \
+  $HOME/ozonedb/bench/scripts/local/run_fig2_sweep.py \
   --systems ozonedb,trunkcpp,bcw2,hctree,rocksdb \
   --workloads a,b,c,d,f \
   --threads 1 \
   --repeats 1 --duration 120 \
-  --results-dir /users/Xinying/ozonedb/bench/results/local/fig1-single-writer-local
+  --results-dir $HOME/ozonedb/bench/results/local/fig1-single-writer-local
 
 # 4. Rebuild per-directory results.csv files from per-cell .log files.
 #    Writes fig1-.../results.csv (T=1) and fig2-.../results.csv (T>1).
-python3 /users/Xinying/ozonedb/bench/scripts/local/rebuild_results_csv.py
+python3 $HOME/ozonedb/bench/scripts/local/rebuild_results_csv.py
 
 # 5. Generate plots and per-workload tables.
 #    fig1_single_writer.{pdf,png} -> fig1 dir; fig2_multi_writer.{pdf,png}
 #    + fig2_workload*_table.md -> fig2 dir.
-python3 /users/Xinying/ozonedb/bench/scripts/local/plot_fig2.py
+python3 $HOME/ozonedb/bench/scripts/local/plot_fig2.py
 ```
 
 ### Property files / configs in effect

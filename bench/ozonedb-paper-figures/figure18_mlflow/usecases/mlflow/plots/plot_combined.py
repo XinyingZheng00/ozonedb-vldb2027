@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
-"""Generate mlflow_combined.pdf, the paper's Figure 18: error rate, peak
-server-side RSS and training-compute time vs P in one row of three panels,
-with one shared x label and one legend.
+"""Generate mlflow_combined.pdf, the Figure 18 of the paper. It shows
+error rate, peak server-side RSS and training-compute time versus P in one
+row of three panels. The panels share one x label and one legend.
 
-Rebuilt to match the paper's PDF (2026-08-30, whose original script was
-not kept): panel geometry, fonts, markers and the small offsets that keep
-overlapping lines visible ("Lines perturbed slightly for clarity" in the
-caption) were read back from that PDF. Only ozonedb, sqlite and postgres
-are drawn; the postgres_serialized control is left out, as in the paper.
+The script was rebuilt to match the PDF of the paper (2026-08-30). The
+original script of that PDF was not kept. The panel geometry, fonts,
+markers and the small offsets were read back from that PDF. The offsets
+keep overlapping lines visible ("Lines perturbed slightly for clarity" in
+the caption). Only ozonedb, sqlite and postgres are drawn. The
+postgres_serialized control is left out, as in the paper.
 
 Usage:
     python3 plot_combined.py [--out PATH]
@@ -35,8 +36,8 @@ LABEL = {
 MARKER = {"ozonedb": "o", "sqlite": "s", "postgres": "^"}
 
 # (csv dir, field, scale, y label, y scale, per-backend offset in plotted units).
-# The offsets lift lines that would otherwise sit exactly on top of each other:
-# every ozonedb/postgres error rate and every ozonedb/sqlite RSS value is 0.
+# The offsets lift lines that would otherwise sit exactly on top of each other.
+# Every ozonedb/postgres error rate and every ozonedb/sqlite RSS value is 0.
 PANELS = [
     ("ray_mlflow_swapin_3thread_5s_psweep", "error_rate", 100, "error rate (%)",
      "linear", {"ozonedb": 0.0015, "postgres": 0.003}),
@@ -78,8 +79,8 @@ def main():
         ax.set_xticklabels([str(p) for p in ps])
         if yscale == "symlog":
             ax.set_yscale("symlog", linthresh=10)  # embedded stores have no server: 0 MB
-            # Range of the paper's panel; newer matplotlib would otherwise
-            # pad the symlog axis down into negative decades.
+            # Range of the panel in the paper. Otherwise newer matplotlib
+            # would pad the symlog axis down into negative decades.
             ax.set_ylim(-2.0, 2722)
         ax.grid(True, which="both", axis="y", linewidth=0.4, alpha=0.5)
         ax.grid(True, which="major", axis="x", linewidth=0.4, alpha=0.3)

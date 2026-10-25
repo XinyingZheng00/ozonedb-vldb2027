@@ -1,24 +1,27 @@
 #!/usr/bin/env python3
-"""Paper-style architecture diagram via Graphviz (auto-layout), same tool
-and visual language as serval-audit/plots/plot_architecture.py (Phase 1).
+"""Paper-style architecture diagram via Graphviz (auto-layout). It uses
+the same tool and visual language as serval-audit/plots/plot_architecture.py
+(Phase 1).
 
-Scoped to the `metrics` history write only -- the one operation that
-actually differs across the three backends and the one this whole
-benchmark measures. `latest_metrics`/runs/experiments are real for all
-three arms too (including `ozonedb`'s -- see ozonedb_metric_store.py),
-but they're identical infrastructure across all three columns, not part
-of the comparison, so they're deliberately left out rather than drawn and
-then explained away. An earlier version of this diagram drew `ozonedb` as
-a two-edge hybrid (bridged `metrics` + unbridged SQL for the rest) to be
-literally complete about the bridge's shape; that's still true and still
-documented in ozonedb_metric_store.py's own docstring, just not
-this diagram's job to show once the diagram's scope is "the thing being
-compared," not "everything the bridge touches."
+The diagram is scoped to the `metrics` history write only. That is the one
+operation that actually differs across the three backends, and the one
+this whole benchmark measures. `latest_metrics`, runs and experiments are
+real for all three arms too (including the `ozonedb` arm, see
+ozonedb_metric_store.py). But they are identical infrastructure across
+all three columns, not part of the comparison. So the diagram deliberately
+leaves them out, rather than draw them and then explain them away. An
+earlier version of this diagram drew `ozonedb` as a two-edge hybrid
+(bridged `metrics` plus unbridged SQL for the rest). The goal was to be
+literally complete about the shape of the bridge. That is still true, and
+the own docstring of ozonedb_metric_store.py still documents it. But it
+is not the job of this diagram to show it. The scope of the diagram is
+"the thing being compared", not "everything the bridge touches".
 
-With that scoping, all three columns reduce to the same simple shape as
-Phase 1's: P Ray Tune trial processes (real OS processes, 3 threads each
--- main training thread + 2 independent monitor threads, each writing its
-own key) converging on one store for the `metrics` write.
+With that scope, all three columns reduce to the same simple shape as in
+Phase 1. P Ray Tune trial processes converge on one store for the
+`metrics` write. The processes are real OS processes with 3 threads each:
+a main training thread plus 2 independent monitor threads. Each thread
+writes its own key.
 
 Usage:
     python3 plot_architecture.py [--out PATH]
@@ -52,11 +55,11 @@ def status_node(name, kind):
 
 
 def workers_node(prefix, c):
-    """The single P-symmetric-processes box shared by all three columns --
-    real Ray Tune trials, each with 3 real threads inside, each thread
-    writing its own distinct metric key (no two ever share a key, which
-    is why 3 threads don't reopen the latest_metrics race -- see Phase
-    2b/2c)."""
+    """The single P-symmetric-processes box shared by all three columns:
+    real Ray Tune trials, each with 3 real threads inside. Each thread
+    writes its own distinct metric key. No two threads ever share a key.
+    This is why 3 threads do not reopen the latest_metrics race (see
+    Phase 2b/2c)."""
     c.node(f"{prefix}_workers",
            node_label("P Ray Tune trial processes",
                        "3 threads each: loss / cpu+mem / disk I/O"))
@@ -65,10 +68,10 @@ def workers_node(prefix, c):
 def direct_converge(g, prefix, accent, subtitle, title, db_label, tag):
     """All three columns: the worker box converges directly on one store
     for the `metrics` history write. For postgres this edge is a real
-    network call (client-server), drawn as a directed arrow labeled
-    accordingly; for sqlite/ozonedb it's direct file access (undirected,
-    peer-style, matching Phase 1's convention for "opens the store
-    directly")."""
+    network call (client-server). It is drawn as a directed arrow with a
+    label that says so. For sqlite and ozonedb it is direct file access.
+    It is drawn undirected, peer-style, which matches the convention of
+    Phase 1 for "opens the store directly"."""
     with g.subgraph(name=f"cluster_{prefix}") as c:
         c.attr(label=cluster_title(title, subtitle), labelloc="t", fontname="Helvetica",
                color=accent, penwidth="1.4", style="rounded", margin="18")
