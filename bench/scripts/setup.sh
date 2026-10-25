@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
-# One entrypoint for provisioning a node. Idempotent: re-running is cheap and
-# never duplicates shell config or reinstalls what is already present.
+# Provision one bench node. Idempotent: a re-run does not duplicate shell
+# config and does not reinstall what is present.
 #
 #   bash bench/scripts/setup.sh --role client        # bench/YCSB machine
 #   bash bench/scripts/setup.sh --role corfu-server  # the shared-log node
@@ -9,20 +9,18 @@
 #   bash bench/scripts/setup.sh --role cassandra     # baseline server (nodes.cassandra)
 #   bash bench/scripts/setup.sh --role all           # client + corfu-server + minio
 #
-# You do NOT need to source this. It writes ~/.ozonedb.env and wires a guarded
-# block into ~/.profile and ~/.bashrc, then sources that file itself for the
-# rest of the run. Open a new shell (or `. ~/.ozonedb.env`) afterwards.
+# Do not source this script. It writes ~/.ozonedb.env, wires a guarded block
+# into ~/.profile and ~/.bashrc, and sources the env file itself. Open a new
+# shell afterwards, or run `. ~/.ozonedb.env`.
 #
-# JDK policy. The client needs a JDK only for the YCSB driver and the JNI
-# shim (libozonedb.so); the engine talks to CorfuDB with its own C++ client.
-# The corfu-server role builds CorfuDB, which wants a recent JDK. Hence two
-# knobs: --jdk (default 25) is the node's persistent JAVA_HOME, --corfu-jdk
-# (default 25) is used only for the CorfuDB build on the log node. javac 25
-# still accepts YCSB's -source 8 with warnings.
+# JDK policy: --jdk (default 25) sets the node's persistent JAVA_HOME. The
+# client needs it only for the YCSB driver and the JNI shim. --corfu-jdk
+# (default 25) is used only to build CorfuDB on the log node. javac 25
+# accepts YCSB's -source 8 with warnings.
 #
-# vcpkg is NOT vendored. The client role clones it into $REPO_ROOT/vcpkg
-# (gitignored) at the builtin-baseline pinned in vcpkg.json, and CMake finds
-# it there (or through $VCPKG_ROOT).
+# vcpkg is not vendored. The client role clones it into $REPO_ROOT/vcpkg
+# (gitignored) at the builtin-baseline in vcpkg.json. CMake finds it there
+# or through $VCPKG_ROOT.
 
 set -euo pipefail
 
@@ -39,9 +37,8 @@ VCPKG_REPO="https://github.com/microsoft/vcpkg.git"
 VCPKG_DIR="${VCPKG_ROOT:-$REPO_ROOT/vcpkg}"
 CORFU_REPO="https://github.com/CorfuDB/CorfuDB.git"
 CORFU_CLONE_DIR="${CLONE_DIR:-$HOME/CorfuDB}"
-# The CorfuDB commit the paper ran against (0.9.1.0-SNAPSHOT).
-# The native client speaks this server's wire protocol; a newer server may
-# differ.
+# CorfuDB commit (0.9.1.0-SNAPSHOT). The C++ client speaks this server's
+# wire protocol. A newer server may differ.
 CORFU_COMMIT="8f144d4c92535dfe5fad8e1a5c9ddaba5b7ad8d5"
 CORFU_MVN_VERSION="0.9.1.0-SNAPSHOT"
 CORFU_DATA_DIR="/mnt/corfu"
@@ -52,10 +49,8 @@ MINIO_USER="minioadmin"
 MINIO_PASSWORD="minioadmin"
 MINIO_PORT=9000
 MINIO_CONSOLE_PORT=9001
-# Cassandra 5.0 runs on JDK 11 or 17 only, and bin/cassandra refuses anything
-# else -- so the baseline server gets its own JDK, separate from the node's
-# JDK 25 (which CorfuDB's bytecode needs). It is only referenced from
-# $CASSANDRA_INSTALL_DIR/env.sh, never from ~/.ozonedb.env.
+# Cassandra 5.0 runs on JDK 11 or 17 only. The server gets its own JDK,
+# referenced only from $CASSANDRA_INSTALL_DIR/env.sh, never from ~/.ozonedb.env.
 CASSANDRA_JDK_VERSION="17"
 CASSANDRA_JDK_FALLBACKS=(17 11)
 CASSANDRA_INSTALL_DIR="" # default: cassandra.install_dir from ycsb.yaml
@@ -215,7 +210,7 @@ apt_update_once() {
   APT_UPDATED=1
 }
 
-# Install only what is missing, so a re-run costs nothing.
+# Install only the missing packages.
 apt_install() {
   local missing=()
   for pkg in "$@"; do
@@ -254,8 +249,8 @@ java_home_for() {
   return 1
 }
 
-# Install the first available JDK from a candidate list; echo its major version.
-# $1 = explicitly requested version (may be empty), remaining args = fallbacks.
+# Install the first available JDK from a candidate list and echo its major version.
+# $1 = requested version (may be empty); the remaining args are fallbacks.
 ensure_jdk() {
   local requested="$1"
   shift
@@ -270,10 +265,7 @@ ensure_jdk() {
     fi
   done
 
-  # This function's stdout IS its return value (callers use "$(ensure_jdk ...)"),
-  # so everything chatty must go to stderr. Letting apt print to stdout here
-  # corrupted the captured version string and killed the script silently via
-  # set -e on fresh nodes -- the "dies right after installing a JDK" bug.
+  # Callers capture stdout as the version, so all other output goes to stderr.
   apt_update_once >&2
   for v in "${candidates[@]}"; do
     if apt_available "openjdk-${v}-jdk"; then
@@ -304,16 +296,13 @@ strip_env_block() {
   ' "$rc" >"${rc}.ozonedb.tmp" && mv "${rc}.ozonedb.tmp" "$rc"
 }
 
-# Rewrites, never appends -- the old setup_node.sh grew a duplicate set of
-# exports on every run.
+# Rewrite the env file and the rc blocks; never append.
 wire_env() {
   local java_home="$1"
 
   # $JAVA_HOME and $PATH are escaped so they expand when the file is sourced.
-  # The old script expanded $JAVA_HOME at write time, while it was still
-  # unset, and wrote a literal `export PATH=/bin:$PATH` into both rc files.
-  # The PATH guard keeps repeated sourcing idempotent: a bash login shell runs
-  # .profile, which on Ubuntu sources .bashrc, so this file gets sourced twice.
+  # The PATH guard keeps a second sourcing idempotent: a login shell runs
+  # .profile, which on Ubuntu sources .bashrc.
   cat >"$ENV_FILE" <<EOF
 # Generated by bench/scripts/setup.sh -- do not edit, changes are overwritten.
 export OZONEDB_HOME="$REPO_ROOT"
@@ -337,8 +326,8 @@ EOF
     log "wired $ENV_FILE into $rc"
   done
 
-  # `source ~/.bashrc` from a script is a no-op: Ubuntu's default .bashrc
-  # returns immediately for non-interactive shells. Source the env file itself.
+  # Ubuntu's default .bashrc returns early for non-interactive shells, so
+  # source the env file itself.
   # shellcheck disable=SC1090
   . "$ENV_FILE"
 }
@@ -346,7 +335,7 @@ EOF
 # -------------------------------------------------------------------- vcpkg
 
 # Clone vcpkg at the builtin-baseline in vcpkg.json and bootstrap the CLI.
-# Idempotent: an existing checkout is fetched and moved to the baseline.
+# Idempotent: an existing checkout is moved to the baseline.
 vcpkg_baseline() {
   python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["builtin-baseline"])' "$REPO_ROOT/vcpkg.json"
 }
@@ -369,8 +358,7 @@ install_vcpkg() {
     log "bootstrapping vcpkg"
     (cd "$VCPKG_DIR" && ./bootstrap-vcpkg.sh -disableMetrics)
   fi
-  # CMake finds a vcpkg/ inside the repo on its own; any other location
-  # needs VCPKG_ROOT in the environment.
+  # CMake finds $REPO_ROOT/vcpkg on its own. Any other location needs VCPKG_ROOT.
   if [[ "$VCPKG_DIR" != "$REPO_ROOT/vcpkg" ]]; then
     export VCPKG_ROOT="$VCPKG_DIR"
   fi
@@ -378,8 +366,7 @@ install_vcpkg() {
 
 # --------------------------------------------------------------- corfu server
 
-# Clone and build CorfuDB at the pinned commit. Only the corfu-server role
-# needs this: the engine's own C++ client speaks to the server over TCP.
+# Clone and build CorfuDB at the pinned commit. Only the corfu-server role needs this.
 corfu_runtime_present() {
   [[ -f "$HOME/.m2/repository/org/corfudb/runtime/$CORFU_MVN_VERSION/runtime-$CORFU_MVN_VERSION.jar" ]]
 }
@@ -406,10 +393,9 @@ install_corfu_runtime() {
     { git cat-file -e "$CORFU_COMMIT^{commit}" 2>/dev/null || git fetch origin; } &&
     git checkout -q "$CORFU_COMMIT")
 
-  # The tail of the reactor (integration-test modules like `it`) does not
-  # always compile; everything we consume -- the shaded infrastructure jar
-  # bin/corfu_server runs -- builds earlier, so a late reactor failure is
-  # survivable as long as the runtime actually landed.
+  # The integration-test modules at the end of the reactor do not always
+  # compile. The shaded server jar builds earlier, so a late failure is
+  # tolerated when the runtime landed in ~/.m2.
   if ! (cd "$CORFU_CLONE_DIR" && JAVA_HOME="$corfu_java_home" mvn -q clean install -DskipTests); then
     corfu_runtime_present ||
       die "CorfuDB build failed before installing org.corfudb:runtime into ~/.m2"
@@ -423,8 +409,7 @@ install_corfu_runtime() {
 role_client() {
   log "=== role: client ==="
 
-  # `time` is GNU time: load_local_ycsb_multiproc.py wraps every YCSB writer
-  # in /usr/bin/time -v so client CPU and peak RSS land in the .result file.
+  # `time` is GNU time: the runners wrap every YCSB writer in /usr/bin/time -v.
   apt_install cmake maven python3-pip zip pkg-config build-essential git ninja-build time
 
   local jdk java_home
@@ -434,10 +419,8 @@ role_client() {
 
   wire_env "$java_home"
 
-  # Ubuntu 24.04 marks the system python externally-managed (PEP 668), so
-  # `pip install --user` refuses to run. The bench needs are small enough to
-  # come from apt instead; requirements.txt stays as documentation and for
-  # anyone running the harness inside a venv.
+  # PEP 668 blocks `pip install --user` on Ubuntu 24.04, so the packages come
+  # from apt. requirements.txt serves a venv.
   log "installing python requirements (via apt; PEP 668 blocks pip --user)"
   apt_install python3-yaml python3-matplotlib python3-numpy
 
@@ -460,14 +443,13 @@ role_client() {
 role_corfu_server() {
   log "=== role: corfu-server ==="
 
-  # sysstat: pidstat for bench/scripts/server_sampler.sh (server CPU per cell).
+  # sysstat: pidstat for bench/scripts/server_sampler.sh.
   apt_install maven git sysstat curl
 
   install_corfu_runtime
 
-  # run_ycsb_with_corfu.sh resets run_batch from load on every server start:
-  #   rm -rf $CORFU_DATA_DIR/run_batch && cp -r $CORFU_DATA_DIR/load $CORFU_DATA_DIR/run_batch
-  # Both must exist; nothing created them before this script.
+  # run_ycsb_with_corfu.sh copies load to run_batch on every server start.
+  # Both directories must exist.
   log "creating $CORFU_DATA_DIR/{load,run_batch}"
   sudo mkdir -p "$CORFU_DATA_DIR/load" "$CORFU_DATA_DIR/run_batch"
   sudo chmod -R 777 "$CORFU_DATA_DIR"
@@ -479,8 +461,8 @@ role_corfu_server() {
 role_minio() {
   log "=== role: minio ==="
 
-  # The corfu base config defaults sstable_backend to s3, so the default
-  # benchmark path needs an object store.
+  # The corfu base config sets sstable_backend to s3, so the bench needs an
+  # object store.
   local bucket="$MINIO_BUCKET"
   if [[ -z "$bucket" ]]; then
     bucket="$(python3 - "$REPO_ROOT/bench/scripts/config/ycsb.yaml" <<'PY' 2>/dev/null || true
@@ -496,8 +478,7 @@ PY
   fi
   [[ -z "$bucket" ]] && bucket="ozonedb-ycsb"
 
-  # sysstat + curl: bench/scripts/server_sampler.sh reads the MinIO metrics
-  # endpoint and runs pidstat on the minio process.
+  # sysstat + curl: server_sampler.sh reads the metrics endpoint and runs pidstat.
   apt_install sysstat curl
 
   if ! command -v minio >/dev/null 2>&1; then
@@ -543,8 +524,7 @@ WantedBy=multi-user.target
 EOF
 
   sudo systemctl daemon-reload
-  # restart, not `enable --now`: a running minio keeps its old environment
-  # (the metrics auth setting above) until it is restarted.
+  # restart, not `enable --now`: a running minio keeps its old environment.
   sudo systemctl enable minio >/dev/null 2>&1 || true
   sudo systemctl restart minio
 
@@ -566,16 +546,14 @@ EOF
   log "minio ready. Point s3.endpoint in ycsb.yaml at http://<this-host>:$MINIO_PORT"
 }
 
-# ycsb.yaml reader for the cassandra role. Everything that decides how the
-# server is configured lives in the `cassandra:` block, so a value never has
-# to be repeated on the command line.
+# ycsb.yaml reader for the cassandra role. The `cassandra:` block holds every
+# server setting.
 ycsb_cfg() {
   python3 "$SCRIPT_DIR/ycsb_config.py" --config "$REPO_ROOT/bench/scripts/config/ycsb.yaml" "$@"
 }
 
-# Rewrite one top-level cassandra.yaml key in place, uncommenting it if the
-# stock file ships it commented out. Dies if the key is not left exactly once
-# -- an upstream layout change must fail loudly, not bind localhost.
+# Rewrite one top-level cassandra.yaml key in place, and uncomment it if the
+# stock file ships it commented out. Dies unless exactly one such key remains.
 cassandra_yaml_set() {
   local file="$1" key="$2" value="$3"
   sed -i -E "s|^#? ?${key}:.*|${key}: ${value}|" "$file"
@@ -587,13 +565,10 @@ cassandra_yaml_set() {
 role_cassandra() {
   log "=== role: cassandra ==="
 
-  # pyyaml is for ycsb_config.py on this node. The CQL client is NOT cqlsh:
-  # Cassandra 5.0's cqlsh refuses Python >= 3.12 (its driver imports asyncore,
-  # removed in 3.12) and the image ships only 3.12, so we build a venv with
-  # cassandra-driver and drive CQL through bench/scripts/cassandra_cql.py.
+  # python3-yaml: ycsb_config.py. cqlsh refuses Python >= 3.12, so CQL goes
+  # through a venv with cassandra-driver and bench/scripts/cassandra_cql.py.
   # libev-dev + build-essential + python3-dev let pip build the libev reactor,
-  # which is the one that actually connects on 3.12 (asyncio times out).
-  # sysstat: pidstat for bench/scripts/server_sampler.sh.
+  # the one that connects on 3.12. sysstat: pidstat for server_sampler.sh.
   apt_install curl tar python3 python3-yaml python3-venv build-essential python3-dev libev-dev sysstat
 
   local version install_dir port heap new_heap
@@ -603,8 +578,8 @@ role_cassandra() {
   heap="$(ycsb_cfg --get cassandra.heap)"
   new_heap="$(ycsb_cfg --get cassandra.new_heap)"
 
-  # Which nodes.cassandra entry is this machine? Match its lan address against
-  # the local interfaces. Falls back to --cassandra-bind for the odd host.
+  # Bind to the nodes.cassandra lan address that is on this machine, or to
+  # --cassandra-bind.
   local -a lan_addrs
   read -r -a lan_addrs <<<"$(ycsb_cfg --list cassandra --field lan | tr '\n' ' ')"
   [[ ${#lan_addrs[@]} -gt 0 ]] || die "nodes.cassandra (or nodes.log) resolves to no addresses"
@@ -646,9 +621,8 @@ role_cassandra() {
   fi
   ln -sfn "$home" "$install_dir/current"
 
-  # Configure from the pristine file every time, so a re-run never stacks
-  # edits. The data directories all sit under $install_dir/data so that
-  # cassandra_ctl.sh can wipe/snapshot/restore one tree.
+  # Start from the pristine file on every run. All data directories sit under
+  # $install_dir/data, so cassandra_ctl.sh wipes, snapshots and restores one tree.
   local conf="$home/conf/cassandra.yaml" data="$install_dir/data"
   [[ -f "$conf.dist" ]] || cp "$conf" "$conf.dist"
   cp "$conf.dist" "$conf"
@@ -659,16 +633,15 @@ role_cassandra() {
   cassandra_yaml_set "$conf" commitlog_directory "$data/commitlog"
   cassandra_yaml_set "$conf" hints_directory "$data/hints"
   cassandra_yaml_set "$conf" saved_caches_directory "$data/saved_caches"
-  # data_file_directories is a list; the stock file has it commented out
-  # as two lines. Replace the key line and let the ctl script own the dir.
+  # data_file_directories is a list, commented out as two lines in the stock file.
   sed -i -E "s|^#? ?data_file_directories:.*|data_file_directories:\n    - $data/data|" "$conf"
   [[ "$(grep -cE '^data_file_directories:' "$conf")" -eq 1 ]] || die "cassandra.yaml: data_file_directories rewrite failed"
   sed -i -E "s|^( *)- seeds:.*|\1- seeds: \"$seeds\"|" "$conf"
   grep -qE "^ *- seeds: \"$seeds\"" "$conf" || die "cassandra.yaml: seeds rewrite failed"
   mkdir -p "$data" "$install_dir/logs"
 
-  # Everything cassandra_ctl.sh needs, in one sourced file. Deliberately NOT
-  # ~/.ozonedb.env: the node's own JAVA_HOME must stay on JDK 25 for Corfu.
+  # Everything cassandra_ctl.sh needs, in one sourced file. Not ~/.ozonedb.env:
+  # the node's own JAVA_HOME stays on JDK 25 for Corfu.
   cat >"$install_dir/env.sh" <<EOF
 # Generated by bench/scripts/setup.sh --role cassandra -- do not edit.
 export JAVA_HOME="$java_home"
@@ -689,8 +662,7 @@ EOF
   install -m 0644 "$SCRIPT_DIR/cassandra_cql.py" "$install_dir/cassandra_cql.py"
   log "installed $install_dir/cassandra_ctl.sh + cassandra_cql.py"
 
-  # The CQL client venv (see the apt note above). Idempotent: reuse an existing
-  # venv that already imports the driver, else build it.
+  # The CQL client venv. Reuse it when it already imports the driver.
   local venv="$install_dir/pyenv"
   if "$venv/bin/python" -c "import cassandra.io.libevreactor" >/dev/null 2>&1; then
     log "cassandra-driver venv already present at $venv"
@@ -703,7 +675,7 @@ EOF
       die "cassandra-driver venv did not build the libev reactor (is libev-dev installed?)"
   fi
 
-  # Cassandra warns (and under load, fails mmap) below this; idempotent.
+  # Cassandra needs vm.max_map_count at least this high; mmap fails under load otherwise.
   if [[ "$(sysctl -n vm.max_map_count 2>/dev/null || echo 0)" -lt 1048575 ]]; then
     log "raising vm.max_map_count to 1048575"
     sudo sysctl -q -w vm.max_map_count=1048575

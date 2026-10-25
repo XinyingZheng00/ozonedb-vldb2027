@@ -1,21 +1,19 @@
 #!/usr/bin/env python3
-"""Steady-state throughput from a strict-mode sweep result directory.
+"""Steady-state throughput from a sweep result directory (paper Fig 10).
 
-Why not the aggregate files: YCSB's Throughput(ops/sec) is
-total_ops / run_time, and the OzoneDB linearizable path spends the first
-~45-90s of every run replaying the shared log (the tailer catch-up) before
-the first fenced read returns. That dead time drags the whole-run average
-down and is not steady-state throughput. Cassandra has no such warmup.
+YCSB's Throughput(ops/sec) is total_ops / run_time. The OzoneDB
+linearizable path replays the shared log (the tailer catch-up) before the
+first fenced read returns, and that dead time lowers the whole-run
+average. Cassandra has no such warmup.
 
-So this reads the per-writer YCSB result files, which carry one status line
-per second (status.interval=1):
+This script reads the per-writer YCSB result files instead. They carry
+one status line per second (status.interval=1):
 
     ... 120 sec: 69510 operations; 1124 current ops/sec; est completion ...
 
-and averages `current ops/sec` over the LAST --window seconds of each
-writer's run -- past any catch-up for OzoneDB, and steady for Cassandra.
-Per-writer steady rates are summed into the cell's throughput. This is a
-rate, so the two systems' different cell durations do not matter.
+It averages `current ops/sec` over the LAST --window seconds of each
+writer's run and sums the per-writer rates into the cell's throughput.
+The result is a rate, so the two systems' cell durations can differ.
 
 Per-writer files are named (multi-node runner):
   {ks}-{opcnt}-{rc}-workload{wl}-{label}_w{idx}of{total}_t{thread}_trial{trial}.result
@@ -52,22 +50,19 @@ def writer_steady(path, window):
                 failed += int(fm.group(2))
     if not samples:
         return None, failed, 0
-    # Drop the dead tail. YCSB keeps printing one status line per second while
-    # it closes the client, so every run ends with a few samples that report 0
-    # operations. Those seconds are after the last operation, not slow seconds,
-    # and averaging them into the window under-reports the rate. The tail is
-    # 3 or 4 samples, so it costs about 3 % at a 120 s window on both systems.
+    # Drop the dead tail. YCSB prints one status line per second while it
+    # closes the client, so a run ends with samples that report 0 operations.
+    # Those seconds come after the last operation; averaging them in would
+    # under-report the rate.
     while len(samples) > 1 and samples[-1][1] == 0.0:
         samples.pop()
     # Drop YCSB's cleanup sample. The client prints one last status line a few
     # milliseconds after the final full second, repeating that second:
     #   300 sec: 20464 operations; 76 current ops/sec ...
     #   300 sec: 20465 operations; 333.33 current ops/sec ... [CLEANUP: Count=1]
-    # Its rate is one operation divided by a 3 ms interval, so it is 4x to 5x
-    # the real rate. One such sample in a 120 s window overstates a slow series
-    # by up to 6.5 %. Slow clients print it; fast ones fill the last second, so
-    # the bias is asymmetric across systems. Any trailing sample that repeats
-    # the previous elapsed second is this artifact.
+    # Its rate is one operation over a few milliseconds, far above the real
+    # rate. Slow clients print it; fast ones fill the last second. A trailing
+    # sample that repeats the previous elapsed second is this artifact.
     while len(samples) > 1 and samples[-1][0] == samples[-2][0]:
         samples.pop()
     if not samples:

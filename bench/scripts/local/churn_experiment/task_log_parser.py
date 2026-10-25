@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
-"""Parse OzoneDB task.log into a JSON timeline.
+"""Parse an OzoneDB task.log into a JSON timeline.
 
-The task log is a sequence of varint32-length-prefixed protobuf TaskRecord
-messages (see src/util/protobuf_serializer.cpp). This module decodes the file
-into ordered records — the file offset of each record is preserved, since the
-shared log's total order is defined by file offset (Section 4.1 of the paper).
+The task log is a sequence of varint32 length-prefixed protobuf TaskRecord
+messages (see src/util/protobuf_serializer.cpp). The decoder keeps the file
+offset of each record: the file offset defines the total order of the shared
+log (paper §4.1).
 
-Usage as a CLI:
+CLI:
     python3 task_log_parser.py <db_path>/task.log > timeline.json
 
-record_pb2 (the protobuf bindings for record.proto) is generated on first use
-into $OZONEDB_HOME/build/generated/python with protoc if it is not importable.
+record_pb2 (the protobuf bindings of record.proto) is generated with protoc
+into $OZONEDB_HOME/build/generated/python on first use when it is not
+importable.
 """
 
 from __future__ import annotations
@@ -26,7 +27,7 @@ from google.protobuf.internal.decoder import _DecodeVarint32
 
 
 def _require_env(name: str) -> Path:
-    """Resolve a required environment variable to a Path, or exit clearly."""
+    """Return the Path in a required environment variable, or exit."""
     value = os.environ.get(name)
     if not value:
         raise SystemExit(f"{name} is not set")
@@ -34,18 +35,18 @@ def _require_env(name: str) -> Path:
 
 
 _record_pb2 = None
-# Filled by _load_record_pb2() on first use (needs the generated enum values).
+# Filled by _load_record_pb2(); needs the generated enum values.
 _STATUS_NAMES: dict = {}
 
 
 def _load_record_pb2():
-    """Import record_pb2, generating it from record.proto with protoc on first use.
+    """Import record_pb2; generate it from record.proto with protoc on first use.
 
-    Tries a plain `import record_pb2` first. On ImportError, runs
+    Tries `import record_pb2` first. On ImportError, runs
         protoc --proto_path=$OZONEDB_HOME/src/include/ozonedb \
                --python_out=$OZONEDB_HOME/build/generated/python record.proto
-    (reusing an already generated file in that directory when present),
-    adds the output directory to sys.path, and imports it.
+    unless that directory already holds the file, adds the directory to
+    sys.path, and imports it.
     """
     global _record_pb2
     if _record_pb2 is not None:
@@ -82,15 +83,15 @@ def _load_record_pb2():
 
 
 def task_id_key(task_id: "record_pb2.TaskRecord.TaskIdentifier") -> str:
-    """Stable string key for a TaskIdentifier (used to group records)."""
+    """Stable string key of a TaskIdentifier; groups the records of one task."""
     return "|".join(task_id.input_files) + f"=>L{task_id.destinationLevel}"
 
 
 def parse_task_log(path: Path) -> list[dict]:
-    """Return ordered list of decoded records from task.log.
+    """Return the decoded records of task.log in file order.
 
-    Each entry has: file_offset, owner, owner_generation, status, task_key,
-    input_files, destination_level.
+    Each entry has: record_index, file_offset, owner, owner_generation,
+    status, task_key, input_files, destination_level, compact_into_next_level.
     """
     record_pb2 = _load_record_pb2()
     data = path.read_bytes()
@@ -103,10 +104,8 @@ def parse_task_log(path: Path) -> list[dict]:
         except IndexError:
             break
         if new_pos + msg_len > len(data):
-            # truncated record — typically means a writer was killed mid-append.
-            # Stop here; everything before this is intact thanks to atomic
-            # append at the storage layer (a writer can't be killed *during* a
-            # single append on a local FS — append() is one syscall).
+            # Truncated record: a writer died during an append. Every record
+            # before it is intact, because an append is one atomic write.
             break
         rec = record_pb2.TaskRecord()
         rec.ParseFromString(data[new_pos:new_pos + msg_len])
@@ -127,7 +126,7 @@ def parse_task_log(path: Path) -> list[dict]:
 
 
 def group_by_task(records: list[dict]) -> dict[str, list[dict]]:
-    """Group decoded records by task_key, preserving append order."""
+    """Group records by task_key. Append order is kept inside a group."""
     groups: dict[str, list[dict]] = {}
     for r in records:
         groups.setdefault(r["task_key"], []).append(r)
@@ -135,7 +134,7 @@ def group_by_task(records: list[dict]) -> dict[str, list[dict]]:
 
 
 def task_summary(records_for_task: list[dict]) -> dict:
-    """Summarise the lifecycle of one TaskID across all generations."""
+    """Summarise one task across all its generations."""
     by_gen: dict[int, dict] = {}
     for r in records_for_task:
         g = by_gen.setdefault(r["owner_generation"], {

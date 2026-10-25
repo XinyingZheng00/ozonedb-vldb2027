@@ -1,23 +1,22 @@
 #!/usr/bin/env bash
 #
-# Laptop-side wrapper for the consistency experiments: restart corfu_server
-# on an EMPTY log dir (REQUIRED -- consistency clients open fresh streams,
-# and a fresh-stream openDB fences on the GLOBAL sequencer tail
-# (the stream tail is runtime-wide, not per-stream) while the tailer
-# only advances past entries of its OWN stream; any foreign-stream data on
-# the server therefore makes that fence unsatisfiable and openDB hangs.
-# Copying /mnt/corfu/load into the served dir, as run_ycsb_with_corfu.sh
-# does for the benchmark stream, broke every consistency run the moment a
-# real YCSB load populated /mnt/corfu/load -- hence the dedicated
-# /mnt/corfu/run_consistency dir, recreated empty per run), then run one
-# experiment on the first client node and pull its results back here.
+# Wrapper for the consistency measurements, driven from this machine: restart
+# corfu_server on an empty log dir, run one measurement on the first client
+# node, and pull its results back here.
+#
+# The empty log dir is required. Consistency clients open fresh streams, and a
+# fresh-stream openDB fences on the global sequencer tail, while the tailer
+# only advances past entries of its own stream. Any foreign-stream data on the
+# server makes that fence unsatisfiable and openDB hangs. So the server uses
+# the dedicated /mnt/corfu/run_consistency dir, recreated empty per run, never
+# a copy of /mnt/corfu/load.
 #
 #   bash bench/scripts/local/run_consistency_with_corfu.sh probe-staleness --write-rate 20 --duration 30
 #   bash bench/scripts/local/run_consistency_with_corfu.sh check-lost-updates --workers 2 --increments 2000
 #
 # Node addresses come from bench/scripts/config/ycsb.yaml via ycsb_config.py,
-# exactly like run_ycsb_with_corfu.sh. The corfu restart is driven from THIS
-# machine because the client nodes cannot ssh to the log node.
+# like run_ycsb_with_corfu.sh. The corfu restart is driven from this machine
+# because the client nodes cannot ssh to the log node.
 
 set -euo pipefail
 

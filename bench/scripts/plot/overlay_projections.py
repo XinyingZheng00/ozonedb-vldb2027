@@ -4,12 +4,12 @@
   overlay_projections.py base-projection.tsv zipf-projection.tsv --out fig.png
                          [--base-name "YCSB zipfian"] [--other-name "key-space zipfian"]
 
-The Cassandra lines are drawn once, from the first table (they do not depend
-on the OzoneDB request distribution). The OzoneDB lines are drawn twice: solid
-for the first table (YCSB's scrambled zipfian, the main corpus) and dashed
-for the second (the zipfian over the key space). The tables hold one row per decade, so the lines join the
-decades; the full-grid curve of either corpus is in that corpus's own
-cost_model.pdf.
+The Cassandra lines are drawn once, from the first table; they do not
+depend on the OzoneDB request distribution. The OzoneDB lines are drawn
+twice: solid for the first table (YCSB's scrambled zipfian, the main
+corpus) and dashed for the second (the zipfian over the key space). The
+tables hold one row per decade, so the lines join the decades. The
+full-grid curve of either corpus is in that corpus's own cost_model.pdf.
 """
 import argparse
 import csv
@@ -61,7 +61,7 @@ def main():
     fig, ax = plt.subplots(figsize=(6.0, 3.8))
     x = base["D"]
     # The Cassandra consistency mode the table was priced against
-    # (plot_cost_model.py --cassandra-mode); older tables carry no column.
+    # (plot_cost_model.py --cassandra-mode). A table without the column reads "?".
     mode = base.get("cass_mode", ["?"])[0]
     cass_name = {"serial": "Cassandra SERIAL (LWT)", "quorum": "Cassandra QUORUM"}.get(mode, "Cassandra")
     ax.plot(x, base["cass_nvme"], color="#b03a2e", lw=1.8, label=f"{cass_name} RF=3, NVMe (i4i)")

@@ -19,25 +19,17 @@ from datetime import datetime
 
 
 # bench/scripts is one level up. ycsb_config.derive() resolves the `nodes:`
-# block into the cloudlab.hosts / corfu.endpoint / s3.endpoint keys read below,
-# so those are computed in exactly one place.
+# block into the cloudlab.hosts, corfu.endpoint and s3.endpoint keys.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from ycsb_config import derive as _derive_addresses
 
 """
-Multi-process YCSB loader that emulates multiple distributed writers by
-spawning N YCSB processes in parallel, each writing a disjoint key-range
-partition. For ozonedb-corfu all writers target the same Corfu stream
-(true shared-log distributed write test); for other backends each writer
-writes to its own local directory.
+For ozonedb-corfu all writers share one Corfu stream. For other backends each
+writer writes its own local directory. Writer i loads keys
+[i * chunk, (i+1) * chunk) through YCSB's insertstart and insertcount
+properties. recordcount stays the global total.
 
-Writer i loads keys [i * chunk, (i+1) * chunk) via YCSB's insertstart /
-insertcount properties. recordcount is kept as the global total so keys
-are drawn from the same global namespace.
-
-After all writer processes exit, the parent parses their result files
-and writes an aggregate summary to:
-  {ks}-{rc}-insert-{db}_agg_w{N}_t{thread}.result
+Aggregate file: {ks}-{rc}-insert-{db}_agg_w{N}_t{thread}.result
 
 Set `num_writers` under `local.load` in ycsb.yaml, or pass --num_writers.
 """
@@ -52,9 +44,8 @@ YCSB_DB_CLASSNAMES = {
     "cassandra": "site.ycsb.db.CassandraCQLClient",
 }
 
-# Backends whose state lives on a server, not in a per-writer local dir: the
-# run phase must not look for (or copy) cached_data-* dirs for these, and the
-# thread count is a real concurrency knob for them.
+# Backends whose state lives on a server. The run step copies no cached_data-*
+# dirs for these, and the thread count is a real concurrency knob.
 SERVER_BACKENDS = ("ozonedb-corfu", "cassandra")
 
 
@@ -70,10 +61,11 @@ _classpath_cache = {}
 
 
 def _resolve_ycsb_classpath(ycsb_path, binding):
-    """Resolve the full YCSB classpath for `binding` by running Maven once,
-    serially, in the parent process. Results are cached so parallel writer
-    processes can skip bin/ycsb's Maven invocation entirely and avoid racing
-    on ~/.m2 and the binding's target/ directory.
+    """Resolve the full YCSB classpath for `binding` with one Maven run.
+
+    The parent process runs Maven once and caches the result. The writer
+    processes then skip bin/ycsb's Maven call and do not race on ~/.m2 or
+    the binding's target/ directory.
     """
     if binding in _classpath_cache:
         return _classpath_cache[binding]
@@ -134,21 +126,17 @@ LINEARIZABLE_LABEL_SUFFIX = "-linearizable"
 
 
 def _truthy(v):
-    """The spellings of true that reach the corfu settings dict (YAML bool,
-    CLI/JSON strings, the odd 1)."""
+    """True for every spelling of true in a settings dict: YAML bool, string, or 1."""
     return v in (True, "true", "True", "1", 1)
 
 
 def linearizable_corfu_settings(corfu_settings):
     """Copy of `corfu_settings` with strict reads forced on.
 
-    Every get then fences on the global log tail (one sequencer round-trip,
-    see src/db/db.cpp) instead of trusting the background tailer. Metadata
-    rejects linearizable_reads together with trust_background_tail, so the
-    two are always set as a pair. This is the ONE place the override lives:
-    run_local_ycsb_multiproc.py --linearizable and consistency.py
-    --linearizable both call it, so the throughput and consistency runs
-    cannot drift apart in what "linearizable" means.
+    Every get then fences on the global log tail (see src/db/db.cpp).
+    Metadata rejects linearizable_reads together with trust_background_tail,
+    so the two are always set as a pair. This is the one place the override
+    lives: every --linearizable flag calls it.
     """
     s = dict(corfu_settings or {})
     s["linearizable_reads"] = True
@@ -159,10 +147,9 @@ def linearizable_corfu_settings(corfu_settings):
 def log_trim_corfu_settings(corfu_settings):
     """Copy of `corfu_settings` with log trimming switched on.
 
-    Only global writer 0 becomes the trimmer (see
-    _make_corfu_config_per_writer); every writer loads the newest checkpoint
-    at open. The ONE place the --log-trim override lives, shared by the
-    loader, the runner and the multinode orchestrator.
+    Only global writer 0 becomes the trimmer (see _make_corfu_config_per_writer).
+    Every writer loads the newest checkpoint at open. This is the one place the
+    --log-trim override lives.
     """
     s = dict(corfu_settings or {})
     lt = dict(s.get("log_trim") or {})
@@ -172,21 +159,16 @@ def log_trim_corfu_settings(corfu_settings):
 
 
 # Suffix appended to the result-file engine token of every ozonedb-corfu
-# cell. It dates from the A/B of the native C++ Corfu client against the
-# retired embedded-JVM client; the plot and extract scripts key on it, and
-# every result file of the paper carries it, so it stays.
+# cell. The plot and extract scripts parse it, so it stays.
 NATIVE_LABEL_SUFFIX = "-native"
 
 
 def lru_cache_corfu_settings(corfu_settings, lru_cache_bytes):
     """Copy of `corfu_settings` with the per-process block cache pinned.
 
-    The cost experiment sweeps the cache
-    size to reach the cache-to-dataset ratios of a 10 TB deployment on a
-    1 GB dataset. Before this the size was read only from
-    src/config/corfu/shared_config_base.json (`lru_cache_bytes`, 512 MB),
-    which would need a sync to every client per cell. One override, one
-    place, the way --log-trim and --linearizable work.
+    Unset, the size comes from src/config/corfu/shared_config_base.json
+    (`lru_cache_bytes`, 512 MB). This is the one place the --lru-cache-bytes
+    override lives.
     """
     n = int(lru_cache_bytes)
     if n <= 0:
@@ -199,13 +181,9 @@ def lru_cache_corfu_settings(corfu_settings, lru_cache_bytes):
 def cache_warm_corfu_settings(corfu_settings, max_level=None, max_fraction=None):
     """Copy of `corfu_settings` with the compaction-aware block cache on.
 
-    Every generated shared_config
-    gets cache_warm_enabled=true and result files get a `-warm` token, so
-    the A/B cells of one tag never overwrite each other. The two policy
-    knobs the campaign sweeps ride along when given (cache_warm_max_level,
-    cache_warm_max_fraction; the engine defaults are 1 and 0.25) and add
-    `-wl<N>` / `-wf<percent>` to the token. One override, one place, the
-    way --log-trim and --lru-cache-bytes work.
+    Every generated shared_config gets cache_warm_enabled=true and result files
+    get a `-warm` token. cache_warm_max_level and cache_warm_max_fraction ride
+    along when given (engine defaults 1 and 0.25) and add `-wl<N>` and `-wf<percent>`.
     """
     s = dict(corfu_settings or {})
     s["cache_warm"] = True
@@ -217,8 +195,8 @@ def cache_warm_corfu_settings(corfu_settings, max_level=None, max_fraction=None)
 
 
 def cache_warm_label_token(corfu_settings):
-    """`-warm`, `-warm-wl2`, `-warm-wl2-wf50`: the warm policy as a
-    filename token; empty when the warm is off."""
+    """`-warm`, `-warm-wl2`, `-warm-wl2-wf50`: the warm policy as a filename
+    token. Empty when warm is off."""
     s = corfu_settings or {}
     if not _truthy(s.get("cache_warm")):
         return ""
@@ -231,17 +209,16 @@ def cache_warm_label_token(corfu_settings):
 
 
 DEFAULT_DISK_CACHE_DIR = "/tank/cache"
-# The engine defaults, mirrored so the label names what actually ran even when
-# the caller passes no --disk-cache-mode / --disk-cache-admission. Keep these in
-# step with DiskCacheStorage::Options and Metadata.
+# The engine defaults, so the label names the mode that ran when the caller
+# passes none. Keep in step with DiskCacheStorage::Options and Metadata.
 DEFAULT_DISK_CACHE_MODE = "chunk"
 DEFAULT_DISK_CACHE_ADMISSION = "frequency"
 
 
 def size_label_token(n):
     """`512m`, `2g`, `128k`, `1000b`: a byte count as a filename token. Exact
-    powers of 1024 stay short; anything else is bytes, so two different sizes
-    can never share a label."""
+    multiples of 1024 stay short. Any other count is bytes, so two sizes never
+    share a label."""
     n = int(n)
     if n % (1 << 30) == 0:
         return f"{n >> 30}g"
@@ -259,10 +236,10 @@ def lru_label_token(lru_cache_bytes):
 
 def disk_cache_corfu_settings(corfu_settings, disk_cache_bytes, disk_cache_dir=None, keep_pages=False,
                               mode=None, entry_bytes=None, admission=None):
-    """`--disk-cache-bytes N [--disk-cache-dir DIR] [--disk-cache-keep-pages]
-    [--disk-cache-mode file|chunk] [--disk-cache-entry-bytes N]
-    [--disk-cache-admission always|frequency]` as corfu settings. Every writer
-    gets `<DIR>/w{i}/`, wiped before each phase."""
+    """The --disk-cache-bytes, --disk-cache-dir, --disk-cache-keep-pages,
+    --disk-cache-mode, --disk-cache-entry-bytes and --disk-cache-admission
+    flags as corfu settings. Every writer gets `<DIR>/w{i}/`, wiped before
+    each load or run step."""
     n = int(disk_cache_bytes)
     if n <= 0:
         raise ValueError("--disk-cache-bytes must be a positive byte count")
@@ -275,8 +252,7 @@ def disk_cache_corfu_settings(corfu_settings, disk_cache_bytes, disk_cache_dir=N
     if mode not in ("file", "chunk"):
         raise ValueError("--disk-cache-mode must be file or chunk")
     # Always written, never left to the engine default: the label token is
-    # derived from these keys, and a run whose label does not name its mode and
-    # its admission policy cannot be told apart from a file-mode, evict-to-fit run.
+    # derived from these keys.
     s["disk_cache_mode"] = mode
     if admission is None:
         admission = s.get("disk_cache_admission") or DEFAULT_DISK_CACHE_ADMISSION
@@ -294,7 +270,7 @@ def disk_cache_corfu_settings(corfu_settings, disk_cache_bytes, disk_cache_dir=N
 def disk_cache_label_token(corfu_settings):
     """`-dc512m`, `-dc512m-ch64k-adm`, `-dc2g-kp`: the capacity, then `-ch<entry>`
     in chunk mode, `-adm` under frequency admission, `-kp` when the page cache
-    is kept. `` when the tier is off."""
+    is kept. Empty when the tier is off."""
     s = corfu_settings or {}
     if not s.get("disk_cache_bytes"):
         return ""
@@ -309,21 +285,17 @@ def disk_cache_label_token(corfu_settings):
 
 
 def require_disk_cache_mount(path):
-    """Refuses a disk-cache tier root that is not the SSD `setup_disk_cache.sh`
-    mounts. `path` is the ROOT (`--disk-cache-dir`, default /tank/cache); the
-    per-writer `<root>/w{i}/` directories are created by the caller.
+    """Refuse a disk-cache tier root that is not the SSD setup_disk_cache.sh mounts.
 
-    Two conditions, because either one alone lets the experiment measure the
-    wrong disk:
+    `path` is the root (`--disk-cache-dir`, default /tank/cache). The caller
+    creates the per-writer `<root>/w{i}/` directories. Two checks:
 
-    1. Not the root filesystem -- the experiment measures the SSD, not the OS
-       disk. Checked on the nearest existing ancestor, BEFORE creating
-       anything, so a root-fs path is refused without leaving a tree behind.
-    2. The root is itself a mount point. On these nodes /tank is its own
-       filesystem, so condition 1 passes even when the SSD was never mounted
-       and the tier would quietly land on /tank.
+    1. The root is not on the root filesystem. Checked on the nearest existing
+       ancestor before anything is created.
+    2. The root is itself a mount point. /tank is its own filesystem, so check
+       1 alone passes when the SSD was never mounted.
 
-    OZONEDB_DISK_CACHE_ANY_FS=1 overrides both (single-node tests)."""
+    OZONEDB_DISK_CACHE_ANY_FS=1 skips both checks."""
     if os.environ.get("OZONEDB_DISK_CACHE_ANY_FS") != "1":
         probe = os.path.normpath(path)
         while not os.path.exists(probe):
@@ -349,9 +321,9 @@ def parse_lru_label_token(token):
 
 
 # Cassandra consistency modes -> the binding's properties. `serial` is the
-# linearizable point of the frontier: every write is a lightweight
-# transaction (Paxos) and every read is a SERIAL read. See
-# ycsb/cassandra/README.md. This is the ONE place the mapping lives.
+# linearizable point: every write is a lightweight transaction (Paxos) and
+# every read is a SERIAL read. See ycsb/cassandra/README.md. This is the one
+# place the mapping lives.
 CASSANDRA_MODES = {
     "one": {"read": "ONE", "write": "ONE", "lwt": False},
     "quorum": {"read": "QUORUM", "write": "QUORUM", "lwt": False},
@@ -373,10 +345,9 @@ def cassandra_mode(cassandra_settings):
 def cassandra_mode_settings(cassandra_settings, mode):
     """Copy of `cassandra_settings` with the consistency mode forced.
 
-    The --cassandra_consistency flag lands here, the way --linearizable
-    lands in linearizable_corfu_settings(): one override, and the label
-    below is derived from the effective settings so a flag and a YAML edit
-    are labelled identically.
+    This is the one place the --cassandra_consistency override lives. The
+    label is derived from the effective settings, so a flag and a YAML edit
+    get the same label.
     """
     s = dict(cassandra_settings or {})
     s["consistency"] = mode
@@ -408,23 +379,11 @@ def cassandra_ycsb_props(cassandra_settings):
 def result_label(db_name, corfu_settings, cassandra_settings=None, lru_cache_bytes=None):
     """Engine token for result filenames: db_name plus the consistency mode.
 
-    db_name itself is branched on by the runners (binding, cached-data
-    handling, thread sweep, scratch paths) and must not change. The read
-    mode rides along as a suffix -- `ozonedb-corfu-linearizable` -- so a
-    linearizable run can never produce the same filenames as a default run.
-    Before this, the only trace of the mode was corfu.linearizable_reads in
-    ycsb.yaml, and a forgotten toggle yielded two identical "default" sweeps.
-    Derived from the EFFECTIVE settings, not just the --linearizable flag,
-    so the YAML route is labelled too.
-
-    cassandra is labelled `cassandra-{one,quorum,serial}` ALWAYS (the
-    default mode included), so every result file states its point on the
-    consistency frontier.
-
-    A pinned block cache (--lru-cache-bytes, or corfu.lru_cache_bytes)
-    appends `-lru64m` after the read mode, so the cells of a cache sweep
-    never overwrite each other. Unset means the base config's size and no
-    token, so every earlier result file keeps its name.
+    db_name itself never changes: the runners branch on it. The read mode is a
+    suffix, `ozonedb-corfu-linearizable`, derived from the effective settings,
+    so a flag and a YAML toggle get the same label. cassandra is always
+    labelled `cassandra-{one,quorum,serial}`. A pinned block cache appends
+    `-lru64m`; unset means the base config's size and no token.
     """
     label = db_name
     if db_name == "ozonedb-corfu" and _truthy(
@@ -440,11 +399,9 @@ def result_label(db_name, corfu_settings, cassandra_settings=None, lru_cache_byt
             lru_cache_bytes = (corfu_settings or {}).get("lru_cache_bytes")
         if lru_cache_bytes is not None:
             label += "-" + lru_label_token(lru_cache_bytes)
-        # Warm outputs on (--cache-warm, or corfu.cache_warm): `-warm`,
-        # plus the policy knobs when they differ from the engine defaults.
+        # Warm on (--cache-warm, or corfu.cache_warm): `-warm` plus the policy knobs.
         label += cache_warm_label_token(corfu_settings)
-        # Disk-cache tier on (--disk-cache-bytes, or corfu.disk_cache_bytes):
-        # `-dc512m`, plus `-kp` when the page cache is kept after tier reads.
+        # Disk-cache tier on (--disk-cache-bytes, or corfu.disk_cache_bytes): `-dc512m`.
         label += disk_cache_label_token(corfu_settings)
     return label
 
@@ -452,9 +409,8 @@ def result_label(db_name, corfu_settings, cassandra_settings=None, lru_cache_byt
 def _make_corfu_config_per_writer(writer_idx, db_path, corfu_settings, s3_settings):
     """Write a per-writer shared_config_w{i}.json.
 
-    Corfu endpoint/stream stays shared across writers (that's the point),
-    but db_path must be unique so each process has its own local metadata
-    scratch directory.
+    All writers share the Corfu endpoint and stream. db_path must be unique,
+    so each process has its own local metadata scratch directory.
     """
     base_json = os.path.join(
         ozonedb_home, "src/config/corfu/shared_config_base.json"
@@ -470,9 +426,7 @@ def _make_corfu_config_per_writer(writer_idx, db_path, corfu_settings, s3_settin
             data["corfu_endpoint"] = corfu_settings["endpoint"]
         if "stream_name" in corfu_settings:
             data["corfu_stream_name"] = corfu_settings["stream_name"]
-        # Compaction-tuning passthrough — used by the compaction-contention
-        # experiment script to override shared_config_base.json's defaults.
-        # Names match shared_config_base.json keys 1:1.
+        # Compaction-tuning passthrough. Names match shared_config_base.json keys.
         for k in (
             "log_file_size_limit",
             "base_file_number_limit",
@@ -482,18 +436,16 @@ def _make_corfu_config_per_writer(writer_idx, db_path, corfu_settings, s3_settin
         ):
             if k in corfu_settings:
                 data[k] = corfu_settings[k]
-        # Read-consistency knobs. Metadata parses every config value as a
-        # string, so normalize YAML booleans to "true"/"false" rather than
-        # letting json.dump emit a bare true/false literal.
+        # Read-consistency knobs. Metadata reads every value as a string, so
+        # write YAML booleans as "true"/"false".
         for k in ("trust_background_tail", "linearizable_reads"):
             if k in corfu_settings:
                 data[k] = "true" if _truthy(corfu_settings[k]) else "false"
-        # Per-process block cache (--lru-cache-bytes). Metadata reads it
-        # with std::stoull, so an integer literal is what it expects.
+        # Per-process block cache (--lru-cache-bytes). Metadata reads it with
+        # std::stoull, so write an integer literal.
         if corfu_settings.get("lru_cache_bytes") is not None:
             data["lru_cache_bytes"] = int(corfu_settings["lru_cache_bytes"])
-        # Compaction-aware block cache (--cache-warm). The engine default
-        # is off; the flag turns it on in every writer.
+        # Compaction-aware block cache (--cache-warm). Engine default: off.
         if "cache_warm" in corfu_settings:
             data["cache_warm_enabled"] = (
                 "true" if _truthy(corfu_settings["cache_warm"]) else "false"
@@ -504,9 +456,9 @@ def _make_corfu_config_per_writer(writer_idx, db_path, corfu_settings, s3_settin
         # Disk-cache tier (--disk-cache-bytes).
         dc_bytes = int(corfu_settings.get("disk_cache_bytes") or 0)
         if dc_bytes > 0:
-            # One directory per writer process, cold at every phase: the
-            # bucket is restored between cells, so a copy from the previous
-            # cell may carry a name the new cell re-creates with other bytes.
+            # One directory per writer, wiped before every step: the bucket is
+            # restored between cells, so a stale copy may hold a name the new
+            # cell re-creates with other bytes.
             dc_root = corfu_settings.get("disk_cache_dir") or DEFAULT_DISK_CACHE_DIR
             require_disk_cache_mount(dc_root)
             dc_dir = os.path.join(dc_root, f"w{writer_idx}") + "/"
@@ -522,10 +474,9 @@ def _make_corfu_config_per_writer(writer_idx, db_path, corfu_settings, s3_settin
             for key in ("disk_cache_dir", "disk_cache_bytes", "disk_cache_drop_pages", "disk_cache_chunk_bytes", "disk_cache_fill_queue",
                         "disk_cache_mode", "disk_cache_entry_bytes", "disk_cache_admission", "disk_cache_admit_window"):
                 data.pop(key, None)
-        # Log trimming: exactly one trimmer per cluster,
-        # global writer 0. writer_idx is global (offset + local index), so
-        # on a multi-host run only the first host's first writer trims.
-        # Every writer still loads the newest checkpoint at open.
+        # Log trimming: one trimmer per cluster, global writer 0. writer_idx is
+        # global (offset + local index). Every writer loads the newest
+        # checkpoint at open.
         lt = corfu_settings.get("log_trim") or {}
         trimmer = _truthy(lt.get("enabled")) and writer_idx == 0
         data["log_trim_enabled"] = "true" if trimmer else "false"
@@ -574,9 +525,8 @@ def _make_corfu_config_per_writer(writer_idx, db_path, corfu_settings, s3_settin
 def _make_local_config_per_writer(writer_idx, db_path, lru_cache_bytes=None):
     """Write a per-writer shared_config_w{i}.json for the local-FS backend.
 
-    Parallel writers must each get their own config file — otherwise they
-    race on a single shared_config.json and all end up pointed at whichever
-    db_path was written last.
+    Each writer needs its own config file. Never point several writers at
+    one shared_config.json: they race on it and all get the last db_path.
     """
     base_json = os.path.join(
         ozonedb_home, "src/config/local/shared_config_base.json"
@@ -611,12 +561,10 @@ def partition_records(total, num_writers):
 
 
 def _time_wrapper():
-    """GNU time, when present: `/usr/bin/time -v` prefixes the writer command
-    so `User time`, `System time` and `Maximum resident set size` land at the
-    end of every per-writer .result file (stderr is the same file). That is
-    the client-CPU cost line, measured the same
-    way for every backend. Absent (macOS, or no `time` package) the writer
-    runs bare and the extractor reports the CPU columns empty.
+    """GNU time, when present. `/usr/bin/time -v` prefixes the writer command, so
+    `User time`, `System time` and `Maximum resident set size` land at the end of
+    every per-writer .result file (stderr is the same file). Without it (macOS, or
+    no `time` package) the writer runs bare and the extractor reports empty CPU columns.
     """
     if sys.platform.startswith("linux") and os.access("/usr/bin/time", os.X_OK):
         return ["/usr/bin/time", "-v"]
@@ -885,10 +833,9 @@ def load_ycsb(
                                 )
                                 ycsb_props += ["-p", f"shared_config={cfg}"]
                             elif db_name == "cassandra":
-                                # Keyspace + table must already exist:
-                                # bench/scripts/cassandra_ctl.sh schema (the
-                                # load wrapper runs it once, before the writers,
-                                # so N processes do not race on CREATE TABLE).
+                                # Keyspace and table must already exist: the
+                                # load wrapper runs cassandra_ctl.sh schema once
+                                # before the writers start.
                                 ycsb_props += cassandra_ycsb_props(cassandra_settings)
                             elif db_name == "sqlite":
                                 os.makedirs(per_writer_data_path, exist_ok=True)

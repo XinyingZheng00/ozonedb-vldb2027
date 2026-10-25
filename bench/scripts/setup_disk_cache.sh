@@ -1,11 +1,10 @@
 #!/usr/bin/env bash
-# setup_disk_cache.sh -- format one unused local SSD as the OzoneDB disk-cache
-# tier and mount it.
+# Format one unused local SSD as the OzoneDB disk-cache tier and mount it.
 #
-# Idempotent: a device that already carries the label is only mounted; a
-# mount that is already up is left alone. The script formats WHOLE DISKS
-# only and refuses a disk with partitions, a foreign filesystem signature
-# (unless --force), a mount, or the root filesystem.
+# Idempotent: a device that carries the label is only mounted, and a mount
+# that is up is left alone. The script formats whole disks only. It refuses
+# a disk with partitions, a foreign filesystem signature (unless --force),
+# a mount, or the root filesystem.
 #
 #   bash bench/scripts/setup_disk_cache.sh --list
 #   bash bench/scripts/setup_disk_cache.sh --device /dev/sdb
@@ -59,13 +58,10 @@ if findmnt -n "$MOUNT" >/dev/null 2>&1; then
   die "$MOUNT is mounted from $src, which does not carry the label $LABEL"
 fi
 
-# 2. Determine the root disk(s), robustly. `/` is usually mounted from a
-# partition, so PKNAME gives the parent disk. If `/` is mounted directly
-# from a whole disk (no partition table), PKNAME prints an empty line and
-# the disk is its own root -- fall back to the source's own basename. If
-# `/` is mounted from device-mapper/LVM, PKNAME can print one line per
-# underlying physical volume; treat every one of them as a root disk so
-# none of them can be auto-picked or accepted as an explicit --device.
+# 2. Find the root disks. PKNAME gives the parent disk of the `/` partition.
+# It prints an empty line when `/` is a whole disk; then use the source's
+# basename. Under device-mapper it prints one line per physical volume;
+# every one of them is a root disk.
 root_src=$(findmnt -n -o SOURCE /)
 mapfile -t root_disks < <(lsblk -no PKNAME "$root_src" | sed '/^$/d')
 if [[ ${#root_disks[@]} -eq 0 ]]; then
@@ -117,11 +113,9 @@ else
   sudo mkfs.ext4 -q -F -L "$LABEL" -m 0 -E lazy_itable_init=0,lazy_journal_init=0 "$DEVICE"
 fi
 
-# 5. fstab by label, mount, permissions. Reaching here means $MOUNT was not
-# already mounted (step 1 would have exited), so the mount below is always
-# a real state transition -- log it (and a new fstab entry) under a distinct
-# tag so ansible's changed_when can see it even on a run that formats
-# nothing, e.g. a labeled device whose mount was lost by a reboot.
+# 5. fstab by label, mount, permissions. Section 1 exits when $MOUNT is
+# mounted, so the mount here is a state change. Log it and a new fstab entry
+# under distinct tags: the changed_when of disk_cache.yml matches them.
 sudo mkdir -p "$MOUNT"
 if ! grep -qE "^LABEL=${LABEL}[[:space:]]" /etc/fstab; then
   echo "LABEL=$LABEL $MOUNT $FSTYPE defaults,noatime,nofail 0 2" | sudo tee -a /etc/fstab >/dev/null

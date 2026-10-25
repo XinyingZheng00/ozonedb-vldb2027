@@ -2,7 +2,7 @@
 #
 # A MinIO server on this machine, for the S3StorageTest.* / S3DBTest.* suites
 # and for configs whose sstable_backend is s3. No apt, no sudo, no systemd:
-# the NixOS route to what `setup.sh --role minio` does on Ubuntu.
+# the local equivalent of `setup.sh --role minio`.
 #
 #   bash bench/scripts/minio_local.sh start   # fresh data dir + bucket, in the background
 #   bash bench/scripts/minio_local.sh stop
@@ -35,7 +35,7 @@ MINIO_OUT="$MINIO_STATE_DIR/server.out"
 MINIO_USER="minioadmin"
 MINIO_PASSWORD="minioadmin"
 ENDPOINT="http://127.0.0.1:$MINIO_PORT"
-# mc keeps its aliases here rather than in ~/.mc.
+# mc keeps its aliases here, not in ~/.mc.
 export MC_CONFIG_DIR="$MINIO_STATE_DIR/mc"
 
 log() { printf '\033[1;36m[minio]\033[0m %s\n' "$*"; }
@@ -87,7 +87,7 @@ cmd_start() {
     >"$MINIO_OUT" 2>&1 </dev/null &
   echo $! >"$MINIO_PID_FILE"
 
-  # Ready once mc can authenticate; then the bucket.
+  # Ready once mc can authenticate; then create the bucket.
   for _ in $(seq 60); do
     server_pid >/dev/null || die "minio exited during startup; see $MINIO_OUT"
     if mc alias set ozonedb-local "$ENDPOINT" "$MINIO_USER" "$MINIO_PASSWORD" >/dev/null 2>&1; then
@@ -107,8 +107,8 @@ cmd_test() {
   cmd_start
   trap cmd_stop EXIT
   local rc=0
-  # Without AWS_EC2_METADATA_DISABLED every S3Client the tests build first
-  # probes the EC2 metadata endpoint, which costs seconds off EC2.
+  # AWS_EC2_METADATA_DISABLED: otherwise every S3Client first probes the EC2
+  # metadata endpoint, which costs seconds off EC2.
   (cd "$REPO_ROOT/build" &&
     S3_TEST_ENDPOINT="$ENDPOINT" S3_TEST_BUCKET="$MINIO_BUCKET" AWS_EC2_METADATA_DISABLED=true \
       OZONEDB_TEST_ROOT="${OZONEDB_TEST_ROOT:-$MINIO_STATE_DIR/test}" \

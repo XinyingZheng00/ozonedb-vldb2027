@@ -11,11 +11,11 @@ def convert_to_bytes(key_size_str):
         'TB': 1024**4,
     }
 
-    # Extract the numerical part and the unit
+    # Split the number from the unit.
     for unit in size_units:
         if key_size_str.endswith(unit):
-            number = float(key_size_str[:-len(unit)])  # Get the number part
-            return int(number * size_units[unit])  # Convert to bytes
+            number = float(key_size_str[:-len(unit)])
+            return int(number * size_units[unit])
 
     raise ValueError(f"Invalid key size format: '{key_size_str}'")
 
@@ -27,11 +27,11 @@ def generate_workload(workload_name, key_size_str, operations_cnt, record_cnt):
     ycsb_path = os.path.join(ozonedb_home, "ycsb")
     key_size = convert_to_bytes(key_size_str)
     workload_name = "workload"+workload_name
-    input_file = ycsb_path + f"/workloads/{workload_name}"  # Assuming workload files are in .txt format
+    input_file = ycsb_path + f"/workloads/{workload_name}"
     output_dir = ycsb_path + "/workloads/generated_workloads"
     output_file = os.path.join(output_dir, f"{workload_name}_{key_size_str}_{operations_cnt}_{record_cnt}")
 
-    # Check if the workload file exists
+    # The base workload file must exist.
     if not os.path.isfile(input_file):
         print(f"Error: The file '{input_file}' does not exist.")
         return
@@ -60,7 +60,6 @@ def generate_workload(workload_name, key_size_str, operations_cnt, record_cnt):
     print(f"Workload generated: {output_file}")
 
 if __name__ == "__main__":
-    # Set up command line argument parsing
     parser = argparse.ArgumentParser(description="Generate modified workload files.")
     parser.add_argument("--workload_name", type=str, help="Name of the workload (without extension)")
     parser.add_argument("--key_size", type=str, help="Size of the key (e.g., '1KB', '100MB')")
@@ -68,8 +67,6 @@ if __name__ == "__main__":
     parser.add_argument("--record_cnt", type=int, help="Number of records")
     
 
-    # Parse the command line arguments
     args = parser.parse_args()
 
-    # Call the function with parsed arguments
     generate_workload(args.workload_name, args.key_size, args.operation_cnt, args.record_cnt)

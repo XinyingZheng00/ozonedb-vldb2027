@@ -2,24 +2,24 @@
 #
 # A single-node CorfuDB server on this machine, for the CorfuStorageTest.*
 # suite and the corfu_smoke binaries. No apt, no sudo, no /mnt/corfu: the
-# NixOS route to what `setup.sh --role corfu-server` does on Ubuntu.
+# local equivalent of `setup.sh --role corfu-server`.
 #
 #   bash bench/scripts/corfu_local.sh build   # clone + build CorfuDB at the pinned commit
 #   bash bench/scripts/corfu_local.sh start   # fresh server (empty log dir) in the background
 #   bash bench/scripts/corfu_local.sh stop
 #   bash bench/scripts/corfu_local.sh test    # start fresh, CorfuStorageTest.*, stop
 #
-# On NixOS run it from `nix-shell corfu-server.nix`; it re-executes itself
-# inside the `corfu-fhs` environment that file provides. Elsewhere it uses
-# the java and mvn on PATH.
+# On NixOS run it from `nix-shell corfu-server.nix`. It re-executes itself
+# inside the `corfu-fhs` environment of that file. Elsewhere it uses the java
+# and mvn on PATH.
 #
 # Environment:
 #   CORFU_CLONE_DIR  CorfuDB checkout   (default: ~/CorfuDB, as setup.sh)
 #   CORFU_PORT       server port        (default: 9090)
 #   CORFU_STATE_DIR  log dir, pid, log  (default: ${XDG_RUNTIME_DIR:-/tmp}/ozonedb-corfu)
 #
-# `start` always wipes the log dir: the Corfu tests need a fresh server,
-# because they trim the log and fail-stop on a trimmed one.
+# `start` always wipes the log dir: the Corfu tests trim the log and
+# fail-stop on a trimmed one, so they need a fresh server.
 
 set -euo pipefail
 
@@ -38,7 +38,7 @@ CORFU_LOG_DIR="$CORFU_STATE_DIR/log"
 CORFU_PID_FILE="$CORFU_STATE_DIR/server.pid"
 CORFU_OUT="$CORFU_STATE_DIR/server.out"
 
-# setup.sh owns the pinned commit; read it from there rather than repeat it.
+# setup.sh owns the pinned commit; read it from there.
 CORFU_COMMIT="$(sed -n 's/^CORFU_COMMIT="\([0-9a-f]*\)".*/\1/p' "$SCRIPT_DIR/setup.sh")"
 [[ -n "$CORFU_COMMIT" ]] || {
   echo "cannot read CORFU_COMMIT from $SCRIPT_DIR/setup.sh" >&2
@@ -67,8 +67,8 @@ cmd_build() {
     git checkout -q "$CORFU_COMMIT")
 
   log "building with $(java -version 2>&1 | head -n1)"
-  # Same tolerance as setup.sh: the tail of the reactor (integration-test
-  # modules) does not always compile, but the shaded server jar builds earlier.
+  # As in setup.sh: the integration-test modules at the end of the reactor
+  # do not always compile. The shaded server jar builds earlier.
   if ! (cd "$CORFU_CLONE_DIR" && mvn -q clean install -DskipTests); then
     [[ -n "$(shaded_jar)" ]] || die "CorfuDB build failed before the shaded server jar was built"
     log "reactor failed after the server jar was built -- continuing"
@@ -86,8 +86,7 @@ server_pid() {
 cmd_stop() {
   local pid
   if pid="$(server_pid)"; then
-    # bin/corfu_server runs java as a child rather than exec'ing it, so
-    # signal the whole process group setsid gave it.
+    # bin/corfu_server forks java, so signal the whole process group.
     log "stopping corfu_server (process group $pid)"
     kill -- "-$pid" 2>/dev/null || true
     for _ in $(seq 50); do
@@ -109,8 +108,8 @@ cmd_start() {
   mkdir -p "$CORFU_LOG_DIR"
 
   log "starting corfu_server on 127.0.0.1:$CORFU_PORT (log dir $CORFU_LOG_DIR)"
-  # setsid: the server outlives this script, and its pid is the process
-  # group `stop` signals.
+  # setsid: the server outlives this script; its pid is the process group
+  # that `stop` signals.
   setsid "$CORFU_CLONE_DIR/bin/corfu_server" -l "$CORFU_LOG_DIR" -s -a 127.0.0.1 "$CORFU_PORT" \
     >"$CORFU_OUT" 2>&1 </dev/null &
   echo $! >"$CORFU_PID_FILE"
@@ -133,9 +132,8 @@ cmd_test() {
   cmd_start
   trap cmd_stop EXIT
   local rc=0
-  # Run from build/, as every test does. The Corfu tests keep their
-  # checkpoints under $TMPDIR; OZONEDB_TEST_ROOT matters only if GTEST_FILTER
-  # widens the run.
+  # Run from build/, as every test does. OZONEDB_TEST_ROOT matters only when
+  # GTEST_FILTER widens the run; the Corfu tests use $TMPDIR.
   (cd "$REPO_ROOT/build" &&
     CORFU_TEST_ENDPOINT="127.0.0.1:$CORFU_PORT" \
       OZONEDB_TEST_ROOT="${OZONEDB_TEST_ROOT:-$CORFU_STATE_DIR/test}" \

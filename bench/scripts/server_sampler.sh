@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Sample the server side of one benchmark cell, ON the server node.
+# Sample the server side of one benchmark cell, on the server node.
 #
 #   server_sampler.sh start DIR CELL   snapshot -> DIR/CELL.before.txt, then
 #                                      pidstat into DIR/CELL.pidstat.txt and the
@@ -9,26 +9,26 @@
 #   server_sampler.sh stop  DIR CELL   snapshot -> DIR/CELL.after.txt, kill both
 #   server_sampler.sh snapshot         print one snapshot to stdout
 #
-# Why: the cost model needs, per cell, the object-store
-# request counts (GET, PUT, DELETE), the bytes in and out, the bytes on disk of
-# every stateful directory, and the server CPU per process. MinIO's counters
-# are cumulative since the process started, so a cell has a request count
-# only when a "before" snapshot exists -- that is what `start` records.
+# The cost model needs, per cell, the object-store request counts (GET, PUT,
+# DELETE), the bytes in and out, the bytes on disk of every stateful
+# directory, and the server CPU per process. MinIO's counters are cumulative
+# since the process started, so a cell has a request count only when a
+# "before" snapshot exists. `start` records it.
 #
-# One snapshot is line oriented and parsed by extract_cost_coefficients.py:
+# A snapshot is line oriented; extract_cost_coefficients.py parses it:
 #   # server_sampler host=H time=EPOCH iso=... nproc=N
 #   metric <prometheus line>          MinIO /minio/v2/metrics/{cluster,bucket}
 #   du <path> <kbytes>                du -sk of every SAMPLER_DIRS entry
-#   mcdu <json>                       mc du --json --depth 2 of the bucket
+#   mcdu <json>                       mc du --json --depth 3 of the bucket
 #   pids <class> <pid[,pid]>          corfu | minio | cassandra
 #   loadavg <1> <5> <15>
 #
-# Needs: curl, sysstat (pidstat), optionally mc with the ozonedb-local alias
-# (setup.sh --role minio creates it) -- all in the server roles of setup.sh.
-# MinIO answers the metrics endpoints without a token only when the unit
-# carries MINIO_PROMETHEUS_AUTH_TYPE=public (setup.sh --role minio writes it).
+# Needs curl, sysstat (pidstat) and, optionally, mc with the ozonedb-local
+# alias (setup.sh --role minio creates it). MinIO answers the metrics
+# endpoints without a token only when its unit carries
+# MINIO_PROMETHEUS_AUTH_TYPE=public (setup.sh --role minio writes it).
 #
-# run_multinode_ycsb.py scps this file to every server it samples and calls
+# run_multinode_ycsb.py scps this file to every server it samples, calls
 # start/stop around the cell, then pulls DIR back into <results>/_server/.
 
 set -uo pipefail
@@ -39,7 +39,7 @@ INTERVAL="${SAMPLER_INTERVAL:-10}"
 MC_ALIAS="${SAMPLER_MC_ALIAS:-ozonedb-local}"
 BUCKET="${SAMPLER_BUCKET:-}"
 
-# Only the counters the model reads; the full scrape is thousands of lines.
+# Only the counters the cost model reads; the full scrape is thousands of lines.
 METRIC_RE='^minio_(s3_requests_total|s3_requests_errors_total|s3_traffic_sent_bytes|s3_traffic_received_bytes|bucket_usage_total_bytes|bucket_usage_object_total|bucket_traffic_sent_bytes|bucket_traffic_received_bytes|cluster_usage_total_bytes|cluster_usage_object_total)'
 
 log() { printf '[server_sampler] %s\n' "$*" >&2; }
@@ -82,11 +82,10 @@ snapshot() {
   echo "loadavg $(cut -d' ' -f1-3 /proc/loadavg 2>/dev/null || echo '? ? ?')"
 }
 
-# Every INTERVAL seconds: the request and traffic counters with an epoch
-# prefix, one metric per line, into DIR/CELL.minio.txt. The before/after
-# snapshots give the cell total; this series gives the steady-state rate over
-# the last window of the run, which is what a cold block cache needs (the
-# cumulative hit counter mostly measures warm-up in a 120 s cell).
+# Every INTERVAL seconds: the request and traffic counters, one metric per
+# line with an epoch prefix, into DIR/CELL.minio.txt. The before/after
+# snapshots give the cell total; this series gives the rate over the last
+# window of the run, after the block cache is warm.
 metrics_poll() {
   local t out
   while :; do
@@ -117,8 +116,7 @@ start() {
     log "pidstat missing (apt install sysstat): server CPU not recorded"
     return 0
   fi
-  # -h: one line per process per interval; -H: the time column in seconds
-  # since the epoch (sysstat 12.6 prints a clock time otherwise).
+  # -h: one line per process per interval. -H: time in seconds since the epoch.
   (setsid nohup pidstat -h -H -u -r -p "$all" "$INTERVAL" >"$dir/$cell.pidstat.txt" 2>&1 </dev/null &
    echo $! >"$dir/$cell.pidstat.pid")
   log "start cell=$cell pids=$all pidstat every ${INTERVAL}s"

@@ -2,32 +2,30 @@
 """Multi-node YCSB figures: cr-sqlite (async / async-10ms / fenced reads),
 ozonedb-corfu (default / linearizable), slatedb (durable writes).
 
-Reads multinode aggregate + per-writer .result files produced by
-`bench.py multinode` (crsqlite), run_multinode_ycsb_with_corfu.sh
-(ozonedb) and slatedb_multinode.py from any number of result dirs; a
-campaign dir (cells one level down, e.g. bench/results/local/tp120) can
-be passed directly and is recursed one level. When a cross-node aggregate
-is missing (a laptop-side orchestrator hang killed the fetch but the
-writers finished), SumWriterThroughput is rebuilt as the sum of
-per-writer [OVERALL] Throughput -- identical arithmetic to the aggregate
+Reads multinode aggregate and per-writer .result files from any number of
+result dirs. `bench.py multinode` (crsqlite),
+run_multinode_ycsb_with_corfu.sh (ozonedb) and slatedb_multinode.py write
+them. A campaign dir (cells one level down, e.g. bench/results/local/tp120)
+can be passed directly; it is recursed one level. When a cross-node
+aggregate is missing, SumWriterThroughput is rebuilt as the sum of the
+per-writer [OVERALL] Throughput, the same arithmetic as the aggregate
 writer.
 
-Cells with multiple trials are summarised as mean +/- error (--err
-std|sem|minmax); the printed summary carries n per cell so a partially
-backfilled campaign (n=1..3) is visible at a glance.
+Cells with several trials are summarised as mean +/- error (--err
+std|sem|minmax). The printed summary carries n per cell.
 
-ozonedb linearizable runs carry the same db token as default runs, so tag
-their result dirs with --relabel DIR=ozonedb-corfu-linearizable (a
-relabel on a campaign dir applies to its cell subdirs too).
+ozonedb linearizable runs carry the same db token as default runs. Tag
+their result dirs with --relabel DIR=ozonedb-corfu-linearizable; a relabel
+on a campaign dir applies to its cell subdirs too.
 
 Modes:
   faceoff (default): grouped bars, workloads x engines, at --writers N.
   scaling:           SumWriterThroughput vs total writers, per workload,
                      plus fenced-read barrier p50/p99 vs writer count.
 
-Engine pairing: cr-sqlite <-> ozonedb default (both
-eventually-visible reads); cr-sqlite-syncread <-> ozonedb --linearizable
-(both freshness-guaranteed reads).
+Engine pairing: cr-sqlite <-> ozonedb default (both eventually-visible
+reads); cr-sqlite-syncread <-> ozonedb --linearizable (both
+freshness-guaranteed reads).
 
 Usage:
     python3 plot_throughput.py <result-dirs...> [--mode faceoff|scaling]
@@ -65,8 +63,8 @@ ENGINE_LABELS = {
     "ozonedb-corfu-linearizable": "ozonedb (linearizable reads)",
     "slatedb-durable": "slatedb (durable writes)",
 }
-# Five hues; the two cr-sqlite async variants share the orange family and
-# are told apart by marker, keeping the async/fenced pairing visible.
+# The two cr-sqlite async variants share the orange family and differ by
+# marker, so the async/fenced pairing stays visible.
 ENGINE_COLORS = {
     "crsqlite": "#DD8452",
     "crsqlite-sync10ms": "#CCB974",
@@ -102,7 +100,7 @@ HOSTAGG_RE = re.compile(
 
 def parse_kv(path):
     """{(tag, key): value} from a YCSB-style '[TAG], Key, Value' file.
-    Also returns the [SYNCREAD] WriterNBarrierP50/P99 values as a list."""
+    Also returns the [SYNCREAD] WriterNBarrierP50/P99 values as lists."""
     out = {}
     p50s, p99s = [], []
     with open(path) as f:
@@ -124,7 +122,7 @@ def parse_kv(path):
 
 def expand_dirs(dirs, relabel):
     """Each given dir plus its immediate subdirs (the campaign layout has
-    one dir per cell). A relabel on a parent propagates to its subdirs."""
+    one dir per cell). A relabel on a parent applies to its subdirs."""
     out = []
     for d in dirs:
         if not os.path.isdir(d):
@@ -141,8 +139,8 @@ def expand_dirs(dirs, relabel):
 
 
 def collect(dirs, relabel):
-    """Per-trial values, keyed (wl, engine, total, trial):
-    {"tput", "read_ms", ..., "barrier_p50", "barrier_p99"}; plus caption
+    """Per-trial values keyed (wl, engine, total, trial):
+    {"tput", "read_ms", ..., "barrier_p50", "barrier_p99"}, plus caption
     metadata {"ks", "rc", "duration_s", "hosts"} read from the data."""
     agg_tput = {}
     writer_tput = defaultdict(dict)   # key -> widx -> ops/s
@@ -225,8 +223,8 @@ ERR_FIELDS = ("tput", "read_ms", "update_ms", "insert_ms", "barrier_p50")
 
 def summarize(trials, err):
     """Collapse trials: {(wl, engine, total): {field: mean,
-    field+"_err": (lo, hi), "n": trials seen}}. barrier_p99 stays the max
-    across trials (worst observed round, matching the per-host max)."""
+    field+"_err": (lo, hi), "n": trials seen}}. barrier_p99 is the max
+    across trials (the worst round, as the per-host max is)."""
     per_cell = defaultdict(lambda: defaultdict(list))
     for (wl, e, total, _trial), fields in trials.items():
         for f, v in fields.items():
@@ -256,7 +254,7 @@ def summarize(trials, err):
 
 
 def caption_bits(meta):
-    """Human caption fragments derived from the data, not hardcoded."""
+    """Caption fragments derived from the data."""
     def fmt_keys(n):
         for unit, div in (("B", 10 ** 9), ("M", 10 ** 6), ("K", 10 ** 3)):
             if n >= div and n % div == 0:
@@ -355,7 +353,7 @@ def plot_scaling(data, meta, out):
     axes[0].set_ylabel("Sum writer throughput (ops/s)")
     axes[0].legend(fontsize=6.5, loc="best")
 
-    # Barrier-cost panel (B1): fenced-read round cost vs writer count.
+    # Barrier-cost panel: fenced-read round cost against writer count.
     axb = axes[-1]
     for wl, style in zip(workloads, ("-", "--", ":", "-.", (0, (1, 1)))):
         e = "crsqlite-syncread"

@@ -2,24 +2,20 @@
 set -euo pipefail
 
 # Load the YCSB dataset into the Corfu shared log, then snapshot it to
-# /mnt/corfu/load so that run_multinode_ycsb_with_corfu.sh restores an
-# identical stream before every trial (it does cp -r /mnt/corfu/load ->
-# run_batch on each start).
-#
-# There was no scripted corfu load before this: the run wrapper assumed
-# /mnt/corfu/load already held a dataset. This is the OzoneDB twin of
-# load_multinode_cassandra.sh.
+# /mnt/corfu/load. run_multinode_ycsb_with_corfu.sh copies /mnt/corfu/load to
+# run_batch on each start, so every trial starts from the same stream. This
+# is the OzoneKV twin of load_multinode_cassandra.sh.
 #
 # Steps (corfu server = nodes.log, load host = first client):
-#   1. stop any corfu on the log node (best effort -- takes the node over)
-#   2. wipe /mnt/corfu/run_batch, start a FRESH corfu bound to nodes.log.lan
-#   3. run load_local_ycsb_multiproc.py --db_name ozonedb-corfu on ONE client
-#      with --writers procs (all share the one stream; record_cnt / key_size
+#   1. stop any corfu on the log node (best effort)
+#   2. wipe /mnt/corfu/run_batch, start a fresh corfu bound to nodes.log.lan
+#   3. run load_local_ycsb_multiproc.py --db_name ozonedb-corfu on one client
+#      with --writers procs (all share the one stream; record_cnt and key_size
 #      come from local.load in ycsb.yaml)
-#   4. stop corfu (flush to /mnt/corfu/run_batch on disk)
+#   4. stop corfu
 #   5. snapshot: rm -rf /mnt/corfu/load && cp -r run_batch -> load
 #
-# Check that the cluster is free first: this KILLS any running corfu on the
+# Check that the cluster is free first: this kills any running corfu on the
 # log node and overwrites /mnt/corfu/{run_batch,load}.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -96,19 +92,18 @@ port_open() { corfu_sh "bash -c '(exec 3<>/dev/tcp/$CORFU_BIND/$CORFU_PORT) >/de
 stop_corfu() {
   echo "[corfu] stop on $CORFU_SSH"
   # [C]orfuServer: the pattern must not match the remote shell that runs this
-  # pkill, or the shell is SIGKILLed with the server and ssh exits 255.
+  # pkill, or ssh exits 255.
   corfu_sh "pkill -KILL -f 'org.corfudb.infrastructure.[C]orfuServer' 2>/dev/null || true; command -v fuser >/dev/null && fuser -k -9 ${CORFU_PORT}/tcp 2>/dev/null || true"
   local i
   for i in $(seq 1 30); do port_open || { echo "[corfu] down"; return 0; }; sleep 1; done
   echo "[corfu] ERROR: still reachable after SIGKILL" >&2; return 1
 }
 
-# The SSTable bucket and the log dir are one unit: the
-# log references SSTables by name, and with --log-trim the checkpoint in the
-# bucket must match the trim mark in the log. So the load starts from an EMPTY
-# bucket, and the snapshot copies the bucket to /mnt/corfu/load-bucket next
-# to /mnt/corfu/load. run_multinode_ycsb_with_corfu.sh restores both before
-# every cell. Ported from the cas branch (commit 5cacc48b).
+# The SSTable bucket and the log dir are one unit: the log names SSTables, and
+# with --log-trim the checkpoint in the bucket must match the trim mark in the
+# log. So the load starts from an empty bucket, and the snapshot copies the
+# bucket to /mnt/corfu/load-bucket next to /mnt/corfu/load.
+# run_multinode_ycsb_with_corfu.sh restores both before every cell.
 S3_BUCKET="$(cfg --get s3.bucket 2>/dev/null || echo ozonedb-ycsb)"
 MC_ALIAS="${MC_ALIAS:-ozonedb-local}"
 BUCKET_SNAPSHOT="$CORFU_DATA/load-bucket"
@@ -128,26 +123,23 @@ snapshot() {
   corfu_sh "rm -rf $BUCKET_SNAPSHOT && mkdir -p $BUCKET_SNAPSHOT && mc mirror --overwrite --quiet $MC_ALIAS/$S3_BUCKET $BUCKET_SNAPSHOT >/dev/null && echo \"[bucket] snapshot: \$(du -sh $BUCKET_SNAPSHOT | cut -f1) (\$(find $BUCKET_SNAPSHOT -type f | wc -l) objects); checkpoint/: \$(du -sh $BUCKET_SNAPSHOT/*/checkpoint 2>/dev/null | cut -f1 || echo none)\""
 }
 
-# Server sample around the load. Same sampler and cell naming
-# as run_multinode_ycsb.py; the files land in bench/results/local/_server/,
-# next to the per-writer insert files, where extract_cost_coefficients.py
-# joins them as the "load" workload. Best effort: a failure here never
-# stops the load.
+# Server sample around the load. Same sampler and cell naming as
+# run_multinode_ycsb.py. The files land in bench/results/local/_server/, where
+# extract_cost_coefficients.py joins them as the "load" workload. Best effort:
+# a failure here never stops the load.
 SAMPLER_SRC="$OZONEDB_HOME/bench/scripts/server_sampler.sh"
 SAMPLER_REMOTE_DIR="ozonedb_server_samples/load"
 S3_PORT="$(cfg --get s3.port 2>/dev/null || echo 9000)"
 S3_BUCKET="$(cfg --get s3.bucket 2>/dev/null || echo "")"
-# The record count is part of the cell name: both dataset sizes of a campaign
-# load into the same results root, and an untagged name lets the second load
-# overwrite the first load's server sample (extract_cost_coefficients.py SAMPLE_RE).
+# The record count is part of the cell name, so a second dataset size never
+# overwrites the first load's server sample (extract_cost_coefficients.py SAMPLE_RE).
 SAMPLE_RC="${RECORD_CNT:-$(cd "$OZONEDB_HOME" && python3 bench/scripts/ycsb_config.py --get local.load.record_cnt | tr -d "[] " | cut -d, -f1)}"
 # The label must match result_label() in load_local_ycsb_multiproc.py for the
 # flags this wrapper forwards, or the extractor pairs the sample with the
-# wrong load rows (the first --cache-warm load overwrote the plain load's
-# sample under the plain name).
+# wrong load rows.
 SAMPLE_LABEL="ozonedb-corfu"
-# Same token order as result_label(): engine, -native, -warm. Without the
-# -native token the extractor never pairs the sample with the load row.
+# Same token order as result_label(): engine, -native, -warm. The extractor
+# needs the -native token to pair the sample with the load row.
 SAMPLE_LABEL="${SAMPLE_LABEL}-native"
 [[ "$CACHE_WARM" -eq 1 ]] && SAMPLE_LABEL="${SAMPLE_LABEL}-warm"
 SAMPLE_CELL="${SAMPLE_LABEL}_workloadload_w${WRITERS}_rc${SAMPLE_RC}_trial0"

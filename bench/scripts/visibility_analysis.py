@@ -1,29 +1,26 @@
 #!/usr/bin/env python3
 """Reduce a check-visibility run's visibility.csv to summary.json.
 
-Stdlib-only and OZONEDB_HOME-independent so it runs anywhere the results
-land: consistency.py imports it for same-host runs, and the cross-node
-wrapper (run_visibility_cross_node.sh) invokes it on the orchestrator after
-pulling the writer's and reader's output dirs together.
+Stdlib-only and OZONEDB_HOME-independent, so it runs wherever the results
+land. consistency.py imports it for same-host runs.
+run_visibility_cross_node.sh runs it on the orchestrator after it pulls
+the writer's and reader's output dirs together.
 
-Cross-node runs pass --cross-node: writer and reader clocks are separate
-CLOCK_MONOTONIC domains with arbitrary origins, so t_ack (writer clock) is
-meaningless in the reader's frame and every latency is referenced to
-t_notify -- the reader-side receipt of the ack notification -- instead.
-That inflates visibility by one one-way network hop (~50 us on the LAN),
-noise at the ms/50 ms scales being measured. The MISS COUNT needs no clock
-at all: the first get provably starts after the ack (ack -> notify -> get
-through the socket), so a first-get miss is a read-latest violation on any
-clock.
+Cross-node runs pass --cross-node. The writer and reader clocks are
+separate CLOCK_MONOTONIC domains, so t_ack (writer clock) has no meaning
+in the reader's frame. Every latency is then referenced to t_notify, the
+reader-side receipt of the ack notification. This adds one one-way network
+hop to the visibility latency. The miss count needs no clock: the first
+get starts after the ack (ack -> notify -> get through the socket), so a
+first-get miss is a read-latest violation on any clock.
 """
 
 import argparse
 import json
 import os
 
-# PBS-curve age buckets (ms): P[stale at age a] = P[visibility latency > a],
-# the complementary CDF of the retry-until-found latency, so one run yields
-# the whole curve.
+# PBS-curve age buckets (ms). P[stale at age a] = P[visibility latency > a],
+# the complementary CDF of the retry-until-found latency.
 PBS_AGES_MS = [0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500]
 
 
@@ -37,8 +34,8 @@ def _pct(xs, p):
 def analyze(out, engine, linearizable, cross_node=False, params=None):
     """Read <out>/visibility.csv, write <out>/summary.json, print a verdict.
 
-    engine: base engine name; '-linearizable' and '-xnode' suffixes are
-    appended here from the flags. params: extra summary fields (rate_per_s,
+    engine: base engine name; the flags append the '-linearizable' and
+    '-xnode' suffixes here. params: extra summary fields (rate_per_s,
     duration_s, value_size, poll_ms, stream, ...).
     """
     rows = []
@@ -54,8 +51,8 @@ def analyze(out, engine, linearizable, cross_node=False, params=None):
     timeouts = sum(1 for r in rows if r[5] < 0)
     vis_ms = [(r[5] - r[ref]) / 1e6 for r in rows if r[5] >= 0]
     first_age_ms = [(r[3] - r[ref]) / 1e6 for r in rows if r[3] >= 0]
-    # Timeouts count as "still stale at every age" so they push the curve
-    # up instead of silently vanishing from it.
+    # A timeout counts as stale at every age, so it raises the curve instead
+    # of vanishing from it.
     pbs = [
         {
             "age_ms_le": a,

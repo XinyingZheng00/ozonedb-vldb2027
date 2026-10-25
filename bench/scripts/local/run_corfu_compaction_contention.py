@@ -1,31 +1,29 @@
-"""
-Per-iteration runner for the compaction-contention experiment on
-ozonedb-corfu. Driven by run_ycsb_with_corfu.sh:
+"""Run one (writers, trial) iteration of the compaction-contention measurement on ozonedb-corfu.
+
+run_ycsb_with_corfu.sh drives it:
 
   OZONEDB_RUN_TAG=compaction_sweep \\
     bench/scripts/local/run_ycsb_with_corfu.sh \\
       --script bench/scripts/local/run_corfu_compaction_contention.py \\
       --workloads a --writers-list "1 2 4 8 16" --trials 3
 
-The shell wrapper handles Corfu lifecycle and iterates over (writers, trial);
-this script runs ONE (writers, trial) pair per invocation:
+The shell wrapper restarts Corfu and iterates over (writers, trial). This
+script runs one pair per invocation:
 
-  1. Calls run_ycsb (workload A, ozonedb-corfu) with corfu config tuned for
-     frequent small compactions (see corfu_compaction_experiment in ycsb.yaml).
-  2. Scrapes the per-writer .result files for the [COMPACTION_NEEDED] /
-     [COMPACTION_COMMITTED] log lines emitted by the C++ instrumentation.
-  3. Joins by task_id: t_needed = first NEEDED across writers (one expected,
-     from the winner); t_committed = last COMMITTED across writers (each peer
-     fires it once when its rollforward applies the COMPACT record locally).
-  4. Writes a per-(W, trial) CSV with one row per task and appends a single
-     summary row (mean / p50 / p95 / p99 across this trial's tasks) to a
-     run-tag-scoped summary CSV.
+  1. Calls run_ycsb (workload A, ozonedb-corfu) with the corfu config tuned
+     for frequent small compactions (corfu_compaction_experiment in ycsb.yaml).
+  2. Scrapes the per-writer .result files for the [COMPACTION_NEEDED] and
+     [COMPACTION_COMMITTED] lines the C++ instrumentation prints.
+  3. Joins by task_id: t_needed = first NEEDED across writers;
+     t_committed = last COMMITTED across writers (each peer prints it once
+     when its rollforward applies the COMPACT record).
+  4. Writes a per-(W, trial) CSV with one row per task and appends one
+     summary row (mean, p50, p95, p99) to a run-tag-scoped summary CSV.
 
-Wall clock note: all writer processes share the host, so CLOCK_REALTIME is
-identical across PIDs. For multi-host extension, switch to PTP-synced clocks
-and add per-host offset compensation.
+All writer processes share the host, so CLOCK_REALTIME is the same for every
+PID. A multi-host version needs synced clocks and per-host offsets.
 
-Plot via: bench/scripts/plot/plot_compaction_contention.py
+Plot with bench/scripts/plot/plot_compaction_contention.py.
 """
 
 import argparse
@@ -46,8 +44,7 @@ from load_local_ycsb_multiproc import (
 )
 
 # bench/scripts is one level up. ycsb_config.derive() resolves the `nodes:`
-# block into the cloudlab.hosts / corfu.endpoint / s3.endpoint keys read below,
-# so those are computed in exactly one place.
+# block into the cloudlab.hosts, corfu.endpoint and s3.endpoint keys.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from ycsb_config import derive as _derive_addresses
 
@@ -66,9 +63,8 @@ def scrape(result_dir, writers, trial, engine="ozonedb-corfu"):
 
     Returns ({task_id: earliest_needed_ns},
              {task_id: [committed_ns per writer_pid]}).
-    Multiple NEEDED entries for the same task_id can occur if a dead-task
-    takeover ever fires (owner_generation>0) — but the C++ gate excludes those,
-    so in practice we expect exactly one NEEDED per task_id.
+    One NEEDED per task_id is expected: the C++ gate excludes dead-task
+    takeovers (owner_generation > 0).
     """
     needed = {}
     committed = defaultdict(list)
@@ -94,7 +90,7 @@ def scrape(result_dir, writers, trial, engine="ozonedb-corfu"):
 
 
 def percentile(sorted_data, p):
-    """Nearest-rank percentile. Handles small samples gracefully."""
+    """Nearest-rank percentile. Returns 0.0 for an empty sample."""
     if not sorted_data:
         return 0.0
     n = len(sorted_data)
@@ -115,8 +111,8 @@ def main():
     )
     parser.add_argument("--num_writers", type=int, required=True)
     parser.add_argument("--trial", type=int, required=True)
-    # Accepted for run_ycsb_with_corfu.sh compatibility but always overridden
-    # to "a" — the experiment is workload-A specific.
+    # Accepted for run_ycsb_with_corfu.sh compatibility. Always overridden to
+    # "a": the measurement is workload-A specific.
     parser.add_argument("--workloads", type=str, default="a")
     parser.add_argument(
         "--linearizable",
@@ -147,9 +143,9 @@ def main():
 
     run_cfg = config["local"]["run"]
 
-    # Compose corfu settings: yaml.corfu (transport / endpoint) merged with
-    # yaml.corfu_compaction_experiment (compaction tuning). Both flow through
-    # _make_corfu_config_per_writer into shared_config_w{i}.json.
+    # Corfu settings: yaml.corfu (transport, endpoint) merged with
+    # yaml.corfu_compaction_experiment (compaction tuning). Both reach
+    # shared_config_w{i}.json through _make_corfu_config_per_writer.
     corfu_settings = dict(config.get("corfu") or {})
     overrides = config.get("corfu_compaction_experiment") or {}
     if not overrides:
@@ -161,9 +157,8 @@ def main():
     corfu_settings.update(overrides)
     if args.linearizable:
         corfu_settings = linearizable_corfu_settings(corfu_settings)
-    # Derived from the EFFECTIVE settings, so a linearizable_reads set in
-    # ycsb.yaml is labelled the same way the flag is. scrape() must use
-    # this token or it globs for files the run never produced.
+    # Derived from the effective settings, so linearizable_reads in ycsb.yaml
+    # gets the same label as the flag. scrape() must use this token.
     engine = result_label("ozonedb-corfu", corfu_settings)
     s3_settings = config.get("s3")
 
@@ -207,8 +202,8 @@ def main():
     tasks = []
     for tid, t0 in needed.items():
         if tid not in committed:
-            # Workload ended before all peers caught up — drop. If this happens
-            # for many tasks, lengthen max_exec_time or shrink record_cnt.
+            # The workload ended before all peers caught up: drop the task. If
+            # this happens often, lengthen max_exec_time or shrink record_cnt.
             continue
         peer_times = committed[tid]
         t1 = max(peer_times)

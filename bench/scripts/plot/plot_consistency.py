@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""Plots for the consistency experiments.
+"""Plots for the consistency measurements (visibility-scaling feeds paper Fig 11).
 
 staleness    CDF of read staleness, one curve per probe run (labelled by
-             sync interval) -- from bench.py probe-staleness output dirs
-lost-updates grouped bars of final counter vs increments issued -- from
+             sync interval), from bench.py probe-staleness output dirs
+lost-updates grouped bars of final counter vs increments issued, from
              bench.py check-lost-updates output dirs (control + crsqlite)
 visibility   left: CDF of insert-visibility latency (its complement is the
-             PBS P[stale at age a] curve); right: first-read miss fraction
-             -- from check-visibility output dirs of either engine
+             PBS P[stale at age a] curve); right: first-read miss fraction,
+             from check-visibility output dirs of either engine
 table        print the [CONSISTENCY] lines of every aggregate in a results
              dir as one CSV (divergence at run end, convergence time)
 
@@ -39,7 +39,7 @@ def _load_summary(d):
 
 
 def _staleness_label(s):
-    # ozonedb's consistency.py stamps an "engine" field; crsqlite dirs don't.
+    # ozonedb's consistency.py writes an "engine" field; crsqlite dirs do not.
     if s.get("engine"):
         return f"{s['engine']} ({s['stale_read_fraction']:.0%} stale)"
     return (
@@ -147,8 +147,8 @@ def plot_visibility(dirs, out_name):
                 else:
                     vis_ms.append((t_found - int(row["t_ack_ns"])) / 1e6)
         vis_ms.sort()
-        # Timeouts sit above every bucket: the CDF tops out below 1, which
-        # is exactly what "never became visible within the timeout" means.
+        # Timeouts count in n but not in the curve, so the CDF tops out
+        # below 1: those keys never became visible within the timeout.
         n = len(vis_ms) + timeouts
         ys = [(i + 1) / n for i in range(len(vis_ms))]
         label = f"{_visibility_label(s)} ({s['miss_first_read_fraction']:.1%} missed)"
@@ -200,8 +200,8 @@ def _pub_label(label):
 
 
 def _scaling_sort_key(label):
-    # OzoneKV first, then fenced CR-SQLite-sync, then async by ascending
-    # interval (string sort would order 10 < 200 < 50).
+    # OzoneKV first, then CR-SQLite-sync, then async by ascending interval
+    # (a string sort would order 10 < 200 < 50).
     if label.startswith("OzoneKV"):
         return (0, 0.0)
     m = re.search(r"async-([0-9.]+)ms", label)
@@ -213,12 +213,12 @@ def _scaling_sort_key(label):
 def plot_visibility_scaling(dirs, out_name, layout="grid", legend_pos="bottom"):
     """CDF-only insert-visibility figure, one facet per writer count.
 
-    The scaling claim in one picture: ozonedb writers all share one log
-    and the reader's fence cost is writer-count-independent, so its curve
-    stays pinned at apply-lag milliseconds across facets; each cr-sqlite
-    reader must merge every writer replica's changes, so its curves sit
-    at ~interval/2 and shift right as writers grow. Timeouts keep a curve
-    below 1.0 (never-visible mass), as in plot_visibility.
+    ozonedb writers share one log and the reader's fence cost does not
+    depend on the writer count, so its curve stays at apply-lag
+    milliseconds across facets. Each cr-sqlite reader merges every writer
+    replica's changes, so its curves sit near interval/2 and shift right
+    as writers grow. Timeouts keep a curve below 1.0, as in
+    plot_visibility.
     """
     groups = {}  # writer count -> [(label, sorted vis_ms, total keys)]
     labels_seen = set()
@@ -226,11 +226,10 @@ def plot_visibility_scaling(dirs, out_name, layout="grid", legend_pos="bottom"):
     for d in sorted(dirs):
         s = _load_summary(d)
         w = int(s.get("writers", 1))
-        # Cross-node runs must reference the reader-side notify receipt:
-        # t_ack is on the writer host's clock, t_found on the reader's,
-        # and the two CLOCK_MONOTONIC domains are incomparable (the
-        # difference can even be negative). Same convention as the
-        # summary analysis.
+        # Cross-node runs reference the reader-side notify receipt: t_ack
+        # is on the writer host's clock and t_found on the reader's, and
+        # the two CLOCK_MONOTONIC domains are not comparable. Same rule as
+        # visibility_analysis.
         xnode = bool(s.get("cross_node"))
         any_xnode = any_xnode or xnode
         ref_col = "t_notify_ns" if xnode else "t_ack_ns"
@@ -243,9 +242,9 @@ def plot_visibility_scaling(dirs, out_name, layout="grid", legend_pos="bottom"):
                 else:
                     vis_ms.append((t_found - int(row[ref_col])) / 1e6)
         vis_ms.sort()
-        # The topology is uniform across a scaling figure (the -xnode
-        # engine suffix folds into the caption), so the legend carries
-        # publication engine names only.
+        # The topology is uniform across a scaling figure (the caption
+        # carries the -xnode suffix), so the legend holds publication
+        # engine names only.
         label = _pub_label(_visibility_label(s))
         labels_seen.add(label)
         groups.setdefault(w, []).append((label, vis_ms, len(vis_ms) + timeouts))
@@ -255,15 +254,13 @@ def plot_visibility_scaling(dirs, out_name, layout="grid", legend_pos="bottom"):
     ws = sorted(groups)
     ncols = len(ws) if layout == "row" else min(2, len(ws))
     nrows = (len(ws) + ncols - 1) // ncols
-    # Rendered 1:1 so the point sizes below are the printed sizes.
-    # grid: 3.5 in total = one IEEE column; row: 7 in = full text width
-    # (a figure* strip), which is the narrowest a 1x4 log-axis row stays
-    # legible at.
+    # Rendered 1:1, so the point sizes below are the printed sizes.
+    # grid: 3.5 in total, one IEEE column; row: 7 in, full text width.
     facet_w, facet_h = (1.75, 1.7) if layout == "row" else (1.75, 1.2)
     if legend_pos == "right":
-        # The right-hand legend frees the bottom band, so the facets can
-        # be shorter; the width cost comes out of the facets via rect,
-        # so the grid gets a little extra width back.
+        # A right-hand legend frees the bottom band, so the facets can be
+        # shorter. The legend takes width from the facets via rect, so the
+        # grid gets some width back.
         facet_h = 1.35 if layout == "row" else 1.05
         if layout != "row":
             facet_w = 1.9
@@ -280,25 +277,24 @@ def plot_visibility_scaling(dirs, out_name, layout="grid", legend_pos="bottom"):
             ys = [(i + 1) / n for i in range(len(vis))]
             ax.plot(vis, ys, label=label, color=colors[label])
         ax.set_xscale("log")
-        # Narrow one-column facets prune the auto ticks down to two;
-        # pin one tick per decade and the 0/0.5/1 CDF gridlines.
+        # Narrow facets prune the auto ticks down to two; pin one tick per
+        # decade and the 0/0.5/1 CDF gridlines.
         ax.set_xticks([1, 10, 100, 1000])
         ax.set_yticks([0, 0.5, 1])
         ax.set_title(f"{w} writers", fontsize=9, pad=2)
         ax.set_ylim(0, 1.02)
         ax.tick_params(labelsize=8)
         if legend_pos == "right":
-            # The legend column narrows the facets; 8 pt decade labels
-            # collide at that width, and the sub-0.4 ms region is empty
-            # in every run, so trade it for tick spacing.
+            # The legend column narrows the facets. 8 pt decade labels
+            # collide at that width, and the region below 0.4 ms is empty,
+            # so trade it for tick spacing.
             ax.tick_params(axis="x", labelsize=7)
             ax.set_xlim(0.4, 1500)
         ax.grid(alpha=0.25)
     for ax in list(axes.flat)[len(ws) :]:
         ax.set_visible(False)
-    # Cross-node runs still reference reader-side notify receipt (see the
-    # ref_col comment above); the label says "ack" and the caption carries
-    # the clock-domain detail.
+    # Cross-node runs reference the notify receipt (see ref_col above); the
+    # label says "ack" and the caption carries the clock-domain detail.
     xlabel = "time from ack to first successful read (ms)"
     for row in axes:
         row[0].set_ylabel("CDF", fontsize=9)
@@ -308,8 +304,8 @@ def plot_visibility_scaling(dirs, out_name, layout="grid", legend_pos="bottom"):
     fig_h = facet_h * nrows
     fig_w = facet_w * ncols
     if legend_pos == "right":
-        # One top-down column at the right edge; the bottom band then
-        # holds only the x label, which is what buys the height back.
+        # One column at the right edge; the bottom band then holds only
+        # the x label.
         legend_w_in, xlabel_in = 1.45, 0.24
         axes_right = 1 - legend_w_in / fig_w
         fig.legend(
@@ -326,14 +322,14 @@ def plot_visibility_scaling(dirs, out_name, layout="grid", legend_pos="bottom"):
             borderaxespad=0.1,
         )
         # The label is wider than the facet region, so center it on the
-        # full figure width and let it run under the legend column.
+        # full figure width; it may run under the legend column.
         fig.text(0.5, 0.015, xlabel, ha="center", va="bottom", fontsize=9)
         fig.tight_layout(
             pad=0.4, h_pad=0.7, rect=(0, xlabel_in / fig_h, axes_right, 1)
         )
     else:
         # One figure-level x-label above the legend: at publication font
-        # sizes the per-facet label no longer fits inside a facet's width.
+        # sizes a per-facet label does not fit in a facet's width.
         legend_in, xlabel_in = (0.24, 0.16) if layout == "row" else (0.56, 0.13)
         fig.legend(
             handles=handles,
@@ -359,9 +355,9 @@ def plot_visibility_scaling(dirs, out_name, layout="grid", legend_pos="bottom"):
 
 def plot_visibility_sweep(dirs, out_name):
     """Left: ozonedb first-read miss fraction vs achieved insert rate
-    (default vs linearizable_reads -- the strict line must sit at exactly
-    0 at every rate). Right: cr-sqlite visibility p50 vs sync interval
-    (log-log; tracks interval/2, i.e. staleness is structural)."""
+    (default vs linearizable_reads; the strict line must sit at 0 at every
+    rate). Right: cr-sqlite visibility p50 vs sync interval (log-log; it
+    tracks interval/2)."""
     oz = {True: [], False: []}
     cr = []
     for d in dirs:

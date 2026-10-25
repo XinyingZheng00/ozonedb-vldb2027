@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
-"""Gantt-style writer-activity timeline.
+"""Writer activity timeline of one churn trial.
 
-For a given trial dir, parses per-writer logs (writer_*.log) for paired
-"Compaction started" / "Compaction completed" timestamps and renders a
-horizontal-bar plot showing each writer's busy intervals over wall-clock
-time. Useful for seeing when writers are saturated vs. idle, and which
-writer ends up holding the cascade tail.
+Parses the writer_*.log files of a trial dir for paired "Compaction started"
+and "Compaction completed" timestamps, and draws one bar per compaction and
+writer over wall-clock time. The plot shows when a writer is busy or idle,
+and which writer holds the tail of the cascade.
 
 Usage:
     python3 plot_writer_activity.py <results_dir>/per_trial/<trial_id>
@@ -30,7 +29,7 @@ TS_RE = re.compile(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}:\d{3}) - Compaction (
 
 
 def parse_ts(s: str) -> float:
-    # Format: 2026-05-01 03:43:12:626  ->  unix-time seconds
+    # Format: "2026-01-01 12:34:56:789" -> unix time in seconds.
     dt = datetime.strptime(s, "%Y-%m-%d %H:%M:%S:%f")
     return dt.timestamp()
 
@@ -56,7 +55,7 @@ def parse_log(path: Path) -> list[tuple[float, float]]:
 
 def plot_trial(trial_dir: Path, out: Path, ymax: float | None = None,
                show_ylabel: bool = True) -> None:
-    # Numeric sort: writer_2 before writer_10 (plain sorted() is lexical).
+    # Numeric sort: writer_2 before writer_10.
     writer_logs = sorted(trial_dir.glob("writer_*.log"),
                          key=lambda p: int(re.search(r"writer_(\d+)\.log", p.name).group(1)))
     if not writer_logs:
@@ -75,15 +74,14 @@ def plot_trial(trial_dir: Path, out: Path, ymax: float | None = None,
         print(f"No compaction intervals parsed under {trial_dir}", file=sys.stderr)
         return
 
-    # Trial wallclock end: max completion across writers
+    # Trial end: the last completion across writers.
     t_end = max((iv[1] for _, ivs in series for iv in ivs), default=t0)
     duration = t_end - t0
 
     n_writers = len(series)
-    # Transposed layout: writers on the x-axis, wall-clock time running DOWN
-    # the y-axis. Makes each panel tall-and-narrow so N=8 and N=16 sit side
-    # by side in the paper. Width grows with the writer count; height fixed
-    # so the two panels share a time scale visually.
+    # Writers on the x axis, time on the y axis: a tall narrow panel, so two
+    # panels fit side by side. The width grows with the writer count; the
+    # height is fixed so panels share a time scale.
     FIG_H = 3
     fig_w = max(2.6, 1.0 + 0.32 * n_writers)
     fig, ax = plt.subplots(figsize=(fig_w, FIG_H))
@@ -97,20 +95,16 @@ def plot_trial(trial_dir: Path, out: Path, ymax: float | None = None,
                        fontsize=19 if n_writers <= 8 else 15)
     ax.tick_params(axis="y", labelsize=19)
     ax.set_xlim(-0.6, n_writers - 0.4)
-    # t=0 at the bottom, time flows upward. A caller-supplied ymax lets the
-    # N=8 and N=16 panels share an identical time scale.
+    # t=0 at the bottom. A caller-supplied ymax gives several panels one time scale.
     ax.set_ylim(0, ymax if ymax is not None else max(duration, 1.0))
     ax.set_xlabel("Writer", fontsize=19)
-    # Two lines: the label is tall on the narrow N=8 panel at this font size.
+    # Two lines: the label is tall on a narrow panel.
     ax.set_ylabel("Time since first\ncompaction (s)" if show_ylabel else "",
                   fontsize=19)
     ax.grid(True, axis="y", linestyle=":", alpha=0.5)
-    # Pin the axes rectangle to identical ABSOLUTE margins (inches) on every
-    # panel and do NOT crop with bbox_inches="tight": that crop hugs each
-    # panel's own content, so the N=8 (2-line y-label, big x-ticks) and N=16
-    # (no y-label, smaller x-ticks) plot boxes end up at different distances
-    # from the PDF's bottom edge -> bottoms don't line up when placed side by
-    # side. Fixed margins + equal-ratio \includegraphics widths keep them aligned.
+    # Fixed absolute margins (inches) on every panel, and no bbox_inches="tight":
+    # that crop follows each panel's own content, so side-by-side panels
+    # would not line up.
     left_in = 1.05 if show_ylabel else 0.52  # 2-line rotated label + y-tick nums
     fig.subplots_adjust(left=left_in / fig_w, right=1 - 0.12 / fig_w,
                         bottom=0.72 / FIG_H, top=1 - 0.12 / FIG_H)
@@ -142,7 +136,7 @@ def main() -> int:
         print(f"missing: {args.trial_dir}", file=sys.stderr)
         return 1
 
-    # If user passed a results-root, find all per_trial subdirs.
+    # A results root: plot every per_trial subdir.
     per_trial_root = args.trial_dir / "per_trial"
     if per_trial_root.is_dir():
         results_dir = args.trial_dir

@@ -3,32 +3,29 @@ set -euo pipefail
 
 # The Cassandra twin of run_multinode_ycsb_with_corfu.sh: sweep YCSB workloads
 # and writers-per-host over the client nodes against the Cassandra baseline
-# server(s), restoring the loaded snapshot before every trial.
+# servers. The loaded snapshot is restored before every trial.
 #
-# Loop order: trials -> workloads -> writers_per_host. Per iteration:
-#   1. on every server: cassandra_ctl.sh restore-load  (stop, data.load -> data)
-#   2. on every server: cassandra_ctl.sh start && wait
-#   3. run_multinode_ycsb.py --db_name cassandra [--cassandra_consistency MODE]
-#        --workloads <wl> --writers_per_host <n> --trial <k> [--max_exec_time <s>]
-#      (SSHes to every client host and launches its writer slice)
-#   4. on every server: cassandra_ctl.sh stop
-# After the sweep the servers are started once more and left running.
+# Loop order: trials -> workloads -> writers_per_host. Per iteration, on every
+# server: cassandra_ctl.sh restore-load (stop, data.load -> data), start, wait;
+# then run_multinode_ycsb.py --db_name cassandra [--cassandra_consistency MODE]
+# --workloads <wl> --writers_per_host <n> --trial <k> [--max_exec_time <s>];
+# then cassandra_ctl.sh stop on every server. After the sweep the servers are
+# started once more and left running.
 #
-# The consistency mode is a flag, never a ycsb.yaml edit, exactly like
-# --linearizable on the corfu path: --consistency is forwarded to every client
-# and lands in the result filenames as cassandra-one / -quorum / -serial.
-# The frontier is three invocations of this script with the same --run-tag:
-#   --consistency one     eventual        (== quorum at RF=1)
-#   --consistency quorum  strong-ish
-#   --consistency serial  linearizable    (LWT writes + SERIAL reads)
+# The consistency mode is a flag, never a ycsb.yaml edit, like --linearizable
+# on the corfu path. --consistency is forwarded to every client and labels the
+# result files cassandra-one / -quorum / -serial:
+#   one     eventual (== quorum at RF=1)
+#   quorum  quorum reads and writes
+#   serial  linearizable (LWT writes + SERIAL reads)
 #
 # PRECONDITIONS
 #   - setup.sh --role cassandra ran on every nodes.cassandra entry.
 #   - load_multinode_cassandra.sh produced data.load on every server
-#     (or pass --no-restore to run against whatever is loaded now).
+#     (or pass --no-restore to run against the current state).
 #   - cloudlab.hosts / nodes.ssh_user / nodes.ssh_private_key_path resolve.
-#   - Corfu is not being benchmarked at the same time: by default the
-#     Cassandra server shares the log node.
+#   - Corfu is not benchmarked at the same time: by default the Cassandra
+#     server shares the log node.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 : "${OZONEDB_HOME:=$(cd "$SCRIPT_DIR/../../.." && pwd)}"
@@ -150,8 +147,8 @@ if [[ -n "$RECORD_CNT" ]] && ! [[ "$RECORD_CNT" =~ ^[1-9][0-9]*$ ]]; then
 fi
 
 # ---------------------------------------------------------------------------
-# Servers from ycsb.yaml's nodes.cassandra (fallback nodes.log), never a
-# hardcoded constant -- the same rule the corfu wrapper follows.
+# Servers come from ycsb.yaml's nodes.cassandra (fallback nodes.log), never a
+# hardcoded constant.
 # ---------------------------------------------------------------------------
 cfg() { python3 "$OZONEDB_HOME/bench/scripts/ycsb_config.py" --config "$CONFIG" "$@"; }
 SSH_USER="$(cfg --get nodes.ssh_user)"

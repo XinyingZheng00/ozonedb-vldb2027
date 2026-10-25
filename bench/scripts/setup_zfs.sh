@@ -1,18 +1,14 @@
 #!/usr/bin/env bash
 #
-# Create the ZFS pool that backs /tank for local experiments.
+# Create the ZFS pool that backs /tank.
 #
 #   bash bench/scripts/setup_zfs.sh --device /dev/sda6
 #   bash bench/scripts/setup_zfs.sh --device /dev/sda6 --pool tank --force
 #
-# The previous version ran a bare `sudo fdisk /dev/sda`, which is interactive
-# and so could never run unattended, and hardcoded /dev/sda6. Nothing invoked
-# it. This version takes the device as an argument, refuses to guess, and
-# no-ops when the pool already exists.
-#
-# It does NOT partition anything. Partitioning is destructive and
-# machine-specific -- create the partition yourself (fdisk/parted/sgdisk), then
-# point this at it. `--list` shows candidate block devices.
+# The script takes the device as an argument, refuses to guess, and does
+# nothing when the pool exists. It does not partition anything: create the
+# partition yourself (fdisk/parted/sgdisk), then pass it. `--list` shows
+# candidate block devices.
 
 set -euo pipefail
 
@@ -94,7 +90,7 @@ fi
 }
 [[ -b "$DEVICE" ]] || die "$DEVICE is not a block device"
 
-# Refuse to eat a mounted or in-use device.
+# Refuse a mounted device.
 if lsblk -no MOUNTPOINT "$DEVICE" 2>/dev/null | grep -q .; then
   die "$DEVICE (or a child) is mounted. Unmount it first."
 fi

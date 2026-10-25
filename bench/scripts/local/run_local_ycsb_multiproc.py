@@ -1,4 +1,4 @@
-"""Run the YCSB run phase with N parallel writer processes.
+"""Run the YCSB run step with N parallel writer processes.
 
 The script generates one config file per writer from the shared base config. Then it
 starts N YCSB run processes against the loaded dataset and waits for them. At the end
@@ -36,27 +36,21 @@ from load_local_ycsb_multiproc import (
 )
 
 # bench/scripts is one level up. ycsb_config.derive() resolves the `nodes:`
-# block into the cloudlab.hosts / corfu.endpoint / s3.endpoint keys read below,
-# so those are computed in exactly one place.
+# block into the cloudlab.hosts, corfu.endpoint and s3.endpoint keys.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from ycsb_config import derive as _derive_addresses
 
 """
-Multi-process YCSB runner that emulates distributed readers/writers by
-spawning N YCSB processes in parallel against the dataset loaded by
-load_local_ycsb_multiproc.py.
+Each writer is one YCSB process against the dataset that
+load_local_ycsb_multiproc.py loaded. The operation count is split over
+total_writers: each process executes operationcount / total_writers operations
+over the full recordcount key range. For ozonedb-corfu all processes share the
+Corfu stream. For other backends each process reads its own cached dir, keyed
+by the global writer index.
 
-Operation space is split across total_writers: each process executes
-operationcount / total_writers operations over the full recordcount
-key range. For ozonedb-corfu all processes share the Corfu stream;
-for other backends each process reads from its own per-writer cached
-dir keyed by the global writer index.
-
-For multi-machine runs, pass --offset (starting writer index for
-this machine) and --total_writers (total writers across all
-machines). This machine runs writer indices [offset, offset +
-num_writers). Defaults (offset=0, total_writers=num_writers) match
-the original single-machine behavior.
+For multi-machine runs, pass --offset (first writer index on this machine) and
+--total_writers (writers across all machines). This machine runs writer indices
+[offset, offset + num_writers).
 
 Per-writer results are written as:
   {ks}-{opcnt}-{rc}-workload{w}-{label}_w{writer_idx}of{total}_t{thread}_trial{trial}.result
@@ -64,17 +58,14 @@ Aggregate is:
   ..._agg_w{total}_t{thread}_trial{trial}.result                    (single-machine)
   ..._agg_w{num}of{total}_off{offset}_t{thread}_trial{trial}.result (partial / multi-machine)
 
-{label} is the db_name plus the read mode: `ozonedb-corfu-linearizable`
-when --linearizable (or corfu.linearizable_reads) is on, else the plain
-db_name. Only the label changes -- db_name still selects the binding and
-the scratch/cached paths.
+{label} is the db_name plus the read mode (`ozonedb-corfu-linearizable` when
+strict reads are on). db_name still selects the binding and the paths.
 
-One invocation runs ONE trial. `local.run.repeated` must be 1: a repeat
-would rewrite the very same _trial{N} files, so repetition is expressed
-as trials (--trial N, driven by the caller), never as repeats.
+One invocation runs one trial. `local.run.repeated` must be 1: a repeat would
+overwrite the same _trial{N} files. Use --trial N for repetition.
 
-Set `num_writers`, `offset`, `total_writers` under `local.run` in
-ycsb.yaml, or pass the matching --flags.
+Set `num_writers`, `offset`, `total_writers` under `local.run` in ycsb.yaml,
+or pass the matching flags.
 """
 
 ozonedb_home = os.environ.get("OZONEDB_HOME")
@@ -117,8 +108,7 @@ def run_ycsb(
     if trial < 1:
         raise ValueError("trial must be >= 1")
     if repeated != 1:
-        # Every repeat would write the identical _trial{N} filenames and
-        # overwrite the previous round's numbers. Trials are the only
+        # Repeats overwrite the same _trial{N} files. Trials are the only
         # supported repetition: one invocation per --trial N.
         raise ValueError(
             f"local.run.repeated must be 1 (got {repeated}): repeats overwrite "
@@ -130,8 +120,8 @@ def run_ycsb(
             raise ValueError(
                 f"--linearizable only applies to db_name ozonedb-corfu (got {unsupported})"
             )
-        # Same override consistency.py --linearizable applies; the label
-        # below picks it up from the effective settings.
+        # Same override as consistency.py --linearizable. The label below
+        # reads it from the effective settings.
         corfu_settings = linearizable_corfu_settings(corfu_settings)
     if cassandra_consistency:
         unsupported = [d for d in db_names if d != "cassandra"]

@@ -1,4 +1,4 @@
-"""Run a YCSB phase on several client hosts at the same time.
+"""Run the YCSB run step on several client hosts at the same time.
 
 The script reads the hosts from ycsb.yaml. It starts the multi-process runner on every
 host over SSH, streams the remote logs, and copies the result files back with scp. Then
@@ -29,8 +29,7 @@ from load_local_ycsb_multiproc import (
 )
 
 # bench/scripts is one level up. ycsb_config.derive() resolves the `nodes:`
-# block into the cloudlab.hosts / corfu.endpoint / s3.endpoint keys read below,
-# so those are computed in exactly one place.
+# block into the cloudlab.hosts, corfu.endpoint and s3.endpoint keys.
 _SCRIPTS_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _SCRIPTS_DIR)
 from ycsb_config import derive as _derive_addresses
@@ -42,33 +41,24 @@ SERVER_SAMPLER_REMOTE = "ozonedb_server_sampler.sh"       # in $HOME on the serv
 SERVER_SAMPLES_REMOTE_DIR = "ozonedb_server_samples"      # $HOME/<this>/<run_tag>/
 
 """
-Multi-node YCSB orchestrator. SSHes to each host and invokes
-run_local_ycsb_multiproc.py with the slice of writers assigned to that
-host. After all hosts finish, per-writer result files are pulled back
-to the orchestrator and a cross-node aggregate is produced.
+The orchestrator SSHes to each host and starts run_local_ycsb_multiproc.py
+with that host's slice of writers, then pulls the per-writer result files
+back and writes a cross-node aggregate.
 
-Writer indices are global across the whole cluster:
+Writer indices are global across the cluster:
   host i -> writers [i * writers_per_host, (i+1) * writers_per_host)
   total_writers     = num_hosts * writers_per_host
 
-For ozonedb-corfu all writers share one Corfu stream — this is the
-intended shape for a real multi-node distributed shared-log run. For
-other backends each writer reads its own cached dir on its own host;
-the loader (load_local_ycsb_multiproc.py) must already have been run
-on every host so the cached_data-* dirs corresponding to that host's
-writer indices exist locally.
+For ozonedb-corfu all writers share one Corfu stream. For other backends
+load_local_ycsb_multiproc.py must have run on every host first.
 
-All hosts share an OZONEDB_RUN_TAG so each one writes its results to
-$OZONEDB_HOME/bench/results/local/<tag>/. The orchestrator pulls
-those into the same tag-named dir locally and aggregates.
-
-Hosts/SSH come from cloudlab.{hosts,ssh_user,ssh_private_key_path} in
-ycsb.yaml (overridable via --hosts / --ssh_user / --ssh_key). Per-node
-slice size and pass-throughs come from local.run.writers_per_host (or
---writers_per_host) plus optional --workloads / --trial / --max_exec_time
-/ --linearizable, all forwarded verbatim to every host's runner so one
-orchestrator invocation fully determines what every client runs -- no
-per-client ycsb.yaml edit is needed for a cell.
+All hosts share one OZONEDB_RUN_TAG and write to
+$OZONEDB_HOME/bench/results/local/<tag>/; the orchestrator pulls into the same
+tag dir locally. Hosts and SSH settings come from
+cloudlab.{hosts,ssh_user,ssh_private_key_path} in ycsb.yaml (--hosts,
+--ssh_user, --ssh_key override). Every other flag is forwarded to each host's
+runner, so one invocation determines what every client runs with no
+per-client ycsb.yaml edit.
 """
 
 ozonedb_home = os.environ.get("OZONEDB_HOME")
@@ -111,12 +101,9 @@ def resolve_ssh_key(config, ssh_key_arg):
 
 
 def ssh_base(target, ssh_key):
-    # ServerAlive*: a cell's ssh session carries no data while YCSB runs
-    # (its output goes to a file on the client), and a 600 s silent TCP
-    # connection through the campus NAT was dropped -- the remote side
-    # finished, the local ssh never noticed, and the cell hung until the
-    # timeout with return_codes={}. 30 s keepalives hold the NAT entry, and
-    # a dead link now fails the session within 3 min instead of never.
+    # ServerAlive*: the ssh session carries no data while YCSB runs (its
+    # output goes to a file on the client), so a NAT can drop it. 30 s
+    # keepalives hold the NAT entry, and a dead link fails within 3 min.
     return [
         "ssh",
         "-i", ssh_key,
@@ -143,13 +130,12 @@ def remote_ozonedb_home(target, ssh_key):
 
 
 def kill_remote_ycsb(target, ssh_key):
-    """SIGKILL any YCSB writer processes left on a host. Used when a cell
-    overruns its timeout: a writer stuck in the linearizable tailer catch-up
-    does 0 ops, so YCSB's between-ops maxexecutiontime never fires and the
-    process hangs forever, blocking the whole sweep. This unblocks it."""
-    # The bracket trick keeps the pattern from matching the remote shell
-    # that runs this very command (its argv holds the pattern text), which
-    # otherwise dies at the first pkill and never reaches the second.
+    """SIGKILL any YCSB writer processes left on a host.
+
+    Used when a cell overruns its timeout. A writer stuck in the linearizable
+    tailer catch-up does 0 ops, so YCSB's maxexecutiontime never fires."""
+    # The bracket keeps the pattern from matching the remote shell that runs
+    # this command, which would otherwise die at the first pkill.
     cmd = ssh_base(target, ssh_key) + [
         "pkill -9 -f '[s]ite.ycsb.Client'; pkill -9 -f '[r]un_local_ycsb_multiproc'; true"
     ]
@@ -181,10 +167,8 @@ def stream_remote(target, ssh_key, remote_command, log_path):
 def fetch_results(target, ssh_key, remote_dir, local_dir):
     """scp every entry from remote_dir into local_dir.
 
-    Captures stdout/stderr and the rc instead of suppressing them — a
-    silent scp failure is how a partial pull (e.g. one host's
-    per-machine aggregate missing) sneaks past cross_node_aggregate and
-    produces wrong totals.
+    Prints stdout, stderr and the rc. A silent scp failure would let a
+    partial pull reach cross_node_aggregate and produce wrong totals.
     """
     os.makedirs(local_dir, exist_ok=True)
     cmd = [
@@ -193,9 +177,8 @@ def fetch_results(target, ssh_key, remote_dir, local_dir):
         "-oStrictHostKeyChecking=no",
         "-oUserKnownHostsFile=/dev/null",
         "-r",
-        # `dir/*` (glob) instead of `dir/.` — SFTP-mode scp on OpenSSH 9.x
-        # rejects the `.` shortcut with "error: unexpected filename: ." but
-        # expands `*` via remote SFTP listing.
+        # `dir/*` instead of `dir/.`: SFTP-mode scp on OpenSSH 9.x rejects
+        # the `.` shortcut but expands `*` through a remote listing.
         f"{target}:{remote_dir}/*",
         local_dir,
     ]
@@ -268,17 +251,17 @@ def build_remote_command(remote_home, run_tag, host_offset, host_writers,
 
 
 # --------------------------------------------------------------------------
-# Server-side sampling. The orchestrator is the
-# one place that knows the cell's label, writer count and trial, and it
-# already SSHes and scps, so the sampler is driven from here rather than
-# from the two shell wrappers. Every failure here is a warning: a cell
-# without a server sample is still a valid throughput cell.
+# Server-side sampling. The orchestrator knows the cell's label, writer count
+# and trial, and already SSHes and scps, so it drives the sampler. Every
+# failure here is a warning: a cell without a server sample is still a valid
+# throughput cell.
 # --------------------------------------------------------------------------
 
 def cell_label(config, args):
-    """The result label the clients will write for this invocation, computed
-    with the same functions they use, so the server sample files carry the
-    same cell name as the per-writer result files."""
+    """The result label the clients write for this invocation.
+
+    Computed with the same functions the clients use, so the server sample
+    files carry the same cell name as the per-writer result files."""
     run_config = config["local"]["run"]
     if args.db_name:
         db_names = [d.strip() for d in args.db_name.split(",") if d.strip()]
@@ -312,8 +295,8 @@ def cell_label(config, args):
 def server_sample_targets(config, db_names):
     """SSH addresses of the stateful servers behind these backends, in order,
     without duplicates: the Corfu node and the object-store node for
-    ozonedb-corfu (one box on the current cluster), the Cassandra nodes for
-    cassandra. Other backends have no server."""
+    ozonedb-corfu, the Cassandra nodes for cassandra. Other backends have no
+    server."""
     out = []
 
     def add(addr):
@@ -381,7 +364,7 @@ def sampler_fetch(target, ssh_key, remote_dir, cell, local_dir):
 
 
 class ServerSampling:
-    """start() before the writers launch, stop() after they exit. Samples
+    """Call start() before the writers launch and stop() after they exit. Samples
     land in <local_results_root>/_server/<host>/<cell>.{before,after,pidstat}.txt."""
 
     def __init__(self, config, ssh_user, ssh_key, run_tag, cell, local_results_root, hosts):
@@ -415,8 +398,8 @@ class ServerSampling:
                 print(f"[{target}] WARNING: server sample incomplete: {e}")
 
 
-# `db` is the result LABEL, which may carry a read-mode suffix
-# (ozonedb-corfu-linearizable); the lazy `.+?` stops at the `_w{idx}of` tail.
+# `db` is the result label, which may carry a read-mode suffix
+# (ozonedb-corfu-linearizable). The lazy `.+?` stops at the `_w{idx}of` tail.
 _PERWRITER_RE = re.compile(
     r"^(?P<ks>[^-]+)-(?P<opcnt>\d+)-(?P<rc>\d+)-workload(?P<wl>[^-]+)-"
     r"(?P<db>.+?)_w(?P<widx>\d+)of(?P<total>\d+)_t(?P<thread>\d+)"
@@ -428,9 +411,8 @@ def cross_node_aggregate(results_root, total_writers, wall_ms, trial_filter=None
     """Group per-writer files merged from every node and emit one aggregate
     per (workload, key_size, op_cnt, rec_cnt, db, thread, trial) tuple.
 
-    Validates per-group file count matches total_writers and prints
-    missing writer indices loudly — silent under-reporting (e.g. when scp
-    drops a host's files) would otherwise produce wrong totals.
+    Checks that each group holds total_writers files and prints the missing
+    writer indices. A silent shortfall would produce wrong totals.
     """
     if not os.path.isdir(results_root):
         print(f"[aggregate] {results_root} missing; nothing to do")
@@ -777,16 +759,14 @@ def main():
             rcs[p["host"]] = -1
 
     # Per-cell wall-clock timeout. A writer stuck in linearizable catch-up
-    # hangs forever (0 ops -> maxexecutiontime never fires), so without this
-    # one bad host blocks the entire sweep. Default: generous room over the
-    # run itself for catch-up + scp, only when a run cap is set.
+    # hangs forever (0 ops, so maxexecutiontime never fires) and would block
+    # the sweep. Default: twice the run cap plus 120 s, only when a cap is set.
     cell_timeout = args.cell_timeout
     if cell_timeout is None and args.max_exec_time:
         cell_timeout = args.max_exec_time * 2 + 120
 
-    # A SIGTERM (the shell wrapper's trap, a killed campaign chain) must not
-    # leave the writers running on the clients: they would sit on a stopped
-    # Corfu until the next cell's preflight finds them.
+    # A SIGTERM must not leave the writers running on the clients: they would
+    # sit on a stopped Corfu.
     def on_term(signum, frame):
         print(f"[orchestrator] signal {signum}: killing remote YCSB on all hosts")
         for p in plan:

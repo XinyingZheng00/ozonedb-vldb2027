@@ -1,16 +1,15 @@
 #!/usr/bin/env python3
-"""Generate v4 plots from a results dir.
+"""Plot the churn experiment from a trials.csv (paper Table 4 and Fig 15).
 
-Splits the CSV by `vary` column into the writers-vary and abort-vary
-plots:
+The `vary` column splits the rows into the writers sweep and the abort sweep:
   results/v4_<ts>/plots/completion_time_vs_writers.pdf   (vary=writers)
   results/v4_<ts>/plots/completion_time_vs_abort.pdf     (vary=abort)
-  results/v4_<ts>/plots/max_generation.pdf          (combined)
-  results/v4_<ts>/plots/generation_dist.pdf         (combined)
+  results/v4_<ts>/plots/max_generation.pdf          (both)
+  results/v4_<ts>/plots/generation_dist.pdf         (both)
 
-The 8 s quiescence-grace floor (orchestrator waits for n_total to be
-flat for 8 s before declaring completed) is annotated on the plots and
-also reported as "actual completion time ≈ completion_time_s − 8 s".
+The runner declares a trial complete only after n_total has been flat for
+8 s. The plots mark that 8 s grace floor, and the actual completion time is
+completion_time_s minus 8 s.
 """
 
 from __future__ import annotations
@@ -71,16 +70,13 @@ def plot_completion_vs_writers(rows: list[dict], out: Path) -> None:
     xs = [int(r["n_writers"]) for r in rows]
     ys_total = [to_float(r["completion_time_s"]) or 0 for r in rows]
     ys_actual = [max(0.001, y - QUIESCENCE_GRACE_S) for y in ys_total]
-    # Throughput: workload data (1 KB/record) divided by actual completion time.
-    # Records-per-second × 1KB / 1MB → MB/s of user data fully processed
-    # through the entire compaction cascade.
+    # Compaction speed: records × 1 KB, in MB, divided by the actual completion time.
     ys_speed = [
         (int(r["record_count"]) / (1024.0)) / t
         for r, t in zip(rows, ys_actual)
     ]
 
-    # Larger fonts for the paper figure (Fig. 12); kept short vertically, so
-    # the y-labels are two lines to fit the reduced plot height.
+    # Paper figure fonts; the y labels take two lines to fit the short height.
     LABEL_SIZE, TICK_SIZE, PANEL_SIZE = 17, 16, 17
     fig, axes = plt.subplots(1, 2, figsize=(9.0, 2.45))
     ax_t, ax_s = axes
@@ -103,16 +99,14 @@ def plot_completion_vs_writers(rows: list[dict], out: Path) -> None:
     ax_s.tick_params(axis="both", labelsize=TICK_SIZE)
     ax_s.grid(True, linestyle=":", alpha=0.5)
 
-    # Panel labels in a thin band below the plots; suptitle dropped (the paper
-    # caption covers it -- per-axis titles are commented out too). Height is
-    # trimmed from the plot area instead of from this band.
+    # Panel labels in a thin band below the plots. No title: the paper
+    # caption covers it.
     fig.tight_layout(rect=[0, 0.10, 1, 1.0])
     for ax, label in ((ax_t, "(a)"), (ax_s, "(b)")):
         bbox = ax.get_position()
         fig.text((bbox.x0 + bbox.x1) / 2, 0.01, label,
                  ha="center", va="bottom", fontsize=PANEL_SIZE)
-    # bbox_inches/pad_inches: crop the leftover margins tight_layout's fixed
-    # rect leaves around the edges, instead of just reserving a fixed band.
+    # bbox_inches crops the margins that the fixed rect leaves at the edges.
     fig.savefig(out, bbox_inches="tight", pad_inches=0.02)
     plt.close(fig)
 
@@ -217,16 +211,16 @@ def plot_max_generation(rows: list[dict], out: Path) -> None:
 
 
 def plot_generation_distribution(rows: list[dict], out: Path) -> None:
-    """Stacked horizontal bars: one row per abort rate (mean across reps),
-    segments colored by final generation. Shows what fraction of tasks
-    completed cleanly (gen 0) vs. needed retries."""
+    """Stacked horizontal bars: one row per abort rate (mean across repeats),
+    one segment per final generation. Generation 0 is a task that completed
+    without a retry."""
     if not rows:
         return
     abort_rows = [r for r in rows if r["vary"] == "abort"]
     if not abort_rows:
         return
 
-    # Group by abort rate, aggregate generation distributions per R
+    # Sum the generation distributions per abort rate.
     from collections import defaultdict
     groups: dict[float, list[dict]] = defaultdict(list)
     for r in abort_rows:
@@ -246,12 +240,11 @@ def plot_generation_distribution(rows: list[dict], out: Path) -> None:
         all_gens.update(summed.keys())
     gens = sorted(all_gens)
 
-    # Larger fonts for the paper figure (Fig. 14); wider so they fit, and
-    # kept short vertically.
+    # Paper figure fonts; wide and short.
     LABEL_SIZE, TICK_SIZE, LEGEND_SIZE = 20, 18, 17
     fig, ax = plt.subplots(figsize=(9.2, 0.9 + 0.42 * len(rates)))
     ys = list(range(len(rates)))
-    # Normalize each row so all bars span 0..1 (proportional view).
+    # Normalize each row to 0..1.
     totals = [sum(per_rate_mean[rate].values()) or 1.0 for rate in rates]
     lefts = [0.0] * len(rates)
     cmap = plt.get_cmap("viridis")
@@ -266,36 +259,26 @@ def plot_generation_distribution(rows: list[dict], out: Path) -> None:
     ax.set_yticks(ys)
     ax.set_yticklabels([f"R={int(100 * r)}%" for r in rates], fontsize=TICK_SIZE)
     ax.tick_params(axis="x", labelsize=TICK_SIZE)
-    # Tight y-limits (vs. plain invert_yaxis()) trim the auto-added top/bottom
-    # margin so the 5 rows -- still with their gaps, unlike the touching-bars
-    # version -- span closer to the legend's height instead of looking short.
+    # Tight y limits remove the automatic top and bottom margin and put the
+    # first row at the top.
     ax.set_ylim(len(rates) - 0.5, -0.5)
     ax.set_xlim(0, 1)
     ax.set_xlabel("Fraction of tasks", fontsize=LABEL_SIZE)
-    # Title dropped -- the paper caption ("Version-number distribution vs.
-    # abort ratios.") covers it, matching the other paper plots in this file.
-    # Multi-column so the ~12 version entries don't make a tall single strip
-    # that fights the short figure height.
-    # upper-left anchor at y=1.0 (axes top) instead of center-left at y=0.5:
-    # the legend entries now start level with the top bar (R=1%) instead of
-    # being vertically centered on the whole block.
-    # No `title=` here -- matplotlib always renders a legend title above the
-    # entries, with no built-in way to put it below. Instead the label
-    # "Version number" is placed as its own text under the legend once we
-    # know where the legend actually ended up (below).
+    # No title: the paper caption covers it. Two legend columns keep the
+    # legend short. The upper-left anchor starts the entries level with the
+    # top bar. matplotlib puts a legend title above the entries, so the label
+    # "Version number" is placed below the legend once its extent is known.
     leg = ax.legend(loc="upper left", bbox_to_anchor=(1.02, 1.08),
                     fontsize=LEGEND_SIZE, frameon=False,
                     ncol=2, columnspacing=1.0, handletextpad=0.4)
     ax.grid(True, axis="x", linestyle=":", alpha=0.5)
     fig.tight_layout()
-    fig.canvas.draw()  # legend needs a real layout pass to know its extent
+    fig.canvas.draw()  # the legend extent needs a layout pass
     bbox_fig = leg.get_window_extent(fig.canvas.get_renderer()).transformed(
         fig.transFigure.inverted())
     fig.text((bbox_fig.x0 + bbox_fig.x1) / 2, bbox_fig.y0 - 0.02,
              "Version number", ha="center", va="top", fontsize=LEGEND_SIZE)
-    # bbox_inches: the legend sits outside the axes on the right; on the
-    # shortened figure tight_layout alone can clip it (or the label below it).
-    # pad_inches trimmed to the minimum so the crop is as tight as possible.
+    # bbox_inches keeps the legend and its label, which sit outside the axes.
     fig.savefig(out, bbox_inches="tight", pad_inches=0.02)
     plt.close(fig)
 

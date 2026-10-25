@@ -2,11 +2,11 @@
 """Minimal CQL client for cassandra_ctl.sh, run from the venv that setup.sh
 builds ($CASSANDRA_INSTALL_DIR/pyenv).
 
-Why this exists: the cqlsh bundled with Cassandra 5.0 refuses Python >= 3.12
-(its driver imports asyncore, removed in 3.12), and the CloudLab image ships
-only Python 3.12. So the bench installs cassandra-driver in a venv and drives
-CQL through this instead of cqlsh. The libev reactor (built from libev-dev) is
-the one that actually connects on 3.12; the asyncio reactor times out.
+The cqlsh bundled with Cassandra 5.0 refuses Python >= 3.12 (its driver
+imports asyncore, removed in 3.12), and the CloudLab image ships only
+Python 3.12. So the bench installs cassandra-driver in a venv and drives
+CQL through this script. The libev reactor (built from libev-dev) connects
+on 3.12; the asyncio reactor times out.
 
 Usage:
     cassandra_cql.py --host H --port P -e "CQL; CQL; ..."
@@ -20,7 +20,7 @@ import argparse
 import sys
 import warnings
 
-# The driver's legacy-parameter DeprecationWarning is noise on every call.
+# Silence the driver's legacy-parameter DeprecationWarning.
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 

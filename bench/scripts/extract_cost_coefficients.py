@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Per-cell cost coefficients from a results directory.
+"""Per-cell cost coefficients from a results directory (input of paper Fig 12).
 
 One TSV row per cell (label, workload, writers, trial), built from:
 
@@ -48,12 +48,11 @@ LOAD_RE = re.compile(
     r"^(?P<ks>[^-]+)-(?P<rc>\d+)-insert-(?P<label>.+?)_w(?P<widx>\d+)of(?P<total>\d+)"
     r"_t(?P<thread>\d+)\.result$"
 )
-# `_rc<N>` is the record count of a load cell. The two load wrappers write it
-# because both dataset sizes of a campaign load into the same results root
-# and the same sample cell name: the 10 GB load of cost-20260827 overwrote
-# the 1 GB load's server sample. A sample with `_rc` matches only rows of
-# that record count; a sample without it (run cells, whose tag directory
-# already separates dataset sizes) matches any.
+# `_rc<N>` is the record count of a load cell. The load wrappers write it
+# because two dataset sizes can load into the same results root under the
+# same sample cell name. A sample with `_rc` matches only rows of that
+# record count; a sample without it (run cells, whose tag directory
+# separates dataset sizes) matches any.
 SAMPLE_RE = re.compile(
     r"^(?P<label>.+?)_workload(?P<wl>[^_]+)_w(?P<total>\d+)(?:_rc(?P<rc>\d+))?_trial(?P<trial>\d+)"
     r"\.(?P<kind>before|after|pidstat|minio)\.txt$"
@@ -63,15 +62,14 @@ SERIES_RE = re.compile(r"^(\d+) (\w+)(\{[^}]*\})? ([-+0-9.eE]+)$")
 YCSB_RE = re.compile(r"^\[([A-Z\-]+)\],\s*([^,]+?),\s*(.+?)\s*$")
 CACHE_RE = re.compile(
     r"\[lru_cache\] sstable hits=(\d+) misses=(\d+) hit_rate=([\d.]+)% capacity=(\d+)"
-    # Bytes held at close. cache_fill = current_size / capacity tells a cell
-    # whose per-writer cache never filled (a 5 GiB cache fills at the writer's
-    # own miss rate, ~1.9 MB/s at 10 GB, so a 600 s cell closes 25 % full and
-    # its h is the hit rate of a much smaller cache).
+    # Bytes held at close. cache_fill = current_size / capacity flags a cell
+    # whose per-writer cache never filled; its h is then the hit rate of a
+    # smaller cache.
     r"(?: current_size=(\d+) files=(\d+))?"
 )
-# Second stats line: hits and misses
-# per SSTable level as "<level>:<count>" pairs, blocks of files not in
-# the View, retired Table objects, and the warm-worker counters.
+# Second stats line: hits and misses per SSTable level as "<level>:<count>"
+# pairs, blocks of files not in the View, retired Table objects, and the
+# warm-worker counters.
 LEVELS_RE = re.compile(
     r"\[lru_cache\] levels hits=(?P<hits>[\d:,]+) misses=(?P<misses>[\d:,]+)"
     r" sstable_files=(?P<sstable_files>\d+) dead_files=(?P<dead_files>\d+)"
@@ -82,9 +80,9 @@ LEVELS_RE = re.compile(
     r" skipped_affinity=(?P<skipped_affinity>\d+) skipped_gone=(?P<skipped_gone>\d+)"
     r" skipped_built=(?P<skipped_built>\d+) dropped=(?P<dropped>\d+) warm_hits=(?P<warm_hits>\d+)"
 )
-# Disk-cache tier stats line, printed after the
-# [lru_cache] lines when disk_cache_dir is set. All twenty fields are parsed;
-# only a subset become TSV columns (build_row).
+# Disk-cache tier stats line, printed after the [lru_cache] lines when
+# disk_cache_dir is set. Every field is parsed; build_row turns a subset
+# into TSV columns.
 DISK_RE = re.compile(
     r"\[disk_cache\] hits=(?P<hits>\d+) misses=(?P<misses>\d+) hit_bytes=(?P<hit_bytes>\d+)"
     r" miss_bytes=(?P<miss_bytes>\d+) passthrough=(?P<passthrough>\d+) fills=(?P<fills>\d+)"
@@ -94,9 +92,8 @@ DISK_RE = re.compile(
     r" writethrough_files=(?P<writethrough_files>\d+) evictions=(?P<evictions>\d+)"
     r" evicted_bytes=(?P<evicted_bytes>\d+) invalidated=(?P<invalidated>\d+) files=(?P<files>\d+)"
     r" bytes=(?P<bytes>\d+) capacity=(?P<capacity>\d+)"
-    # Chunk-mode tail. Optional, so the file-mode
-    # result files still parse; the groups then come back None and read as
-    # 0 / "file" below.
+    # Chunk-mode tail. Optional, so file-mode result files still parse; the
+    # groups then come back None and read as 0 / "file" below.
     r"(?: fetch_bytes=(?P<fetch_bytes>\d+) admit_rejected=(?P<admit_rejected>\d+)"
     r" entries=(?P<entries>\d+) mode=(?P<mode>\w+) entry_bytes=(?P<entry_bytes>\d+)"
     r" punch_failed=(?P<punch_failed>\d+))?"
@@ -127,8 +124,7 @@ def level_buckets(counts):
         elif lvl >= 4:
             b["l4plus"] += n
     return b
-# The optional "(native)" token names the Corfu client; older result files
-# have none, and files from the retired embedded-JVM client say "(jni)".
+# The optional "(<client>)" token after "replay" names the Corfu client.
 REPLAY_RE = re.compile(
     r"\[corfu\] initial replay (?:\([a-z]+\) )?drained (\d+) entries in (\d+) batches, (\d+) ms.*?"
     r"stream_MB=(\d+) live_files=(\d+) live_MB=(\d+)"
@@ -302,9 +298,9 @@ def parse_snapshot(path):
 
 def parse_pidstat(path, pid_class, default_interval=10.0):
     """CPU-seconds per process class from `pidstat -h -u -r -p … N` output.
-    Every row is one process over one interval; %CPU x interval / 100 is its
-    CPU-seconds. The interval is the gap between consecutive samples of the
-    same pid (default_interval before the second sample)."""
+    Every row is one process over one interval; %CPU x interval / 100 is
+    its CPU-seconds. The interval is the gap between consecutive samples
+    of the same pid (default_interval before the second sample)."""
     cpu_s = defaultdict(float)
     rss_kb = defaultdict(float)
     last_t = {}
@@ -325,8 +321,8 @@ def parse_pidstat(path, pid_class, default_interval=10.0):
             if len(parts) < len(cols) - 1:
                 continue
             # `pidstat -h -H` prints epoch seconds in the Time column. Without
-            # -H (older sysstat) it prints a clock time, possibly with AM/PM as
-            # an extra token; then every row counts as one default interval.
+            # -H it prints a clock time, possibly with AM/PM as an extra token;
+            # then every row counts as one default interval.
             if len(parts) == len(cols) + 1 and parts[1] in ("AM", "PM"):
                 parts = [parts[0] + parts[1]] + parts[2:]
             row = dict(zip(cols, parts))
@@ -388,13 +384,12 @@ def parse_series(path):
 def steady_rates(series, window, end_at=None):
     """Request rates over the last `window` seconds of the run.
 
-    `end_at` is the writers' last activity in sampler epoch seconds; the
-    window ends at the last sample at or before it, so the idle tail between
-    the writers' exit and the sampler's stop is not averaged in. Without it
-    the window ends at the last sample whose counters moved, which is only
-    the same thing while the object store is busy for as long as the writers
-    are: with a disk-cache tier that holds the dataset the counters stop at
-    the end of the fill burst, and that fallback would report the fill as
+    `end_at` is the writers' last activity in sampler epoch seconds. The
+    window ends at the last sample at or before it, so the idle tail
+    between the writers' exit and the sampler's stop is not averaged in.
+    Without it the window ends at the last sample whose counters moved.
+    With a disk-cache tier that holds the dataset, the counters stop at
+    the end of the fill burst, so that fallback would report the fill as
     the steady state."""
     if len(series) < 2:
         return None
@@ -464,9 +459,9 @@ def load_samples(results_dir):
 
 def samples_for(samples, label, wl, total, trial, rc=None):
     """Exact cell first (record-count-tagged, then untagged); else a sample
-    whose workload token lists this workload (one orchestrator call that
-    ran several workloads). A record-count-tagged sample never matches a
-    row of another record count."""
+    whose workload token lists this workload (one orchestrator call ran
+    several workloads). A record-count-tagged sample never matches a row
+    of another record count."""
     for key in ((label, wl, total, trial, rc), (label, wl, total, trial, None)):
         exact = samples.get(key)
         if exact:
@@ -523,8 +518,8 @@ def build_row(key, writers, samples, shared, record_bytes, window=60, tag=""):
         "cache_ratio": round(caps[0] / (rc * record_bytes), 7) if caps and rc else "",
         "cache_fill": round(sum(size_end) / sum(caps), 4) if size_end and caps and sum(caps) else "",
     }
-    # Second cache line: sums over the writers that printed it. Absent on
-    # result files from builds before part C, so every column stays "".
+    # Second cache line: sums over the writers that printed it. When no
+    # writer printed it, every column stays "".
     levels = [w["levels"] for w in ws if w["levels"]]
     if levels:
         for c in LEVEL_COLUMNS:
@@ -563,11 +558,10 @@ def build_row(key, writers, samples, shared, record_bytes, window=60, tag=""):
             "disk_fill_bytes": disk_sums["fill_bytes"],
             "disk_fill_gets": disk_sums["fill_gets"],
             "disk_fill_gets_per_op": round(disk_sums["fill_gets"] / ops, 5) if ops else "",
-            # A fill that fails leaves no local copy and no eviction, so a
-            # non-zero disk_fill_failed silently flattens disk_h and every
-            # coefficient read off it; disk_fill_dropped is the queue bound
-            # biting; disk_passthrough is the non-SSTable traffic the tier
-            # forwards untouched (checkpoint/LATEST, datalog*).
+            # A failed fill leaves no local copy and no eviction, so a non-zero
+            # disk_fill_failed flattens disk_h and every coefficient read off
+            # it. disk_fill_dropped is the queue bound. disk_passthrough is the
+            # non-SSTable traffic the tier forwards (checkpoint/LATEST, datalog*).
             "disk_fill_failed": disk_sums["fill_failed"],
             "disk_fill_dropped": disk_sums["fill_dropped"],
             "disk_passthrough": disk_sums["passthrough"],
@@ -578,8 +572,8 @@ def build_row(key, writers, samples, shared, record_bytes, window=60, tag=""):
             "disk_capacity": disk_sums["capacity"],
             "disk_ratio": round(disks[0]["capacity"] / (rc * record_bytes), 7) if rc else "",
             "disk_fetch_bytes": disk_sums["fetch_bytes"],
-            # bytes pulled from the backing per byte the workload asked for:
-            # ~100 for the file-mode tier, the chunk-to-block ratio in chunk mode
+            # Bytes pulled from the backing per byte the workload asked for:
+            # the chunk-to-block ratio in chunk mode, far larger in file mode.
             "disk_amp": round(disk_sums["fetch_bytes"] / disk_sums["miss_bytes"], 2) if disk_sums["miss_bytes"] else "",
             "disk_admit_rejected": disk_sums["admit_rejected"],
             "disk_entries": disk_sums["entries"],
@@ -602,9 +596,9 @@ def build_row(key, writers, samples, shared, record_bytes, window=60, tag=""):
         b, a = e["before"], e["after"]
         if e["series"] and rates is None:
             # The writers report elapsed seconds; the sampler reports epoch
-            # seconds and its `before` snapshot is taken at cell start, so
-            # start + the longest writer's last status line is the end of
-            # the run on the sampler's clock.
+            # seconds and takes its `before` snapshot at cell start. So start
+            # + the longest writer's last status line is the run end on the
+            # sampler's clock.
             start_t = (e["before"] or {}).get("time") or e["series"][0][0]
             end_at = start_t + writer_last_t if writer_last_t else None
             rates = steady_rates(e["series"], window, end_at)
@@ -646,9 +640,9 @@ def build_row(key, writers, samples, shared, record_bytes, window=60, tag=""):
     put_class = agg["put"] + agg["list"]
     # Steady state: the request rate over the last window of activity against
     # the steady ops/s of the same window. h_steady assumes every miss costs
-    # g GETs (g from the cumulative counters of this cell) and charges all
-    # GETs to reads, so it is exact for a read-only workload and slightly
-    # pessimistic under writes (compaction input reads count as misses).
+    # g GETs (g from this cell's cumulative counters) and charges all GETs to
+    # reads. It is exact for a read-only workload and slightly pessimistic
+    # under writes (compaction input reads count as misses).
     steady_sum = sum(steady) if steady else 0.0
     g_cum = get_class / sum(misses) if (have_counters and misses and sum(misses)) else None
     read_frac = reads / ops if ops else 0.0
@@ -711,8 +705,8 @@ def build_row(key, writers, samples, shared, record_bytes, window=60, tag=""):
         "server_nproc": nproc or "",
         "server_elapsed_s": round(elapsed) if elapsed else "",
         # Busy fraction over the writers' run window, not the sampler's
-        # elapsed time: a cell whose orchestrator overran (ssh hang) has a
-        # long idle tail in the sample that would dilute the fraction.
+        # elapsed time: a cell whose orchestrator overran has a long idle
+        # tail in the sample that would dilute the fraction.
         "server_busy_frac": round(sum(cpu.values()) / ((row.get("run_s") or elapsed) * nproc), 4) if cpu and (row.get("run_s") or elapsed) and nproc else "",
         "notes": ";".join(notes),
     })

@@ -1,6 +1,6 @@
 ---
-# Stand up a freshly provisioned CloudLab node straight from this working tree.
-# No git clone on the node, no GitHub credentials, no PAT leaving your laptop.
+# Set up a freshly provisioned CloudLab node from this working tree. No git
+# clone on the node and no GitHub credentials.
 #
 #   cd $OZONEDB_HOME/bench/ansible
 #   ansible-playbook bootstrap.yml                          # push + setup.sh --role client
@@ -9,13 +9,12 @@
 #   ansible-playbook bootstrap.yml -e run_setup=false       # push only
 #   ansible-playbook bootstrap.yml -e include_git=false     # skip .git (~40 MB)
 #
-# The working tree is rsynced without vcpkg/ and build/: setup.sh clones vcpkg
-# at the baseline pinned in vcpkg.json and builds the dependencies on the node.
-# Use sync.yml for every push after this one.
+# The push excludes vcpkg/ and build/: setup.sh clones vcpkg at the baseline
+# in vcpkg.json and builds the dependencies on the node. Use sync.yml for
+# every later push.
 #
-# setup.sh takes a long time on first run (the vcpkg dependency build, and
-# CorfuDB on the log node), so it runs detached via async rather than holding
-# an SSH channel open for the whole build.
+# The first setup.sh run is long (the vcpkg dependency build, and CorfuDB on
+# the log node), so it runs detached through async.
 
 - name: Bootstrap CloudLab nodes from the local working tree
   hosts: "{{ target | default('clients') }}"
@@ -24,10 +23,8 @@
 
   vars:
     repo_src: "{{ playbook_dir }}/../../"
-    # Defaults to the roles the inventory assigns from `nodes:` -- client for
-    # nodes.clients, corfu-server for nodes.log, minio for nodes.store; a host
-    # in several groups gets all of its roles. So `-e target=nodes` provisions
-    # the whole cluster correctly in one pass.
+    # Default: the roles the inventory derives from `nodes:` (client,
+    # corfu-server, minio). A host in several groups gets all of its roles.
     setup_roles: "{{ ozonedb_roles | default([ozonedb_role | default('client')]) }}"
     setup_extra_args: ""
     run_setup: true

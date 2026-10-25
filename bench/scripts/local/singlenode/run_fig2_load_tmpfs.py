@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Load-phase orchestrator pointed at tmpfs (/dev/shm) instead of the data disk.
+"""Load step driver on tmpfs (/dev/shm) instead of the data disk.
 
-The tank version of this benchmark is sustained-sync-write-bandwidth-limited
-on the SATA SSD; running the same load on tmpfs (where fsync is a no-op)
-isolates the engine-level bottleneck from the storage bottleneck.
+On tmpfs fsync is a no-op, so the load measures the engine and not the
+storage device.
 
-Output:  /dev/shm/ycsb_tmpfs_load/load_results.csv
+Output (RESULTS_DIR = $OZONEDB_HOME/bench/results/local/fig1-single-writer-local):
+    RESULTS_DIR/{system}_load_tmpfs_t1_r1.log    per-system log
+    RESULTS_DIR/load_tmpfs_results.csv           summary
 """
 
 from __future__ import annotations
@@ -22,7 +23,7 @@ from pathlib import Path
 
 
 def _require_env(name: str) -> Path:
-    """Resolve a required environment variable to a Path, or exit clearly."""
+    """Return the Path in a required environment variable, or exit."""
     value = os.environ.get(name)
     if not value:
         raise SystemExit(f"{name} is not set")
@@ -40,7 +41,7 @@ ROCKSDB_PREFIX = Path(os.environ.get("ROCKSDB_PREFIX", ""))
 TMPFS_ROOT = Path("/dev/shm/ycsb_tmpfs_load")
 RESULTS_DIR = OZONEDB_HOME / "bench" / "results" / "local" / "fig1-single-writer-local"
 RECORD_COUNT = 1_000_000
-# GNU time (for max RSS): wherever PATH has it; /usr/bin/time on the Ubuntu nodes.
+# GNU time, for max RSS. /usr/bin/time on the Ubuntu nodes.
 TIME_BIN = shutil.which("time") or "/usr/bin/time"
 
 THROUGHPUT_RE = re.compile(
@@ -68,7 +69,7 @@ def diskstats_sectors(device: str) -> int:
 
 
 def run_one(name: str, work_path: Path) -> dict:
-    """Run a single-threaded load for `name` against the tmpfs work_path."""
+    """Run a single-threaded load of `name` into the tmpfs work_path."""
     print(f"\n=== load (tmpfs): {name} ===", flush=True)
     if work_path.exists():
         if work_path.is_dir():
@@ -121,7 +122,7 @@ def run_one(name: str, work_path: Path) -> dict:
                 "--workload_name", "a", "--key_size", "1KB",
                 "--operation_cnt", str(RECORD_COUNT), "--record_cnt", str(RECORD_COUNT),
             ], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        # Patch shared_config to point at tmpfs.
+        # Write a copy of the single-node config that points at tmpfs.
         shared_base = OZONEDB_HOME / "src" / "config" / "local" / "shared_config_singlenode.json"
         with open(shared_base) as f:
             cfg = json.load(f)
@@ -162,7 +163,7 @@ def run_one(name: str, work_path: Path) -> dict:
         f.write("\n=== STDOUT ===\n"); f.write(proc.stdout or "")
         f.write("\n=== STDERR ===\n"); f.write(proc.stderr or "")
 
-    # Cleanup tmpfs DB.
+    # Remove the tmpfs DB.
     if work_path.exists():
         if work_path.is_dir():
             shutil.rmtree(work_path, ignore_errors=True)

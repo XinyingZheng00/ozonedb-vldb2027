@@ -1,26 +1,22 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Orchestrate a Corfu server on a remote node while sweeping YCSB workloads
-# and writer-process counts on this machine.
+# Run a Corfu server on a remote node and sweep YCSB workloads and writer
+# counts on this machine.
 #
 # Loop order: trials -> workloads -> writers. Corfu is restarted on every
-# (trial, workload, writers) iteration. All iterations share a single
-# OZONEDB_RUN_TAG so their result files land under one timestamped dir.
+# iteration. All iterations share one OZONEDB_RUN_TAG, so the result files
+# land under one timestamped dir.
 #
 # Per iteration:
-#   1. start corfu on $REMOTE_HOST:
-#        cd $CORFU_DIR && rm -rf /mnt/corfu/run_batch/corfu \
-#          && cp -r /mnt/corfu/load/corfu /mnt/corfu/run_batch \
-#          && JAVA_ARGS="-Xmx120g" ./bin/corfu_server \
-#                 -l /mnt/corfu/run_batch -s -a $BIND_HOST $CORFU_PORT
+#   1. start corfu on $REMOTE_HOST with a clean /mnt/corfu/run_batch copied
+#      from /mnt/corfu/load
 #   2. run run_local_ycsb_multiproc.py with
 #      --workloads=<wl> --num_writers=<n> --trial=<k>
 #   3. stop corfu
-# After the full sweep, corfu is started one more time (so the node is left
-# ready for a subsequent manual run).
+# After the sweep, corfu is started once more and left running.
 #
-# On error before the final start, corfu is stopped so nothing leaks.
+# On an error before the final start, corfu is stopped.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 : "${OZONEDB_HOME:=$(cd "$SCRIPT_DIR/../../.." && pwd)}"
@@ -153,10 +149,9 @@ if [[ -n "$DURATION" ]] && ! [[ "$DURATION" =~ ^[1-9][0-9]*$ ]]; then
 fi
 
 # ---------------------------------------------------------------------------
-# Corfu node resolved from ycsb.yaml's `nodes:` block, not a hardcoded constant.
-# BIND (nodes.log.lan) is what corfu_server -a binds and what clients dial;
-# SSH (nodes.log.ssh, falling back to lan) is how this script reaches the box.
-# --host sets both, as it did before.
+# The corfu node comes from ycsb.yaml's `nodes:` block, never a hardcoded
+# constant. BIND (nodes.log.lan) is what corfu_server -a binds and what
+# clients dial. SSH (nodes.log.ssh, else lan) is how this script reaches it.
 # ---------------------------------------------------------------------------
 cfg() { python3 "$OZONEDB_HOME/bench/scripts/ycsb_config.py" --config "$CONFIG" "$@"; }
 [[ -n "$BIND_HOST"   ]] || BIND_HOST="$(cfg --node log --field lan)"  || exit 1
@@ -174,18 +169,16 @@ remote_sh() {
   ssh "${SSH_OPTS[@]}" "$SSH_TARGET" "$1"
 }
 
-# Probed ON the node against its own bind address -- see the multi-node wrapper.
+# Probed on the node against its own bind address. See the multi-node wrapper.
 port_open() {
   remote_sh "bash -c '(exec 3<>/dev/tcp/$1/$2) >/dev/null 2>&1'" >/dev/null 2>&1
 }
 
 start_corfu() {
   echo "[corfu] starting on $SSH_TARGET ($REMOTE_HOST:$CORFU_PORT)"
-  # The trailing `&` must apply ONLY to nohup, not to the full `cd && rm &&
-  # cp && nohup ...` chain. Without the parentheses bash backgrounds the
-  # whole chain in one subshell that then runs the chain sequentially --
-  # the subshell would wait synchronously on corfu_server, holding ssh's
-  # stdout/stderr pipes open, and ssh would hang forever.
+  # The trailing `&` must apply only to nohup, not to the whole chain. Without
+  # the parentheses the subshell waits on corfu_server, holds ssh's pipes
+  # open, and ssh hangs.
   remote_sh "cd $CORFU_DIR && rm -rf /mnt/corfu/run_batch/ && cp -r /mnt/corfu/load/ /mnt/corfu/run_batch/ && ( setsid nohup env CORFUDB_HEAP=122880 ./bin/corfu_server -l /mnt/corfu/run_batch -s -a $BIND_HOST $CORFU_PORT </dev/null >$CORFU_LOG 2>&1 & )"
   sleep 10
   remote_sh "pgrep -af 'org.corfudb.infrastructure.CorfuServer' | head -n1 || echo '[corfu] WARNING: no CorfuServer process found after start'"
@@ -193,12 +186,9 @@ start_corfu() {
 
 stop_corfu() {
   echo "[corfu] stopping on $SSH_TARGET"
-  # bin/corfu_server is a shell wrapper that execs java, so the live process
-  # cmdline is `java ... org.corfudb.infrastructure.CorfuServer ...` with
-  # no "corfu_server" substring. Match on the java main class instead, plus
-  # the port as a belt-and-braces second pattern. Go straight to SIGKILL --
-  # we reset /mnt/corfu/run_batch on every start so graceful shutdown buys us
-  # nothing.
+  # bin/corfu_server execs java, so the live cmdline holds the main class, not
+  # "corfu_server". Match the main class, plus the port as a second pattern.
+  # SIGKILL directly: every start resets /mnt/corfu/run_batch.
   remote_sh "pkill -KILL -f 'org.corfudb.infrastructure.CorfuServer' 2>/dev/null || true; pkill -KILL -f '\-a $BIND_HOST $CORFU_PORT' 2>/dev/null || true; command -v fuser >/dev/null && fuser -k -9 ${CORFU_PORT}/tcp 2>/dev/null || true"
   for _ in $(seq 1 30); do
     if ! port_open "$BIND_HOST" "$CORFU_PORT"; then
@@ -249,9 +239,8 @@ if [[ ! -f "$BENCH_SCRIPT" ]]; then
 fi
 RESULTS=()
 
-# Shared timestamped results directory across all (trial, workload, writers)
-# iterations of this sweep. Per-trial result files are differentiated by the
-# _trial{N} suffix that the python script appends.
+# One results directory for every (trial, workload, writers) iteration of
+# this sweep. The python script appends _trial{N} to each result file.
 export OZONEDB_RUN_TAG="$(date +%Y%m%d-%H%M%S)"
 READ_MODE=default
 [[ "$LINEARIZABLE" -eq 1 ]] && READ_MODE=linearizable
@@ -278,8 +267,7 @@ for ((TRIAL = 1; TRIAL <= TRIALS; TRIAL++)); do
       RESULTS+=("trial=$TRIAL workload=$WL writers=$NW rc=$rc")
       echo "[bench] trial=$TRIAL workload=$WL writers=$NW rc=$rc"
 
-      # Best-effort: next iteration's defensive stop_corfu will retry anyway,
-      # and we'd rather continue the sweep than abort on a flaky teardown.
+      # Best effort: the next iteration's stop_corfu retries anyway.
       stop_corfu || echo "[orchestrator] warning: stop_corfu failed; continuing sweep"
     done
   done

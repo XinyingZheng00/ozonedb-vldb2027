@@ -4,10 +4,8 @@
 # shim), runUnitTests, the Corfu smoke binaries, and the YCSB ozonedb binding.
 #
 # Run this after any C++ change that a YCSB run must see. Nothing is installed
-# outside the repo: libozonedb.so carries an $ORIGIN rpath so it finds
-# libOzoneDB.so beside it in build/, and jni.OzoneDBJNI resolves the shim via
-# $OZONEDB_HOME/build. That means no sudo, and no stale copy in /usr/lib
-# silently winning over a fresh build.
+# outside the repo: libozonedb.so has an $ORIGIN rpath to libOzoneDB.so in
+# build/, and jni.OzoneDBJNI loads the shim from $OZONEDB_HOME/build.
 
 set -euo pipefail
 

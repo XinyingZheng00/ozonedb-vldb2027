@@ -2,7 +2,7 @@
 """Dynamic Ansible inventory backed by bench/scripts/config/ycsb.yaml.
 
 Hosts come from the `nodes:` block, so Ansible, run_multinode_ycsb.py and the
-sweep wrappers all read one list. A CloudLab re-swap is a single edit there.
+sweep wrappers read one list. A CloudLab re-swap is one edit there.
 
     ./inventory.py --list
     ./inventory.py --host <host>
@@ -11,12 +11,12 @@ Groups:
     clients    the YCSB writer nodes (nodes.clients)
     log        the shared-log / CorfuDB node (nodes.log)
     store      the MinIO / SSTable node (nodes.store)
-    cloudlab   alias for clients, so `hosts: cloudlab` playbooks keep working
+    cloudlab   alias for clients, for `hosts: cloudlab` playbooks
     nodes      every machine above
 
-Each host also carries `lan_address` -- the internal 10.10.1.x address other
-nodes use, which is NOT what Ansible connects over. Playbooks that need to tell
-a service where to bind or dial should use that, never ansible_host.
+Each host also carries `lan_address`, the internal 10.10.1.x address other
+nodes use. Ansible does not connect over it. A playbook that tells a service
+where to bind or dial uses lan_address, never ansible_host.
 
 Override the config path with OZONEDB_YCSB_CONFIG.
 """
@@ -32,7 +32,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(_HERE), "scripts"))
 from ycsb_config import ConfigError, load, ssh_addr  # noqa: E402
 
 # Matches ssh_base() in bench/scripts/local/run_multinode_ycsb.py. CloudLab
-# re-images nodes constantly, so a pinned host key is a guaranteed false alarm.
+# re-images nodes, so a pinned host key is a false alarm.
 SSH_COMMON_ARGS = (
     "-o StrictHostKeyChecking=no "
     "-o UserKnownHostsFile=/dev/null "
@@ -54,18 +54,14 @@ def build_inventory():
         if isinstance(entry, str):
             entry = {"ssh": entry}
         addr = ssh_addr(entry, where)
-        # ycsb.yaml's own example shows "user@host" entries, so honour a
-        # per-host user rather than producing "user@user@host".
+        # Honour a per-host "user@host" entry.
         user, _, host = addr.rpartition("@")
         user = user or default_user
         if not user:
             raise ConfigError(f"{where}: no ssh user (set nodes.ssh_user)")
         groups[group].append(host)
-        # A host can sit in several groups (one machine serving as both
-        # nodes.log and nodes.store is the normal small-cluster layout), so
-        # accumulate roles instead of overwriting the hostvars dict -- a
-        # plain assignment here once dropped corfu-server on a combined
-        # log+store node and bootstrap only ran the minio role.
+        # A host can sit in several groups (one machine as both nodes.log and
+        # nodes.store), so accumulate roles instead of overwriting the hostvars.
         role = {"clients": "client", "log": "corfu-server",
                 "store": "minio"}[group]
         hv = hostvars.setdefault(host, {
@@ -73,14 +69,13 @@ def build_inventory():
             "ansible_user": user,
             "ansible_ssh_private_key_file": key,
             "ansible_ssh_common_args": SSH_COMMON_ARGS,
-            # For playbooks that configure a bind/dial address. Not a connection
-            # setting -- Ansible reaches the node via ansible_host.
+            # Bind/dial address for playbooks. Ansible connects through ansible_host.
             "lan_address": entry.get("lan") or host,
             "ozonedb_roles": [],
         })
         if role not in hv["ozonedb_roles"]:
             hv["ozonedb_roles"].append(role)
-        # Kept for older playbooks that read the scalar: the first role wins.
+        # Scalar form for playbooks that read one role: the first role wins.
         hv["ozonedb_role"] = hv["ozonedb_roles"][0]
 
     for i, entry in enumerate(nodes.get("clients") or []):

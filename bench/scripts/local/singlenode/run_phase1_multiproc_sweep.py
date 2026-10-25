@@ -1,18 +1,17 @@
 #!/usr/bin/env python3
-"""Phase 1 — Multi-process writer-scaling sweep.
+"""Processes sweep driver (paper Fig 9).
 
-Drives a (system × workload × n_processes × repeat) matrix where each cell
-spawns N independent OS processes, each running YCSB single-threaded against
-its OWN DB directory/file pre-loaded with the full 1M × 1KB Zipfian dataset.
+Runs a (system × workload × n_processes × repeat) matrix. Each cell starts N
+independent OS processes. Each process runs YCSB with one thread against its
+own copy of the cached 1M × 1KB Zipfian dataset.
 
-Differences vs the multi-thread orchestrator (run_fig2_sweep.py):
-  * "threadcount" per process is fixed at 1; concurrency comes from N processes.
-  * Each process gets an independent DB copy (cached_DB → work_path_proc{i}).
-  * OzoneDB gets a per-process shared_config JSON to avoid the
-    config-file-collision noted in run_fig2_sweep.py:211-228.
-  * Aggregate per-cell throughput = sum of per-process throughputs.
-  * One drop_caches per cell (before all N workers spawn), not per-process.
-  * Per-process logs at logs/{system}_workload{w}_p{N}_r{R}_proc{i}.log.
+Compared with the threads sweep (run_fig2_sweep.py):
+  * threadcount per process is 1; concurrency comes from the N processes.
+  * Each process gets its own DB copy (cached DB → work path per process).
+  * Each OzoneDB process gets its own shared_config JSON.
+  * Cell throughput = sum of the per-process throughputs.
+  * drop_caches runs once per cell, before the N workers start.
+  * Per-process logs: logs/{system}_workload{w}_p{N}_r{R}_proc{i}.log.
 
 Invocation:
     python3 run_phase1_multiproc_sweep.py \
@@ -23,15 +22,15 @@ Invocation:
         --duration 120 \
         --results-dir $OZONEDB_HOME/bench/results/local/multi-process-and-extended/phase1-multi-process
 
-Reads cached DBs from (DATA_ROOT = $OZONEDB_DATA_ROOT):
+Cached DBs (DATA_ROOT = $OZONEDB_DATA_ROOT):
     ozonedb:  $DATA_ROOT/cached_data-ozonedb-1KB-1000000  (dir)
     trunkcpp: $DATA_ROOT/trunkcpp_ycsb/cached_trunkcpp_ycsb.db  (file + -wal/-shm)
     bcw2:     $DATA_ROOT/bcw2_ycsb/cached_bcw_ycsb.db  (file + -wal/-wal2/-shm)
 
-Per-process work paths land under:
+Per-process work paths:
     $DATA_ROOT/multi-proc-run/{system}_p{N}_proc{i}{suffix}
 
-Tear-down: every per-cell work path is wiped after each repeat. Cached_* is preserved.
+Every work path is wiped after each repeat. The cached DBs stay.
 """
 
 from __future__ import annotations
@@ -56,7 +55,7 @@ from typing import Optional
 # -----------------------------------------------------------------------------
 
 def _require_env(name: str) -> Path:
-    """Resolve a required environment variable to a Path, or exit clearly."""
+    """Return the Path in a required environment variable, or exit."""
     value = os.environ.get(name)
     if not value:
         raise SystemExit(f"{name} is not set")
@@ -67,13 +66,12 @@ OZONEDB_HOME = _require_env("OZONEDB_HOME")
 OZONEDB_YCSB = OZONEDB_HOME / "ycsb"
 OZONEDB_BIN = OZONEDB_YCSB / "bin" / "ycsb"
 
-# Only required when a YCSB-cpp system (trunkcpp/bcw2) is selected;
-# build_proc_cmd checks it at that point.
+# Required only for the YCSB-cpp systems (trunkcpp, bcw2); build_proc_cmd checks it.
 YCSB_CPP_DIR = Path(os.environ.get("YCSB_CPP_DIR", ""))
 YCSB_CPP_BIN = YCSB_CPP_DIR / "ycsb"
 
 DATA_ROOT = Path(os.environ.get("OZONEDB_DATA_ROOT") or os.environ.get("YCSB_DATA_ROOT") or "/tank/ycsb_data")
-WORK_ROOT = DATA_ROOT / "multi-proc-run"  # parent for all per-process working DBs
+WORK_ROOT = DATA_ROOT / "multi-proc-run"  # parent of every per-process work DB
 
 DEFAULT_RECORD_COUNT = 1_000_000
 DEFAULT_WORKLOADS = ["a", "b", "c", "d", "f"]
@@ -82,19 +80,19 @@ DEFAULT_RUN_DURATION = 120
 DEFAULT_REPEATS = 3
 DEFAULT_VARIANCE_PCT = 10.0
 PER_RUN_TIMEOUT_S = 60 * 30
-# GNU time (for max RSS): wherever PATH has it; /usr/bin/time on the Ubuntu nodes.
+# GNU time, for max RSS. /usr/bin/time on the Ubuntu nodes.
 TIME_BIN = shutil.which("time") or "/usr/bin/time"
 
 CONFIG_TMP_ROOT = Path("/tmp/phase1_ozonedb_configs")
 
-# Populated by warmup_ozonedb_classpath() before any worker spawns. Workers
-# then bypass bin/ycsb (which would race on parallel `mvn package` calls) and
-# invoke java directly.
+# Set by warmup_ozonedb_classpath() before any worker starts. Workers run
+# java with this prefix instead of bin/ycsb, so parallel workers do not
+# race on `mvn package`.
 OZONEDB_JAVA_CMD_PREFIX: Optional[list[str]] = None
 
 
 # -----------------------------------------------------------------------------
-# System descriptors — only the three Phase-1 systems
+# System descriptors: the three systems of the processes sweep
 # -----------------------------------------------------------------------------
 
 
@@ -104,14 +102,14 @@ class SystemSpec:
     cached_path: Path
     aux_suffixes: tuple = ()
     cached_is_dir: bool = False
-    work_suffix: str = ""  # appended to per-process base name; ".db" for sqlite-style
+    work_suffix: str = ""  # appended to the per-process name; ".db" for SQLite
 
     def per_proc_work_path(self, n_procs: int, proc_id: int) -> Path:
         base = WORK_ROOT / f"{self.name}_p{n_procs}_proc{proc_id}{self.work_suffix}"
         return base
 
     def restore_into(self, work_path: Path) -> None:
-        """Copy cached DB into a fresh work_path. Wipes any prior state at that path."""
+        """Copy the cached DB to work_path. Wipes any prior state at that path."""
         self._wipe(work_path)
         if self.cached_is_dir:
             subprocess.run(
@@ -182,7 +180,7 @@ def workload_file(workload: str) -> Path:
 
 
 def ensure_ozonedb_workload(workload: str, record_count: int) -> Path:
-    """Pre-generate (idempotent) the OzoneDB workload file. Returns path."""
+    """Generate the OzoneDB workload file if it is missing. Returns its path."""
     wl_dir = OZONEDB_YCSB / "workloads" / "generated_workloads"
     wl_dir.mkdir(parents=True, exist_ok=True)
     wl_path = wl_dir / f"workload{workload}_1KB_{record_count}_{record_count}"
@@ -200,27 +198,25 @@ def ensure_ozonedb_workload(workload: str, record_count: int) -> Path:
 
 
 def pre_generate_all_workloads(workloads: list[str], record_count: int) -> None:
-    """Idempotently pre-generate every OzoneDB workload before any worker spawns,
-    eliminating the TOCTOU race on parallel exists()/generate calls."""
+    """Generate every OzoneDB workload before any worker starts.
+    Parallel workers then never race on exists() and generate."""
     for w in workloads:
         ensure_ozonedb_workload(w, record_count)
 
 
 def warmup_ozonedb_classpath(record_count: int) -> list[str]:
-    """Run the bin/ycsb wrapper ONCE to (a) build the YCSB jars via Maven and
-    (b) print its resolved `java -cp ... site.ycsb.Client -db ...` command line.
+    """Run bin/ycsb once to build the YCSB jars and read its resolved java command.
 
-    Subsequent OzoneDB workers bypass the wrapper and invoke java directly with
-    that prefix, which avoids the parallel-mvn race observed at N=16 where
-    multiple wrappers stomp each other in ~/.m2.
+    Workers then call java with that prefix instead of bin/ycsb, so parallel
+    workers do not race on `mvn package` in ~/.m2.
 
-    Returns the list-form java command prefix
+    Returns the java command prefix as a list
     (e.g. ['java','-cp', '<cp>', 'site.ycsb.Client','-db','site.ycsb.db.OzoneDBClient']).
     """
     print("[warmup] resolving OzoneDB classpath via single bin/ycsb run "
           "(this builds jars; ~30-45 s on cold ~/.m2)...", flush=True)
 
-    # Pick a workload that's known to work for the warmup run.
+    # Workload c serves the warmup run.
     ensure_ozonedb_workload("c", record_count)
     wl_path = OZONEDB_YCSB / "workloads" / "generated_workloads" / (
         f"workloadc_1KB_{record_count}_{record_count}"
@@ -259,8 +255,7 @@ def warmup_ozonedb_classpath(record_count: int) -> list[str]:
             f"warmup OzoneDB run failed (rc={proc.returncode}):\n{proc.stderr[-4000:]}"
         )
 
-    # The wrapper prints the resolved `java -cp <cp> site.ycsb.Client -db ...`
-    # command to stderr. Find it.
+    # The wrapper prints the resolved java command to stderr.
     java_line = None
     for line in proc.stderr.splitlines():
         if " site.ycsb.Client " in line and "-cp" in line:
@@ -273,9 +268,7 @@ def warmup_ozonedb_classpath(record_count: int) -> list[str]:
         )
 
     parts = shlex.split(java_line)
-    # Truncate at the "-db <classname>" pair: that's the prefix every worker
-    # shares. The remaining flags (-threads, -P, -p ..., -t) are appended
-    # per-worker.
+    # Keep up to the "-db <classname>" pair. Each worker appends its own flags.
     if "site.ycsb.Client" not in parts:
         raise RuntimeError(f"unexpected java line: {java_line}")
     main_idx = parts.index("site.ycsb.Client")
@@ -283,7 +276,7 @@ def warmup_ozonedb_classpath(record_count: int) -> list[str]:
         raise RuntimeError(f"unexpected java line shape: {java_line}")
     prefix = parts[: main_idx + 3]  # ['java', ..., 'site.ycsb.Client', '-db', '<classname>']
 
-    # Cleanup warmup state
+    # Remove the warmup state.
     spec.cleanup(warm_work)
     cfg_path.unlink(missing_ok=True)
 
@@ -329,8 +322,7 @@ def build_proc_cmd(system: SystemSpec, workload: str, n_procs: int, repeat: int,
         env["OZONEDB_HOME"] = str(OZONEDB_HOME)
         wl_path = ensure_ozonedb_workload(workload, record_count)
 
-        # Per-process shared_config — avoids collisions when N processes spawn
-        # in parallel.
+        # One shared_config per process.
         CONFIG_TMP_ROOT.mkdir(parents=True, exist_ok=True)
         cfg_in = OZONEDB_HOME / "src" / "config" / "local" / "shared_config_singlenode.json"
         with open(cfg_in) as f:
@@ -342,10 +334,8 @@ def build_proc_cmd(system: SystemSpec, workload: str, n_procs: int, repeat: int,
         with cfg_out.open("w") as f:
             json.dump(cfg, f, indent=4)
 
-        # Bypass bin/ycsb (which would race on parallel `mvn package`).
-        # The prefix already includes ['java', ..., '-cp', '<cp>',
-        # 'site.ycsb.Client', '-db', 'site.ycsb.db.OzoneDBClient'].
-        # Trailing '-t' tells site.ycsb.Client to do a transaction (run) phase.
+        # The prefix is ['java', ..., '-cp', '<cp>', 'site.ycsb.Client', '-db', '<classname>'].
+        # The trailing '-t' selects the run step of site.ycsb.Client.
         cmd = list(OZONEDB_JAVA_CMD_PREFIX) + [
             "-threads", "1",
             "-s",
@@ -434,8 +424,8 @@ def parse_max_rss_kb(text: str) -> Optional[int]:
     return int(m.group(1)) if m else None
 
 
-# Latency parsing — YCSB-cpp emits e.g. "Run latency p99 (ns): 12345"
-# and YCSB-Java emits "[READ], 99thPercentileLatency(us), 1234".
+# Latency lines: YCSB-cpp "Run latency p99 (ns): 12345",
+# YCSB-Java "[READ], 99thPercentileLatency(us), 1234".
 _LAT_PATTERNS = {
     "p50": [
         re.compile(r"Run latency p50 \(ns\):\s*(\d+)"),
@@ -453,8 +443,8 @@ _LAT_PATTERNS = {
 
 
 def parse_latencies(text: str) -> dict[str, Optional[int]]:
-    """Best-effort latency parse. YCSB-cpp values are in ns; YCSB-Java in us.
-    Caller can normalize later. Returns dict with 'p50','p99','p999' (ns OR us)."""
+    """Parse p50, p99 and p999. YCSB-cpp values are ns; YCSB-Java values are us.
+    Returns a dict with keys 'p50', 'p99', 'p999'; a missing value is None."""
     out: dict[str, Optional[int]] = {}
     for k, pats in _LAT_PATTERNS.items():
         out[k] = None
@@ -517,7 +507,7 @@ def run_one_repeat(spec: SystemSpec, workload: str, n_procs: int, repeat: int,
                           p50_worst=None, p99_worst=None, p999_worst=None,
                           elapsed_s=0.0, error=f"setup failed: {e}")
 
-    # Spawn N workers back-to-back
+    # Start the N workers.
     workers: list[dict] = []
     log_paths: list[Path] = []
     t0 = time.time()
@@ -540,7 +530,7 @@ def run_one_repeat(spec: SystemSpec, workload: str, n_procs: int, repeat: int,
             )
             workers.append({"proc_id": i, "proc": proc, "log_f": log_f, "log_path": log_path})
 
-        # Wait for all with a global cell deadline
+        # Wait for all workers under one cell deadline.
         cell_deadline = t0 + duration + 600  # 10-min slack for setup/teardown inside YCSB
         for w in workers:
             remaining = cell_deadline - time.time()
@@ -552,11 +542,11 @@ def run_one_repeat(spec: SystemSpec, workload: str, n_procs: int, repeat: int,
                 w["log_f"].write("\n# CELL TIMEOUT — process killed\n")
             w["log_f"].close()
     finally:
-        # Always clean up — even on early bail
+        # Clean up on every exit path.
         elapsed = time.time() - t0
         for wp in work_paths:
             spec.cleanup(wp)
-        # Best-effort kill anything still lingering
+        # Kill any worker still alive.
         kill_stragglers()
 
     # Parse outcomes
@@ -734,7 +724,7 @@ def write_results_csv(path: Path, summaries: list[CellSummary]) -> None:
             p50 = statistics.mean(s.p50_worst) if s.p50_worst else ""
             p99 = statistics.mean(s.p99_worst) if s.p99_worst else ""
             p999 = statistics.mean(s.p999_worst) if s.p999_worst else ""
-            # Encode per-proc throughputs as a |-separated list of comma lists
+            # Per-process throughputs: repeats separated by |, processes by comma.
             ppt = "|".join(
                 ",".join(f"{x:.2f}" if x is not None else "nan" for x in row)
                 for row in s.per_proc_throughputs_per_repeat
@@ -793,8 +783,7 @@ def main() -> int:
 
     pre_generate_all_workloads(workloads, record_count)
 
-    # If ozonedb is in the sweep, resolve its java classpath ONCE up front
-    # so workers can bypass bin/ycsb (which would race in parallel `mvn package`).
+    # Resolve the OzoneDB java command once, before any worker starts.
     global OZONEDB_JAVA_CMD_PREFIX
     if any(s.name == "ozonedb" for s in specs):
         OZONEDB_JAVA_CMD_PREFIX = warmup_ozonedb_classpath(record_count)
@@ -808,7 +797,7 @@ def main() -> int:
                                    record_count, skipped_md, args.variance_pct,
                                    results_dir)
                 summaries.append(summary)
-                # Write CSV after every cell so progress is durable
+                # Write the CSV after every cell.
                 write_results_csv(results_dir / "results.csv", summaries)
     elapsed_total = time.time() - t_start
     print(f"\nTotal sweep wallclock: {elapsed_total / 60:.1f} min", flush=True)

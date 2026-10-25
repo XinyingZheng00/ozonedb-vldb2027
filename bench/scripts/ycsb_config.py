@@ -2,20 +2,17 @@
 """The one loader for bench/scripts/config/ycsb.yaml.
 
 `nodes:` is the single source of truth for every address in the cluster. Each
-node is named once, with the two addresses that are NOT interchangeable:
+node is named once, with two addresses that are not interchangeable:
 
-    ssh   how the orchestrator reaches it -- a public CloudLab name
-    lan   how other nodes reach it -- the internal 10.10.1.x address
+    ssh   how the orchestrator reaches it: the public CloudLab name
+    lan   how other nodes reach it: the internal 10.10.1.x address
 
-Conflating those is what broke: `corfu_server -a <addr>` binds the address it is
-given, so it must be the *lan* one for clients to connect, while the sweep
-script has to *ssh* to the same box, which from a laptop needs the public one.
-The two sweep wrappers each carried their own hardcoded copy of the corfu host,
-and had already drifted from corfu.endpoint (10.10.1.2 vs 10.10.1.3) -- which
-would start Corfu on the MinIO node while every client dialled somewhere else.
+`corfu_server -a <addr>` binds the address it is given, so it must be the lan
+one. The sweep scripts ssh to the same box, which from a laptop needs the
+public one.
 
-So the derived values are computed here, exactly once, and materialised back
-into the config dict under the keys the existing consumers already read:
+The derived values are computed here, once, and written back into the config
+dict under the keys the consumers read:
 
     cloudlab.hosts                 <- [c.ssh for c in nodes.clients]
     cloudlab.ssh_user              <- nodes.ssh_user
@@ -26,12 +23,12 @@ into the config dict under the keys the existing consumers already read:
     cassandra.ssh_hosts            <- [n.ssh for n in nodes.cassandra]
     cassandra.contact_points       <- ",".join(cassandra.hosts)
 
-nodes.cassandra is a list (one node is the common case) and is optional: when
-absent it falls back to [nodes.log], so the baseline server lands on the same
-box as CorfuDB and the two systems see identical server hardware.
+A derived key set by hand is rejected. nodes.cassandra is an optional list
+(one node is the common case). When absent it falls back to [nodes.log], so
+the baseline server shares the CorfuDB box.
 
-That is why callers only had to swap `yaml.safe_load(f)` for `load(path)`;
-everything downstream still reads corfu_settings["endpoint"] as before.
+Consumers call `load(path)` in place of `yaml.safe_load(f)` and read the
+derived keys as plain config values.
 
 Also usable from shell:
 
@@ -39,7 +36,7 @@ Also usable from shell:
     python3 ycsb_config.py --ssh-target log        # user@public-name
     python3 ycsb_config.py --node log --field lan  # bind address
     python3 ycsb_config.py --list cassandra --field ssh   # one address per line
-    python3 ycsb_config.py --check                 # validate and print the plan
+    python3 ycsb_config.py --check                 # validate and print the resolved node layout
 """
 
 import argparse
@@ -60,8 +57,7 @@ DEFAULT_S3_SCHEME = "http"
 SINGLETON_ROLES = ("log", "store")
 LIST_ROLES = ("clients", "cassandra")
 
-# Which nodes: entry each derived section comes from, for the error message
-# when someone sets a derived key by hand.
+# Source of each derived section, for the error message on a hand-set key.
 _DERIVED_FROM = {
     "cloudlab": "nodes.clients",
     "corfu": "nodes.log",
@@ -71,7 +67,7 @@ _DERIVED_FROM = {
 
 
 class ConfigError(ValueError):
-    """Raised for a config that would produce a silently wrong benchmark."""
+    """Raised for a config that would run a wrong benchmark."""
 
 
 def _as_node(entry, where):
@@ -84,8 +80,7 @@ def _as_node(entry, where):
 
 
 def ssh_addr(node, where):
-    """Address to SSH to. Falls back to lan, which is right when you orchestrate
-    from inside the CloudLab LAN and is what the scripts did before `nodes:`."""
+    """Address to SSH to. Falls back to lan, for an orchestrator inside the CloudLab LAN."""
     addr = (node.get("ssh") or node.get("lan") or "").strip()
     if not addr:
         raise ConfigError(f"{where}: needs an `ssh:` or `lan:` address")
@@ -101,8 +96,7 @@ def lan_addr(node, where):
 
 
 def _reject_derived(cfg, dotted):
-    """A hand-written value that `nodes:` also computes is exactly the drift
-    this module exists to prevent, so refuse rather than silently pick one."""
+    """Refuse a hand-written value that `nodes:` also computes."""
     section, _, key = dotted.partition(".")
     if isinstance(cfg.get(section), dict) and key in cfg[section]:
         raise ConfigError(
@@ -114,8 +108,8 @@ def _reject_derived(cfg, dotted):
 def list_nodes(nodes, role):
     """The `nodes:` entries for a list role, always as a list of mappings.
 
-    `cassandra` accepts a single mapping too, and falls back to [nodes.log]
-    when absent -- the baseline server takes the shared-log node's place."""
+    `cassandra` also accepts a single mapping, and falls back to [nodes.log]
+    when absent: the baseline server takes the shared-log node's place."""
     if role not in LIST_ROLES:
         raise ConfigError(f"nodes.{role} is not a list role (have: {LIST_ROLES})")
     raw = nodes.get(role)
@@ -133,7 +127,7 @@ def list_nodes(nodes, role):
 
 
 def derive(cfg):
-    """Materialise the derived addresses. No-op for a config without `nodes:`."""
+    """Compute the derived addresses. No-op for a config without `nodes:`."""
     nodes = cfg.get("nodes")
     if not nodes:
         return cfg
@@ -186,8 +180,7 @@ def derive(cfg):
         cfg["cassandra"]["ssh_hosts"] = [
             ssh_addr(n, f"nodes.cassandra[{i}]") for i, n in enumerate(servers)
         ]
-        # What the YCSB binding's `hosts` property takes: the LAN addresses,
-        # comma-joined, the way the clients dial corfu.endpoint.
+        # The YCSB binding's `hosts` property: the LAN addresses, comma-joined.
         cfg["cassandra"]["contact_points"] = ",".join(cfg["cassandra"]["hosts"])
 
     return cfg
@@ -216,7 +209,7 @@ def node(cfg, role):
 
 
 def ssh_target(cfg, role):
-    """user@host for SSHing to a singleton role."""
+    """user@host for SSH to a singleton role."""
     user = (cfg.get("nodes") or {}).get("ssh_user")
     if not user:
         raise ConfigError("nodes.ssh_user is not set.")

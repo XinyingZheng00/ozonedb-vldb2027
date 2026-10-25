@@ -1,37 +1,34 @@
 #!/usr/bin/env python3
-"""Phase 1 — SHARED-DB multi-process writer-scaling sweep.
+"""Shared-DB processes sweep.
 
-N independent OS processes all open the SAME on-disk database simultaneously
-and exercise it concurrently. This is the actual test of the systems'
-multi-writer coordination protocols (vs the independent-DB variant in
-run_phase1_multiproc_sweep.py, which is shared-nothing).
+N independent OS processes open the same on-disk database at the same time
+and run against it concurrently. This exercises the multi-writer
+coordination of each system. The variant in run_phase1_multiproc_sweep.py
+gives every process its own DB copy.
 
-Design (per-cell):
-  1. Restore cached_DB into ONE work_path (single copy, not N).
+Per cell:
+  1. Restore the cached DB into one work path.
   2. drop_caches.
-  3. Spawn N YCSB workers (each threadcount=1) all pointing at the same DB.
-     - OzoneDB: each worker uses an identical shared_config pointing at the
-       single work_path. Coordination is via OzoneDB's append-based task log;
-       each process auto-generates a fingerprint internally — no per-process
-       config differences needed.
-     - SQLite (trunkcpp/bcw2): each worker uses sqlite.dbpath=<single path>
-       with locking_mode=NORMAL (overrides the EXCLUSIVE setting in the
-       baseline properties files; EXCLUSIVE is incompatible with cross-process
-       sharing because the first connection grabs the file lock and starves
-       all others). All other knobs unchanged.
-  4. Wait for all workers; sum per-process throughputs as headline aggregate.
-  5. Tear down the single work_path.
+  3. Start N YCSB workers (threadcount=1) on the same DB.
+     - OzoneDB: every worker uses the same shared_config content, which
+       points at the single work path. The writers coordinate through the
+       task log; each process generates its own fingerprint.
+     - SQLite (trunkcpp/bcw2): every worker uses sqlite.dbpath=<single path>
+       with locking_mode=NORMAL. The EXCLUSIVE mode of the baseline property
+       files lets the first connection hold the file lock and block the
+       others. All other settings stay unchanged.
+  4. Wait for all workers; the cell throughput is the sum of the per-process
+     throughputs.
+  5. Remove the work path.
 
-Run protocol (per user request 2026-04-29):
-  * 1 repeat per cell
-  * 90 s duration
+Defaults: 1 repeat per cell, 90 s duration.
 
 Logs: phase1-multi-process/logs/{system}_workload{w}_p{N}_proc{i}.log
 Aggregate CSV: phase1-multi-process/results.csv
 Failures: phase1-multi-process/skipped_runs.md
 
-Reuses warmup_ozonedb_classpath() from run_phase1_multiproc_sweep.py to
-bypass the parallel-mvn race.
+warmup_ozonedb_classpath() from run_phase1_multiproc_sweep.py resolves the
+java command once, so parallel workers do not race on mvn.
 
 Usage:
   python3 run_phase1_shared_db_sweep.py \\
@@ -60,11 +57,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-# Reuse Phase-1 helpers (system specs, classpath warmup, parsers, etc.).
+# Helpers of the processes sweep: system specs, classpath warmup, parsers.
 sys.path.insert(0, str(Path(__file__).parent))
 import run_phase1_multiproc_sweep as p1  # type: ignore
 
-# Single shared work paths per system (one DB per cell, not N).
+# One shared work path per system: one DB per cell.
 SHARED_WORK = {
     "ozonedb":  p1.WORK_ROOT / "shared_ozonedb",          # dir
     "trunkcpp": p1.WORK_ROOT / "shared_trunkcpp_ycsb.db", # file + -wal/-shm
@@ -79,7 +76,7 @@ DEFAULT_REPEATS = 1
 
 
 def restore_shared_for(spec_name: str) -> Path:
-    """Copy cached_DB to SHARED_WORK[spec_name] (single copy). Returns path."""
+    """Copy the cached DB to SHARED_WORK[spec_name]. Returns that path."""
     spec = p1.system_specs()[spec_name]
     work = SHARED_WORK[spec_name]
     spec.restore_into(work)
@@ -112,18 +109,12 @@ def build_shared_proc_cmd(spec_name: str, workload: str, n_procs: int,
             "-p", "threadcount=1",
             "-p", f"recordcount={record_count}",
             "-p", f"maxexecutiontime={duration}",
-            # Two overrides for cross-process shared-DB compatibility:
-            #
-            # (1) sqlite.locking_mode=NORMAL — EXCLUSIVE (in baseline properties)
-            #     would have the first connection grab the file lock and starve
-            #     all others.
-            # (2) sqlite.vfs=unix — YCSB-cpp's SqliteDB::OpenDB() defaults to
-            #     "unix-excl" VFS which holds an OS-level exclusive lock on the
-            #     DB file for the lifetime of the connection (works for
-            #     multi-thread within one process; breaks multi-process). The
-            #     default "unix" VFS uses POSIX advisory locks and supports
-            #     concurrent multi-process access. Configurable via the
-            #     `sqlite.vfs` property added to the binding for this sweep.
+            # Two settings for shared access from several processes:
+            # sqlite.locking_mode=NORMAL: the baseline EXCLUSIVE mode lets the
+            # first connection hold the file lock and block the others.
+            # sqlite.vfs=unix: the YCSB-cpp default "unix-excl" VFS holds an OS
+            # exclusive lock on the DB file for the whole connection. The "unix"
+            # VFS uses POSIX advisory locks and allows concurrent processes.
             "-p", "sqlite.locking_mode=NORMAL",
             "-p", "sqlite.vfs=unix",
         ]
@@ -135,16 +126,14 @@ def build_shared_proc_cmd(spec_name: str, workload: str, n_procs: int,
         env["OZONEDB_HOME"] = str(p1.OZONEDB_HOME)
         wl_path = p1.ensure_ozonedb_workload(workload, record_count)
 
-        # All N processes use a config pointing at the SAME db_path. Per-process
-        # config files have identical content (we keep them per-process for log
-        # naming clarity, not because OzoneDB needs different configs).
+        # Every process gets its own config file. The content is identical
+        # and points at the single db_path.
         p1.CONFIG_TMP_ROOT.mkdir(parents=True, exist_ok=True)
         cfg_in = p1.OZONEDB_HOME / "src" / "config" / "local" / "shared_config_singlenode.json"
         with open(cfg_in) as f:
             cfg = json.load(f)
         cfg["db_path"] = str(work_path) + "/"
-        # Ensure mode=1 (MultipleProcesses); the base config already has this
-        # but we set explicitly to be safe.
+        # mode=1 is MultipleProcesses.
         cfg["mode"] = 1
         cfg_out = p1.CONFIG_TMP_ROOT / (
             f"shared_config_SHARED_workload{workload}_p{n_procs}_r{repeat}_proc{proc_id}.json"
@@ -186,7 +175,7 @@ def run_one_repeat(spec_name: str, workload: str, n_procs: int, repeat: int,
     log_dir = results_dir / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
 
-    # Setup: restore single shared DB, drop caches.
+    # Restore the shared DB and drop caches.
     try:
         p1.kill_stragglers()
         work_path = restore_shared_for(spec_name)

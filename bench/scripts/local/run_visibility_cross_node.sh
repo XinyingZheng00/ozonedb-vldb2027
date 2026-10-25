@@ -1,23 +1,22 @@
 #!/usr/bin/env bash
 #
-# Cross-node visibility experiment: N writers on clients[0], reader ALONE on clients[1], ack
-# notifications over TCP (reader listens on its LAN address; writers
-# connect, then block on the "go" line the reader sends once all N are in
-# -- the start barrier). The miss count is clock-free -- every first get
-# provably starts after the write's ack via the socket -- and latency is
-# referenced to the reader-side notify receipt, since the two hosts'
-# CLOCK_MONOTONIC domains are incomparable. Isolating the reader keeps
-# probe-side queueing (CPU/GC contention with writer JVMs) out of the
-# tail; strict runs also fence per tick, not per get.
+# Cross-node visibility measurement: N writers on clients[0], the reader
+# alone on clients[1]. Ack notifications travel over TCP: the reader listens
+# on its LAN address, the writers connect and block on the "go" line the
+# reader sends once all N are in (the start barrier). The miss count needs no
+# clock: every first get starts after the write's ack arrives on the socket.
+# Latency is measured from the reader-side notify receipt, because the two
+# hosts' CLOCK_MONOTONIC domains are incomparable. The reader runs alone, so
+# writer JVMs add no probe-side queueing. Strict runs fence per tick, not per get.
 #
 #   bash run_visibility_cross_node.sh [--linearizable] [--writers 8]
 #        [--rate 20] [--duration 15] [--value-size 1000] [--poll-ms 1]
 #        [--key-timeout-s 30]
 #
-# Laptop-driven like run_consistency_with_corfu.sh (client nodes cannot ssh
-# each other or the log node): restart corfu, start the reader role on
-# clients[1], run the writer role on clients[0], pull BOTH nodes' output
-# dirs (home dirs are NOT shared) and analyze locally.
+# Driven from this machine like run_consistency_with_corfu.sh (client nodes
+# cannot ssh each other or the log node): restart corfu, start the reader on
+# clients[1], run the writers on clients[0], pull both nodes' output dirs
+# (home dirs are not shared) and analyze locally.
 
 set -euo pipefail
 
@@ -96,15 +95,13 @@ ssh "${SSH_OPTS[@]}" "$SSH_USER@$R_SSH" \
   > "$LOCAL_OUT/reader-ssh.log" 2>&1 &
 READER_PID=$!
 
-# All writers on clients[0], each its own process, ssh'd in parallel but
-# STAGGERED: sshd's MaxStartups (default 10:30:100) drops simultaneous
-# unauthenticated connections ("kex_exchange_identification: connection
-# reset"), which at 16 writers reliably kills a few. The reader's "go"
-# line (sent once every writer has connected) aligns the measurement
-# windows, so the stagger costs nothing.
+# All writers on clients[0], each in its own process, started over ssh in
+# parallel but staggered: sshd's MaxStartups (default 10:30:100) drops
+# simultaneous unauthenticated connections. The reader's "go" line aligns the
+# measurement windows, so the stagger costs nothing.
 # One stale-probe sweep for the whole fleet: cmd_visibility_writer skips
 # _kill_stale_probes because concurrent invocations would SIGKILL each
-# other's JVMs (kill -9 matches every ConsistencyProbe on the node).
+# other's JVMs.
 ssh "${SSH_OPTS[@]}" "$SSH_USER@$W_SSH" "pkill -9 -f ConsistencyProbe" || true
 
 echo "[visx] running $WRITERS writer(s) on $W_SSH (connect $R_LAN:$PORT)"

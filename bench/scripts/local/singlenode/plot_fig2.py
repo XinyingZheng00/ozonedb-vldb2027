@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""Generate Fig 2 multi-writer scaling plots from results.csv.
+"""Plot the threads sweep from results.csv (paper Fig 2a and 19a).
 
 Output:
-  - One PDF / PNG per workload (5 total) with throughput vs. thread count,
-    one line per system.  Missing cells are gaps (no interpolation).
-  - A summary throughput table per workload as a markdown file.
+  - fig1_single_writer.{pdf,png}: T=1 bars per workload, plus Load bars when
+    a load_results.csv exists.
+  - fig2_multi_writer.{pdf,png}: one panel per workload, throughput vs thread
+    count, grouped bars per system. A missing cell is a gap.
+  - One markdown throughput table per workload.
 """
 
 from __future__ import annotations
@@ -21,7 +23,7 @@ from typing import Optional
 
 
 def _require_env(name: str) -> Path:
-    """Resolve a required environment variable to a Path, or exit clearly."""
+    """Return the Path in a required environment variable, or exit."""
     value = os.environ.get(name)
     if not value:
         raise SystemExit(f"{name} is not set")
@@ -41,7 +43,7 @@ except ImportError as e:
 
 
 def _sci_fmt(x: float, pos: int) -> str:
-    """Format y-tick as e.g. 2x10^5; collapses the long-zero counts."""
+    """Format a y tick as a power of ten, e.g. 2x10^5."""
     if x == 0:
         return "0"
     exp = int(np.floor(np.log10(abs(x))))
@@ -70,8 +72,7 @@ WORKLOAD_LABELS = {
     "f": "Workload F (50% read, 50% read-modify-write)",
 }
 
-# Compact two-line x-axis labels for the single-writer plot
-# (workload letter + operation ratio, multi-line with newline).
+# x-axis labels of the single-writer plot.
 WORKLOAD_X_LABELS = {
     "load":       "Load",
     "load_tmpfs": "Load tmpfs",
@@ -84,7 +85,7 @@ WORKLOAD_X_LABELS = {
 
 
 def load_csv(path: Path) -> dict:
-    """rows[system][workload][threads] = (mean, stddev) tuple."""
+    """Return rows[system][workload][threads] = (mean, stddev)."""
     rows = defaultdict(lambda: defaultdict(dict))
     with path.open() as f:
         for row in csv.DictReader(f):
@@ -100,7 +101,7 @@ def load_csv(path: Path) -> dict:
     return rows
 
 
-# Distinct colors so all 5 systems are visually separable.
+# One color per system.
 _COLORS = {
     "ozonedb":  "#1f77b4",  # blue
     "rocksdb":  "#d62728",  # red
@@ -111,7 +112,7 @@ _COLORS = {
 
 
 def _load_load_csv(path: Path) -> dict[str, float]:
-    """Return {system: throughput} for the bulk-load phase."""
+    """Return {system: throughput} from a load_results.csv."""
     out: dict[str, float] = {}
     if not path.exists():
         return out
@@ -129,10 +130,10 @@ def _load_load_csv(path: Path) -> dict[str, float]:
 def plot_single_writer(rows: dict, out_path: Path, log_y: bool,
                        load_throughput: Optional[dict[str, float]] = None,
                        load_tmpfs_throughput: Optional[dict[str, float]] = None) -> None:
-    """One plot: x-axis = (Load, Load tmpfs,) Workload A/B/C/D/F; T=1 only.
+    """Bar plot of T=1 throughput per workload.
 
-    Adds a "Load" group when ``load_throughput`` is provided, and a "Load tmpfs"
-    group when ``load_tmpfs_throughput`` is provided.
+    Adds a "Load" group when ``load_throughput`` is given, and a "Load tmpfs"
+    group when ``load_tmpfs_throughput`` is given.
     """
     import numpy as np
 
@@ -184,8 +185,7 @@ def plot_single_writer(rows: dict, out_path: Path, log_y: bool,
         ax.set_yscale("log")
     ax.set_title("Single-writer performance", fontsize=26)
     ax.grid(True, axis="y", alpha=0.3)
-    # Add log-scale headroom above the tallest bar so the in-plot legend
-    # doesn't overlap any bars (the HCTree workload-C bar is the tallest).
+    # Headroom above the tallest bar, so the legend does not overlap a bar.
     ymin, ymax = ax.get_ylim()
     ax.set_ylim(ymin, ymax * 10)
     ax.legend(loc="upper left", fontsize=25, title="System",
@@ -318,8 +318,8 @@ def main() -> int:
     fig1_rows = load_csv(fig1_csv) if fig1_csv.exists() else {}
     fig2_rows = load_csv(fig2_csv) if fig2_csv.exists() else {}
 
-    # Single-writer plot reads from fig1 dir, writes back into fig1 dir.
-    # If a load_results.csv exists alongside, prepend a "Load" bar group.
+    # The single-writer plot reads and writes the fig1 dir. A load_results.csv
+    # there adds a "Load" bar group.
     if fig1_rows:
         sw_pdf = args.fig1_dir / "fig1_single_writer.pdf"
         load_csv_path = args.fig1_dir / "load_results.csv"
@@ -337,7 +337,7 @@ def main() -> int:
     else:
         print(f"  fig1 single-writer plot skipped (no rows in {fig1_csv})")
 
-    # Multi-writer plot reads from fig2 dir, writes back into fig2 dir.
+    # The multi-writer plot reads and writes the fig2 dir.
     if fig2_rows:
         mw_pdf = args.fig2_dir / "fig2_multi_writer.pdf"
         multi_threads = [int(t) for t in args.multi_threads.split(",")]
@@ -345,8 +345,7 @@ def main() -> int:
                           log_y=not args.linear_y, thread_counts=multi_threads)
         print(f"  wrote {mw_pdf}")
 
-        # Per-workload markdown tables include both T=1 (from fig1) and T>1
-        # rows, so the report's tabular view stays comprehensive.
+        # The per-workload tables hold the T=1 rows (fig1) and the T>1 rows.
         merged = _merge_rows(fig1_rows, fig2_rows)
         for workload in ["a", "b", "c", "d", "f"]:
             tpath = args.fig2_dir / f"fig2_workload{workload}_table.md"

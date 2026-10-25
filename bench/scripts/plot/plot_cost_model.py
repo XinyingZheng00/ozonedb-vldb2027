@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Projected monthly cost against dataset size.
+"""Projected monthly cost against dataset size (the model behind paper Fig 12).
 
   plot_cost_model.py coefficients.tsv prices.json [--space space.json]
                      [--out-dir DIR] [--table out.tsv] [--h-workload c]
@@ -10,8 +10,8 @@ coefficients.tsv is what extract_cost_coefficients.py writes. prices.json
 holds the list prices, the instance roles and the projection parameters.
 space.json holds the space measurements (sC, sO, L_gb, ...); see
 space.example.json. Anything the TSV or space.json does not provide falls
-back to the pre-measurement estimate and is printed as ASSUMED, so the
-figure never silently mixes measured and guessed inputs.
+back to a default estimate and is printed as ASSUMED, so the figure never
+silently mixes measured and guessed inputs.
 
 The model, per month:
 
@@ -27,23 +27,24 @@ The model, per month:
                + clients_O * disk_gb * p_disk
     clients_X  = max(min_clients, ceil(ops * cpu_s_per_op_X / (vcpu * util)))
 
-With a disk-cache tier of `disk_gb` per client, the tier answers what the RAM cache missed, so the two hit rates compose:
+With a disk-cache tier of `disk_gb` per client, the tier answers what the
+RAM cache missed, so the two hit rates compose:
 
   h = 1 - (1 - h(c / D)) * (1 - disk_h(disk_gb / D))
 
-disk_h is the tier's own measured hit rate. The client CPU per op is the full
-tier's, but only when the tier holds the dataset: a partial tier measured more
-CPU than no tier at all, so below a ratio of 1 the baseline is the floor. An
-extra fill_get_per_op(disk_gb / D) GETs per read pay for the misses the tier
-fills -- also ratio-aware, because a partial tier refills far more often than a
-full one -- and the tier's gp3 volumes are the last term.
+disk_h is the tier's own measured hit rate. The client CPU per op is the
+full tier's only when the tier holds the dataset; a partial tier costs more
+CPU than no tier, so below a ratio of 1 the baseline is the floor. An extra
+fill_get_per_op(disk_gb / D) GETs per op pay for the misses the tier fills;
+this is also ratio-aware, because a partial tier refills far more often
+than a full one. The tier's gp3 volumes are the last term.
 
 S is seconds per month; R and W are reads/s and writes/s of the offered
-load; h is interpolated in log(c/D) between the measured cache-sweep points
+load. h is interpolated in log(c/D) between the measured cache-sweep points
 and held flat beyond them (pessimistic below the smallest measured ratio).
 The "today" line is the same without trimming: the log tier keeps
-L0_kb_per_put bytes per record ever written (at least the load) on every log
-unit, and pays no checkpoint PUTs.
+L0_kb_per_put bytes per record ever written (at least the load) on every
+log unit, and pays no checkpoint PUTs.
 """
 import argparse
 import csv
@@ -63,8 +64,8 @@ GB = 1024.0 ** 3
 
 DEFAULT_SPACE = {"sC": 1.05, "sO": 1.10, "L_gb": 0.30, "L0_kb_per_put": 1.1,
                  "trim_interval_s": 30, "wa": 1.2}
-# Pre-measurement estimates for the per-op coefficients, used only when the
-# TSV has no row that provides them.
+# Default estimates for the per-op coefficients, used only when the TSV has
+# no row that provides them.
 DEFAULT_COEF = {"g": 1.0, "put_per_write": 1.0 / 60000, "get_per_write": 0.015, "k": 12.0,
                 "cpu_s_per_op_O": 0.0012, "cpu_s_per_op_C": 0.0003,
                 "ops_node_C": 20000.0}
@@ -92,8 +93,8 @@ def median(xs):
 
 def tier_variant(label):
     """`ozonedb-corfu-lru8m-dc512m-ch64k-adm-kp` -> `ch64k-adm`: the tokens after
-    `-dc<size>`, without `-kp` (the page-cache A/B is not a variant). `` for a
-    file-mode label and for a label without a tier."""
+    `-dc<size>`, without `-kp` (the keep-pages toggle is not a variant). `` for
+    a file-mode label and for a label without a tier."""
     m = re.search(r"-dc\d+[gmkb](.*)$", label)
     if not m:
         return ""
@@ -111,16 +112,16 @@ class Coefficients:
                  and "linearizable" not in r["label"] and r["workload"] != "load"]
         # A disk-cache tier changes what the S3 counters mean: a RAM block-cache
         # miss is served from the client's local copy of the SSTable, not from
-        # the object store. So the tier cells feed the tier coefficients at the
-        # end of this method; of the S3-path coefficients they may only feed the
-        # ones the tier cannot move -- the cumulative RAM hit rate (the writer's
-        # own [lru_cache] counters), the compaction PUTs (write-through happens
-        # after the backing PUT) and the checkpoint objects. Anything derived
-        # from the S3 request rate -- h_steady, g, the client CPU per op -- is
-        # taken from the S3-path cells only.
-        # Only one disk-cache variant may feed the tier coefficients:
-        # file-mode rows and chunk-mode chunk/admission rows measure different
-        # engines, so mixing their ratios would interpolate across two curves.
+        # the object store. So tier cells feed the tier coefficients at the end
+        # of this method. Of the S3-path coefficients they may feed only the
+        # ones the tier cannot move: the cumulative RAM hit rate (the writer's
+        # own [lru_cache] counters), the compaction PUTs (write-through follows
+        # the backing PUT) and the checkpoint objects. Anything derived from the
+        # S3 request rate (h_steady, g, the client CPU per op) comes from the
+        # S3-path cells only.
+        # Only one disk-cache variant may feed the tier coefficients: file-mode
+        # rows and chunk-mode rows measure different engines, so mixing their
+        # ratios would interpolate across two curves.
         tier = [r for r in ozone if fnum(r.get("disk_capacity"))
                 and tier_variant(r["label"]) == tier_variant_filter]
         if not tier and any(fnum(r.get("disk_capacity")) for r in ozone):
@@ -129,29 +130,28 @@ class Coefficients:
         # One Cassandra consistency mode feeds the Cassandra line. `serial`
         # (SERIAL reads + LWT writes, label cassandra-serial) is the
         # linearizable mode and the like-for-like point for OzoneDB's reads;
-        # `quorum` is the default YCSB binding. The two differ 1.4x in client
-        # CPU per op and 2.7x in ops per busy server-second, so a median over
-        # both would price neither system.
+        # `quorum` is the default YCSB binding. The two differ in client CPU
+        # per op and in ops per busy server-second, so a median over both
+        # would price neither system.
         self.cassandra_mode = cassandra_mode
         cass = [r for r in rows if r["label"] == f"cassandra-{cassandra_mode}"]
 
         # h(ratio): the cache sweep, one workload. h_steady (the last window
         # of the run, from the MinIO request-rate series) when the cell has
         # it, else the cumulative counter, which includes the cold start. A
-        # tier cell only ever contributes its cumulative counter: h_steady is
-        # inferred from the S3 request rate, and behind a tier that rate is
-        # the tier's residual, not the RAM cache's.
+        # tier cell contributes only its cumulative counter: h_steady comes
+        # from the S3 request rate, and behind a tier that rate is the tier's
+        # residual, not the RAM cache's.
         pts = {}
         n_steady = n_cum = n_unfilled = 0
         for r in ozone:
             if r["workload"] != h_workload:
                 continue
-            # A writer's cache fills at that writer's own miss rate (about
-            # 1.9 MB/s at 10 GB), so a large cache can close a cell far from
-            # full and its hit rate is that of a smaller cache. cache_fill is
-            # the LRU's bytes at close over its capacity;
-            # a cell below 0.9 is not a point on the curve. Older TSVs have
-            # no column and keep every cell.
+            # A writer's cache fills at that writer's own miss rate, so a large
+            # cache can close a cell far from full with the hit rate of a
+            # smaller cache. cache_fill is the LRU's bytes at close over its
+            # capacity; a cell below 0.9 is not a point on the curve. A TSV
+            # without the column keeps every cell.
             fill = fnum(r.get("cache_fill"))
             if fill is not None and fill < 0.9 and not fnum(r.get("disk_capacity")):
                 n_unfilled += 1
@@ -170,8 +170,7 @@ class Coefficients:
                 n_cum += 1
             pts.setdefault(ratio, []).append((1 if steady else 0, fnum(r.get("run_s")) or 0.0, h))
         # One point per ratio: a steady-state cell over a cumulative one, then
-        # the longest cell. A 120 s cell's last window is still warming a
-        # 512 MB cache; the 600 s sweep is the converged value.
+        # the longest cell, whose last window is the most converged.
         self.h_points = sorted((ratio, max(v)[2]) for ratio, v in pts.items())
         if self.h_points:
             self.src["h"] = (f"measured, workload {h_workload}, {len(self.h_points)} ratios "
@@ -192,13 +191,13 @@ class Coefficients:
             return default
 
         # g from the read-only workload: under a write workload the GET
-        # counter also holds compaction input reads, which are the separate
-        # per-write term below.
+        # counter also holds compaction input reads, the separate per-write
+        # term below.
         self.g = pick("g", [fnum(r["get_per_miss"]) for r in ozone_s3
                             if r["workload"] == h_workload
                             and fnum(r["cache_misses"]) and fnum(r["cache_misses"]) > 100], DEFAULT_COEF["g"])
         # Compaction GETs per write: the load is write-only, so its GETs are
-        # all compaction input reads (about 0.015 per put on the 1 GB load).
+        # all compaction input reads.
         loads = [r for r in rows if r["label"].startswith("ozonedb-corfu") and r["workload"] == "load"]
         gpw = []
         for r in loads:
@@ -221,11 +220,12 @@ class Coefficients:
                 ks.append(objs / n)
         self.k = pick("k", ks, DEFAULT_COEF["k"])
         # Client CPU per op from the workload whose read mix matches the
-        # projection (a at 50 % reads, c above 95 %): workload a costs an
-        # OzoneDB client 2-4x the CPU of workload c (compaction, log tailing),
-        # so a median over both would answer neither question. --cpu-workload
-        # overrides the rule for a corpus whose workloads carry another name
-        # (the key-space zipfian cells are `az` and `cz`), so that corpus is read with --h-workload cz --cpu-workload az.
+        # projection (a at 50 % reads, c above 95 %). Workload a costs an
+        # OzoneDB client several times the CPU of workload c (compaction, log
+        # tailing), so a median over both would answer neither question.
+        # --cpu-workload overrides the rule for a corpus whose workloads carry
+        # another name: the key-space zipfian cells are `az` and `cz`, read
+        # with --h-workload cz --cpu-workload az.
         cpu_wl = cpu_workload or ("c" if self.read_fraction >= 0.95 else "a")
         self.cpu_workload = cpu_wl
         self.cpu_O = pick("cpu_s_per_op_O", [fnum(r["client_cpu_s_per_op"]) for r in ozone_s3
@@ -247,13 +247,13 @@ class Coefficients:
         if self.src["ops_node_C"] != "ASSUMED":
             self.src["ops_node_C"] += f", cassandra-{cassandra_mode}, best of {len(caps)} cells"
 
-        # Disk-cache tier.
-        # disk_h(ratio) is the *tier's own* hit rate against the tier budget
-        # over the dataset, so the model can compose it with whatever RAM
-        # cache the projection buys; h_disk(ratio) is the combined h_total of
-        # the cells as measured, kept for callers that want the raw curve. Both
-        # come from the same workload as h. The -kp cell is the page-cache A/B
-        # of the largest budget, not another ratio, so it is excluded.
+        # Disk-cache tier. disk_h(ratio) is the tier's own hit rate against
+        # the tier budget over the dataset, so the model can compose it with
+        # the RAM cache the projection buys. h_disk(ratio) is the combined
+        # h_total of the cells as measured, kept for callers that want the raw
+        # curve. Both come from the same workload as h. The -kp cell is the
+        # keep-pages toggle of the largest budget, not another ratio, so it
+        # is excluded.
         dpts = {}
         for r in tier:
             if r["workload"] != h_workload or r["label"].endswith("-kp"):
@@ -261,13 +261,9 @@ class Coefficients:
             ratio = fnum(r.get("disk_ratio"))
             if not ratio or ratio <= 0:
                 continue
-            # One point per ratio, the cell with the smallest RAM cache, so
-            # the tier is what was varied -- the same rule as full_tier() and
-            # fill_points. Without it a second trial of a cell would put two
-            # points at one ratio and _interp would pick whichever sorted
-            # first.
-            # On a tie (a rerun of the same cell), the fuller tier: a longer
-            # cell that reached more of its budget.
+            # One point per ratio: the cell with the smallest RAM cache, so the
+            # tier is what was varied (same rule as full_tier() and
+            # fill_points). On a tie, the fuller tier.
             cap = fnum(r.get("cache_capacity")) or 0.0
             held = fnum(r.get("disk_bytes")) or 0.0
             if ratio not in dpts or (cap, -held) < (dpts[ratio][0], -dpts[ratio][3]):
@@ -286,10 +282,10 @@ class Coefficients:
             return min((r for r in cands if fnum(r["disk_ratio"]) == best),
                        key=lambda r: (fnum(r.get("cache_capacity")) or 0.0, -(fnum(r.get("disk_bytes")) or 0.0)))
 
-        # The CPU per op and the fill rate must both come from the same workload
-        # as the baseline cpu_O, or the tier line would compare two workloads.
-        # Both are ratio-dependent: a partial tier costs more CPU than no tier
-        # and refills about 80x as often as a full one, because it evicts what
+        # The CPU per op and the fill rate must come from the same workload as
+        # the baseline cpu_O, or the tier line would compare two workloads.
+        # Both depend on the ratio: a partial tier costs more CPU than no tier
+        # and refills far more often than a full one, because it evicts what
         # it has just fetched.
         full_cpu = full_tier(cpu_wl)
         fpts = {}
@@ -352,9 +348,9 @@ class Coefficients:
         return self._interp(self.h_points, ratio)
 
     def h_disk(self, ratio):
-        """Combined hit rate of the RAM cache and the disk-cache tier exactly as
-        the cells measured it (an 8 MB RAM cache behind the tier). The model
-        composes h() with disk_h() instead, so that the RAM cache the projection
+        """Combined hit rate of the RAM cache and the disk-cache tier as the
+        cells measured it (a small RAM cache behind the tier). The model
+        composes h() with disk_h() instead, so the RAM cache the projection
         buys is the one it is charged for."""
         return self._interp(self.h_disk_points, ratio)
 
@@ -366,12 +362,11 @@ class Coefficients:
 
     def fill_get_per_op(self, ratio):
         """S3 GETs per op spent refilling the tier, at a tier budget of
-        `ratio` times the dataset. Per *op*, not per read: the extractor's
+        `ratio` times the dataset. Per op, not per read: the extractor's
         disk_fill_gets_per_op is fill_gets / (reads + writes + scans), and
-        both fills and evictions are driven by the write mix as much as by
-        the reads. A partial tier evicts what it has just fetched and fetches
-        it again: 0.0175 GETs per op at a 0.52 ratio against 0.00022 at a
-        full tier, so this cannot be a constant."""
+        the write mix drives fills and evictions as much as the reads do.
+        A partial tier evicts what it has just fetched and fetches it
+        again, so this cannot be a constant."""
         return self._interp(self.fill_points, ratio)
 
     def report(self):
@@ -455,12 +450,12 @@ class Model:
         if disk_gb > 0:
             # The tier answers what the RAM cache missed, so the two hit rates
             # compose: the projection is charged for the RAM cache it buys, not
-            # for the 8 MB the tier cells ran behind.
+            # for the small one the tier cells ran behind.
             h_tier = self.c.disk_h(ratio_disk)
             h = 1.0 - (1.0 - h_ram) * (1.0 - h_tier)
-            # A partial tier measured *more* client CPU than no tier at all --
-            # it pays for the fills it keeps evicting -- so only a tier that
-            # holds the dataset may be charged less than the baseline.
+            # A partial tier costs more client CPU than no tier (it pays for
+            # the fills it keeps evicting), so only a tier that holds the
+            # dataset may be charged less than the baseline.
             cpu = self.c.cpu_O_disk if ratio_disk >= 1.0 else max(self.c.cpu_O, self.c.cpu_O_disk)
             # Per op, not per read: fill_get_per_op is measured as
             # fill_gets / (reads + writes + scans), so charging it on the
@@ -501,7 +496,7 @@ def fmt_gb(d_bytes):
 
 def find_crossover(ds, ozone, cass):
     """First D where OzoneDB turns cheaper after being dearer. None when it
-    never turns; the caller then says which side the whole range is on."""
+    never turns; the caller then reports which side the whole range is on."""
     dearer_seen = False
     for d, o, c in zip(ds, ozone, cass):
         if o >= c:
@@ -597,8 +592,8 @@ def main():
         cse = model.cassandra(d, "ebs")
         print(f"{fmt_gb(d):>10} {cn:>11,.0f} {ce:>11,.0f} {oh:>11,.0f} {ol:>11,.0f} {ot:>11,.0f} "
               f"{od:>11,.0f} {oz['h']:>6.3f} {ozd['h']:>6.3f} {cs['nodes']:>5}")
-        # Totals first, then the cost lines of the projection
-        # table (all USD per month, rounded to the dollar).
+        # Totals first, then the cost lines of the projection table (all USD
+        # per month, rounded to the dollar).
         r1 = lambda v: round(v)
         lines.append((fmt_gb(d), r1(cn), r1(ce), r1(oh), r1(ol), r1(ot), round(oz["h"], 4), cs["nodes"], cs["bound"],
                       r1(cs["node_cost"]), cse["nodes"], r1(cse["node_cost"]), cs["clients"], r1(cs["client_cost"]),

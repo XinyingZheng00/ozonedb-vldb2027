@@ -1,51 +1,33 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Orchestrate a single Corfu server on one remote node while sweeping YCSB
-# workloads and writers-per-host on N other client nodes via the Python
-# multi-node orchestrator (run_multinode_ycsb.py).
+# Run one Corfu server on a remote node and sweep YCSB workloads and
+# writers-per-host on the client nodes through run_multinode_ycsb.py.
 #
-# Same shape as run_ycsb_with_corfu.sh, except:
-#   - YCSB does not run on this machine. It runs on $CLIENT_HOSTS (each host
-#     spawns writers_per_host processes via run_local_ycsb_multiproc.py).
-#   - Corfu still runs on a single dedicated $CORFU_BIND_HOST. All YCSB writers
-#     across all client hosts share that one Corfu instance and stream.
+# Unlike run_ycsb_with_corfu.sh, YCSB does not run on this machine. It runs on
+# $CLIENT_HOSTS; each host starts writers_per_host processes through
+# run_local_ycsb_multiproc.py. All writers share the one Corfu instance on
+# $CORFU_BIND_HOST and one stream.
 #
-# Loop order: trials -> workloads -> writers_per_host. Corfu is restarted on
-# every (trial, workload, writers_per_host) iteration. All iterations share
-# one OZONEDB_RUN_TAG (--run-tag, default: timestamp) so result files land in
-# one tagged dir.
+# Loop order: trials -> workloads -> writers_per_host. Per iteration: stop
+# corfu, start it on a clean /mnt/corfu/run_batch copied from /mnt/corfu/load,
+# wait for the port, run run_multinode_ycsb.py --workloads <wl>
+# --writers_per_host <n> --trial <k> [--max_exec_time <s>] [--linearizable],
+# stop corfu. After the sweep, corfu is started once more and left running.
+# All iterations share one OZONEDB_RUN_TAG (--run-tag, default: timestamp).
 #
-# A campaign driver (crsqlite/bench/scripts/campaign/throughput.py) calls this
-# once per cell: --trial N --duration S --run-tag TAG [--linearizable]
-# --workloads <wl> --writers-list <wph> --client-hosts <prefix>. The read mode
-# is a flag, never a ycsb.yaml edit: --linearizable is forwarded to every
-# client and shows up in the result filenames as ozonedb-corfu-linearizable,
-# so a default and a strict sweep cannot be mistaken for one another.
-#
-# Per iteration:
-#   1. stop corfu on $CORFU_BIND_HOST (best-effort)
-#   2. start corfu on $CORFU_BIND_HOST (clean /mnt/corfu/run_batch from /mnt/corfu/load)
-#   3. wait until $CORFU_BIND_HOST:$CORFU_PORT is reachable
-#   4. run run_multinode_ycsb.py with
-#        --workloads=<wl> --writers_per_host=<n> --trial=<k>
-#        [--max_exec_time=<s>] [--linearizable]
-#      (this SSHes to every client host and launches its writer slice)
-#   5. stop corfu
-# After the full sweep, corfu is started one more time so the cluster is
-# left ready for a subsequent manual run.
+# A driver calls this once per cell: --trial N --duration S --run-tag TAG.
+# The read mode is a flag, never a ycsb.yaml edit: --linearizable is forwarded
+# to every client and labels the result files ozonedb-corfu-linearizable.
 #
 # PRECONDITIONS
-#   - Each client host's ycsb.yaml has corfu.endpoint set to
-#     $CORFU_BIND_HOST:$CORFU_PORT (so its writer processes connect to the same
-#     instance this script restarts).
-#   - cloudlab.hosts in ycsb.yaml lists the client hosts (or pass
-#     --client-hosts).
-#   - cloudlab.ssh_user / cloudlab.ssh_private_key_path resolve for the
-#     client hosts (or pass --client-user / --client-ssh-key).
-#   - For non-corfu db_names (rocksdb, ozonedb local, sqlite) the loader
-#     load_local_ycsb_multiproc.py must already have produced the per-writer
-#     cached_data dirs on each client host. ozonedb-corfu does not need this.
+#   - Each client host's ycsb.yaml resolves corfu.endpoint to
+#     $CORFU_BIND_HOST:$CORFU_PORT.
+#   - cloudlab.hosts in ycsb.yaml lists the client hosts (or pass --client-hosts).
+#   - cloudlab.ssh_user / cloudlab.ssh_private_key_path resolve for the client
+#     hosts (or pass --client-user / --client-ssh-key).
+#   - For non-corfu db_names (rocksdb, ozonedb local, sqlite) the loader must
+#     have produced the per-writer cached_data dirs on each client host.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 : "${OZONEDB_HOME:=$(cd "$SCRIPT_DIR/../../.." && pwd)}"
@@ -53,8 +35,8 @@ export OZONEDB_HOME
 
 CONFIG="${OZONEDB_HOME}/bench/scripts/config/ycsb.yaml"
 
-# All empty: resolved from ycsb.yaml after argument parsing, so there is no
-# second copy of the cluster's addressing left to drift.
+# All empty: resolved from ycsb.yaml after argument parsing, so the cluster's
+# addressing has one copy.
 CORFU_BIND_HOST=""
 CORFU_SSH_HOST=""
 CORFU_USER="${SSH_USER:-}"
@@ -71,7 +53,7 @@ WORKLOADS="a b c d f"
 WRITERS_LIST="1 2 4 8"
 TRIALS=1
 TRIALS_SET=0
-TRIAL=""          # --trial N: exactly this trial (what a campaign driver passes)
+TRIAL=""          # --trial N: exactly this trial (one cell per invocation)
 DURATION=""       # --duration S: forwarded to every client as --max_exec_time
 LINEARIZABLE=0    # --linearizable: strict reads, label ozonedb-corfu-linearizable
 LOG_TRIM=0        # --log-trim: writer 0 checkpoints + trims the Corfu stream
@@ -234,7 +216,7 @@ if [[ -n "$TRIAL" ]]; then
   fi
   TRIAL_SEQ=("$TRIAL")
 else
-  # read -r -a rather than mapfile: this also runs on a macOS bash 3.2.
+  # read -r -a, not mapfile: bash 3.2 on macOS has no mapfile.
   read -r -a TRIAL_SEQ <<<"$(seq 1 "$TRIALS" | tr '\n' ' ')"
 fi
 if [[ -n "$DURATION" ]] && ! [[ "$DURATION" =~ ^[1-9][0-9]*$ ]]; then
@@ -268,14 +250,11 @@ if [[ -n "$RECORD_CNT" ]] && ! [[ "$RECORD_CNT" =~ ^[1-9][0-9]*$ ]]; then
 fi
 
 # ---------------------------------------------------------------------------
-# Resolve the corfu node from ycsb.yaml's `nodes:` block instead of a hardcoded
-# constant: a default that disagrees with corfu.endpoint would start the
-# server on the wrong node, bound to an address no client dials.
-#
-# The two addresses are deliberately separate:
-#   BIND  nodes.log.lan -- what corfu_server -a binds, and what clients dial
-#   SSH   nodes.log.ssh -- how THIS script reaches the box (falls back to lan)
-# Overrides still win; --corfu-host sets both, as it always did.
+# The corfu node comes from ycsb.yaml's `nodes:` block, never a hardcoded
+# constant. The two addresses are separate:
+#   BIND  nodes.log.lan: what corfu_server -a binds, and what clients dial
+#   SSH   nodes.log.ssh: how this script reaches the box (falls back to lan)
+# Flags override both; --corfu-host sets both.
 # ---------------------------------------------------------------------------
 cfg() { python3 "$OZONEDB_HOME/bench/scripts/ycsb_config.py" --config "$CONFIG" "$@"; }
 [[ -n "$CORFU_BIND_HOST" ]] || CORFU_BIND_HOST="$(cfg --node log --field lan)" || exit 1
@@ -293,34 +272,31 @@ corfu_sh() {
   ssh "${CORFU_SSH_OPTS[@]}" "$CORFU_TARGET" "$1"
 }
 
-# Probed ON the corfu node against its own bind address. A local /dev/tcp check
-# cannot succeed when the bind address is a CloudLab-internal 10.10.1.x and the
-# sweep is driven from off-cluster.
+# Probed on the corfu node against its own bind address. A local /dev/tcp
+# check fails when the bind address is a CloudLab-internal 10.10.1.x.
 port_open() {
   corfu_sh "bash -c '(exec 3<>/dev/tcp/$1/$2) >/dev/null 2>&1'" >/dev/null 2>&1
 }
 
-# The SSTable bucket must be restored together with the log: the log references SSTables by
-# name, and with --log-trim the checkpoint in the bucket must match the trim mark in the log dir. A cell's compactions
-# and checkpoints change the bucket, so the next cell would otherwise open a
-# restored log against a bucket that is ahead of it (bootstrap throws) or that
-# lost files the log still names. load_corfu_dataset.sh writes the snapshot to
-# /mnt/corfu/load-bucket; when it is absent (a log-only snapshot from before
-# this) the bucket is left as is, which is only safe without --log-trim.
+# The SSTable bucket is restored together with the log: the log names SSTables,
+# and with --log-trim the checkpoint in the bucket must match the trim mark in
+# the log dir. A cell's compactions and checkpoints change the bucket.
+# load_corfu_dataset.sh writes the bucket snapshot to /mnt/corfu/load-bucket.
+# When it is absent the bucket is left as is, which is only safe without
+# --log-trim.
 S3_BUCKET="$(cfg --get s3.bucket 2>/dev/null || echo ozonedb-ycsb)"
 MC_ALIAS="${MC_ALIAS:-ozonedb-local}"
 
 start_corfu() {
   echo "[corfu] starting on $CORFU_TARGET ($CORFU_BIND_HOST:$CORFU_PORT)"
-  # `mc mirror --overwrite` copies an object only when the source is newer
-  # or the size differs. A cell's trimmer rewrites checkpoint/LATEST with a
-  # newer mtime and the same 8 bytes, so the mirror kept the cell's LATEST
-  # while --remove deleted the checkpoint it names, and every writer of the
-  # next cell died at open ("a LATEST that cannot be read"). Copy every
-  # LATEST of the snapshot unconditionally after the mirror (mc cp always
-  # overwrites); the manifests and SSTables have unique names.
+  # `mc mirror --overwrite` copies an object only when the source is newer or
+  # the size differs. A cell's trimmer rewrites checkpoint/LATEST with a newer
+  # mtime and the same 8 bytes, so the mirror would keep the cell's LATEST
+  # while --remove deletes the checkpoint it names. So copy every LATEST of
+  # the snapshot after the mirror; mc cp always overwrites. Manifests and
+  # SSTables have unique names.
   corfu_sh "if [ -d /mnt/corfu/load-bucket ]; then mc mirror --overwrite --remove --quiet /mnt/corfu/load-bucket $MC_ALIAS/$S3_BUCKET >/dev/null && cd /mnt/corfu/load-bucket && find . -type f -name LATEST | while read -r f; do mc cp --quiet \"\$f\" \"$MC_ALIAS/$S3_BUCKET/\${f#./}\" >/dev/null || exit 1; done && echo '[corfu] bucket restored from /mnt/corfu/load-bucket (LATEST forced)'; else echo '[corfu] WARNING: no /mnt/corfu/load-bucket snapshot; bucket left as is'; fi"
-  # Trailing & must apply only to nohup, not to the whole chain — otherwise
+  # The trailing & must apply only to nohup, not to the whole chain. Otherwise
   # ssh holds stdout open on a foregrounded subshell and hangs.
   corfu_sh "cd $CORFU_DIR && rm -rf /mnt/corfu/run_batch/ && cp -r /mnt/corfu/load/ /mnt/corfu/run_batch/ && ( setsid nohup env CORFUDB_HEAP=122880 ./bin/corfu_server -l /mnt/corfu/run_batch -s -a $CORFU_BIND_HOST $CORFU_PORT </dev/null >$CORFU_LOG 2>&1 & )"
   sleep 10
@@ -329,12 +305,10 @@ start_corfu() {
 
 stop_corfu() {
   echo "[corfu] stopping on $CORFU_TARGET"
-  # bin/corfu_server execs java, so the live cmdline matches the main class,
-  # not the wrapper name. SIGKILL directly — we wipe /mnt/corfu/run_batch
-  # next start, so graceful shutdown buys nothing.
+  # bin/corfu_server execs java, so the live cmdline holds the main class, not
+  # the wrapper name. SIGKILL directly: the next start wipes /mnt/corfu/run_batch.
   # [C]orfuServer / [-]a: the patterns must not match the remote shell that
-  # runs these pkills, or the shell is SIGKILLed with the server and ssh
-  # exits 255 before the rest of the line runs.
+  # runs these pkills, or ssh exits 255 before the rest of the line runs.
   corfu_sh "pkill -KILL -f 'org.corfudb.infrastructure.[C]orfuServer' 2>/dev/null || true; pkill -KILL -f '[-]a $CORFU_BIND_HOST $CORFU_PORT' 2>/dev/null || true; command -v fuser >/dev/null && fuser -k -9 ${CORFU_PORT}/tcp 2>/dev/null || true"
   for _ in $(seq 1 30); do
     if ! port_open "$CORFU_BIND_HOST" "$CORFU_PORT"; then
@@ -377,10 +351,8 @@ trap cleanup EXIT INT TERM
 BENCH_SCRIPT="$OZONEDB_HOME/bench/scripts/local/run_multinode_ycsb.py"
 RESULTS=()
 
-# All trials/workloads/writers iterations land under this single tag.
-# run_multinode_ycsb.py also passes it through to each client host so
-# every node writes into the same tag dir. --run-tag lets a campaign driver
-# accumulate many invocations (one per cell) in one dir.
+# All iterations land under this one tag. run_multinode_ycsb.py passes it to
+# every client host. --run-tag lets a driver put many invocations in one dir.
 export OZONEDB_RUN_TAG="${RUN_TAG:-$(date +%Y%m%d-%H%M%S)}"
 READ_MODE=default
 [[ "$LINEARIZABLE" -eq 1 ]] && READ_MODE=linearizable

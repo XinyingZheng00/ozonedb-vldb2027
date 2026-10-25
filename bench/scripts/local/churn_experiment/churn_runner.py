@@ -1,32 +1,31 @@
 #!/usr/bin/env python3
-"""Churn-tolerance experiment v4 — fixed-backlog completion-time.
+"""Churn experiment driver (paper Table 4 and Fig 15): fixed-backlog completion time.
 
-The setup creates a known, uniform compaction backlog by loading 200k
-records with the compaction watcher DISABLED (shared-config key
-"compaction_enabled": false, which skips startCompactionWatcher). After load, the DB has
-~250 log files in datalog/ and zero entries in any sstable level. metadata
-log records LOGCREATE but no COMPACT. task.log is empty.
+The load step creates a known compaction backlog: it loads the records with
+the compaction watcher disabled ("compaction_enabled": false, so
+startCompactionWatcher is skipped). After the load, datalog/ holds the sealed
+log files, every SSTable level is empty, the metadata log holds LOGCREATE
+records and no COMPACT record, and task.log is empty.
 
-The same loaded DB is snapshot once and copied for every trial so the
-starting state is byte-identical across (N, R) combinations.
+The loaded DB is snapshotted once and copied for every trial, so every
+(N, R) combination starts from the same bytes.
 
-Each trial then:
+Each trial:
   1. cp the snapshot to a per-trial DB dir
-  2. spawn N writers with compaction enabled ("compaction_enabled": true)
-     and "compaction_abort_rate": R in the shared config, running YCSB
-     workload-c (read-only, no new compactions added)
-  3. poll task.log every 1 s; declare quiescent when:
+  2. start N writers with "compaction_enabled": true and
+     "compaction_abort_rate": R in their shared config, running YCSB
+     workload c (read-only, so no new compactions are added)
+  3. poll task.log every 1 s; the trial is quiescent when
         * every task has at least one COMPLETE record
-        * AND n_tasks_total has not changed for QUIESCENCE_GRACE_S seconds
-        * AND no log-level files remain that would trigger more work
-  4. SIGTERM writers, single-process integrity check (sequential
-     read of all 200k keys)
-  5. tear down
+        * and n_tasks_total has not changed for QUIESCENCE_GRACE_S seconds
+  4. SIGTERM the writers, then run a single-process integrity check
+     (sequential read of every key)
+  5. remove the trial DB
 
-Two `vary` modes:
+`vary` modes:
   --vary writers   varies N at fixed R (default 0%)
   --vary abort     varies R at fixed N (default 4)
-  --vary both      runs both back-to-back
+  --vary both      runs both
 """
 
 from __future__ import annotations
@@ -58,7 +57,7 @@ EXPERIMENT_DIR = Path(__file__).parent
 RESULTS_ROOT = EXPERIMENT_DIR / "results"
 
 def _require_env(name: str) -> Path:
-    """Resolve a required environment variable to a Path, or exit clearly."""
+    """Return the Path in a required environment variable, or exit."""
     value = os.environ.get(name)
     if not value:
         raise SystemExit(f"{name} is not set")
@@ -74,9 +73,9 @@ DB_ROOT = DATA_ROOT / "churn"
 SNAPSHOT_DIR = DB_ROOT / "snapshot_loaded_no_compaction"
 CONFIG_TMP_ROOT = Path("/tmp/churn_v4_configs")
 
-DEFAULT_RECORD_COUNT = 50_000        # smaller than v3 — keeps trial wallclock tractable
+DEFAULT_RECORD_COUNT = 50_000        # records per trial
 DEFAULT_KEY_SIZE = "1KB"
-DEFAULT_COMPLETION_TIMEOUT_S = 600        # 10 min cap per completion phase
+DEFAULT_COMPLETION_TIMEOUT_S = 600        # 10 min cap per completion step
 DEFAULT_POLL_INTERVAL_S = 1.0
 QUIESCENCE_GRACE_S = 8               # n_tasks_total must be flat this long
 LOAD_TIMEOUT_S = 600
@@ -85,7 +84,7 @@ VERIFY_TIMEOUT_S = 600
 CHURN_BASE_CONFIG = EXPERIMENT_DIR / "churn_config.json"
 
 
-# Vary configs (each row of the CSV says which parameter the trial varies)
+# Sweep values; the `vary` column of the CSV names the varied parameter.
 DEFAULT_WRITERS_VALUES = [1, 2, 4, 8]   # for `--vary writers`
 DEFAULT_ABORT_VALUES = [0.0, 0.10, 0.20, 0.30, 0.50]
 DEFAULT_FIXED_R = 0.0   # held constant when varying writers
@@ -139,14 +138,14 @@ def kill_stragglers() -> None:
 
 
 # -----------------------------------------------------------------------------
-# Snapshot setup (one-time): load 200k records with compaction disabled
+# Snapshot: one load with compaction disabled
 # -----------------------------------------------------------------------------
 
 
 def build_snapshot(record_count: int, key_size: str,
                    force_rebuild: bool = False) -> Path:
-    """Run YCSB load with compaction_enabled=false (no watcher started).
-    Resulting DB dir is snapshotted at SNAPSHOT_DIR for later per-trial cp."""
+    """Load the records with compaction_enabled=false, so no watcher starts.
+    The loaded DB stays at SNAPSHOT_DIR and is copied for every trial."""
     if SNAPSHOT_DIR.exists() and not force_rebuild:
         marker = SNAPSHOT_DIR / ".snapshot_meta.json"
         if marker.exists():
@@ -188,7 +187,7 @@ def build_snapshot(record_count: int, key_size: str,
                   text, re.MULTILINE)
     tput = float(m.group(1)) if m else None
 
-    # Inventory final state
+    # Record the final state.
     datalog_files = sorted((SNAPSHOT_DIR / "datalog").glob("*")) if (SNAPSHOT_DIR / "datalog").exists() else []
     sstable_dirs = [(SNAPSHOT_DIR / d).name for d in os.listdir(SNAPSHOT_DIR)
                     if d.startswith("sstable")]
@@ -209,12 +208,12 @@ def build_snapshot(record_count: int, key_size: str,
 
 
 # -----------------------------------------------------------------------------
-# Completion phase
+# Completion step
 # -----------------------------------------------------------------------------
 
 
 def quiescent_state(task_log_path: Path) -> tuple[int, int]:
-    """Returns (n_total, n_pending) — pending = task without any COMPLETE."""
+    """Return (n_total, n_pending). A pending task has no COMPLETE record."""
     if not task_log_path.exists():
         return 0, 0
     records = task_log_parser.parse_task_log(task_log_path)
@@ -249,9 +248,9 @@ def run_completion(db_path: Path, cfg_path: Path, record_count: int,
               completion_timeout_s: int, poll_interval_s: float,
               quiescence_grace_s: int, trial_dir: Path
               ) -> tuple[bool, float, int, int]:
-    """Spawn n_writers writers (workload-c) with the given abort_rate.
-    Poll task.log until: every task has a COMPLETE record AND n_total has
-    been stable for quiescence_grace_s seconds. Returns
+    """Start n_writers writers on workload c with the given abort_rate.
+    Poll task.log until every task has a COMPLETE record and n_total has been
+    stable for quiescence_grace_s seconds, or until the timeout. Returns
     (completed, elapsed_s, n_total, n_pending)."""
     wl = ensure_workload("c", key_size, record_count, record_count)
     cmd = build_writer_cmd(wl, cfg_path, completion_timeout_s)
@@ -413,7 +412,7 @@ def execute_trial(trial_id: str, vary: str, n_writers: int,
     print(f"  [{trial_id}] copy snapshot...", flush=True)
     subprocess.run(["cp", "-r", "--reflink=auto", str(SNAPSHOT_DIR), str(db_path)],
                    check=True)
-    # Remove any stale .snapshot_meta.json from the working copy
+    # Remove the snapshot metadata from the working copy.
     (db_path / ".snapshot_meta.json").unlink(missing_ok=True)
     (db_path / "load.log").unlink(missing_ok=True)
     res.setup_ok = True
@@ -438,7 +437,7 @@ def execute_trial(trial_id: str, vary: str, n_writers: int,
         res.notes.append(f"completion timed out / writers crashed; "
                          f"{n_pending} pending of {n_total} total")
 
-    # Parse final task.log for richer stats
+    # Parse the final task.log.
     task_log_path = db_path / "task.log"
     if task_log_path.exists():
         records = task_log_parser.parse_task_log(task_log_path)
@@ -455,9 +454,7 @@ def execute_trial(trial_id: str, vary: str, n_writers: int,
         res.max_generation_observed = max(max_gens) if max_gens else 0
         res.generation_distribution = dict(sorted(Counter(max_gens).items()))
 
-    # Integrity check. The verify pass gets its own config with
-    # compaction_abort_rate=0.0 (the abort knob used to be an env var that was
-    # unset for this step).
+    # The integrity check uses its own config with compaction_abort_rate=0.0.
     verify_cfg_path = CONFIG_TMP_ROOT / f"shared_config_{trial_id}_verify.json"
     make_shared_config(db_path, verify_cfg_path, compaction_enabled=True,
                        compaction_abort_rate=0.0)
@@ -578,7 +575,7 @@ def main() -> int:
     print("Warming up OzoneDB classpath...", flush=True)
     p1.OZONEDB_JAVA_CMD_PREFIX = p1.warmup_ozonedb_classpath(args.record_count)
 
-    # One-time canonical load with compaction disabled
+    # One load with compaction disabled.
     build_snapshot(args.record_count, args.key_size,
                    force_rebuild=args.rebuild_snapshot)
 
@@ -596,8 +593,8 @@ def main() -> int:
             trial_id = f"varyR_n{args.fixed_n}_r{int(r * 100):d}pct"
             trials.append((trial_id, "abort", args.fixed_n, r))
 
-    # Expand each (trial_id, vary, n, r) base into args.repeats individual trial
-    # ids (suffixed with _rep<i>). Each rep gets its own DB dir + per_trial dir.
+    # Expand each trial into args.repeats trials with a _rep<i> suffix. Each
+    # repeat gets its own DB dir and per_trial dir.
     expanded: list[tuple[str, str, int, float]] = []
     for trial_id, vary, n, r in trials:
         if args.repeats <= 1:

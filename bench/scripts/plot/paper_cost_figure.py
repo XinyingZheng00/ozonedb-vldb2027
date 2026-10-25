@@ -5,38 +5,34 @@
 #     "matplotlib>=3.10",
 # ]
 # ///
-"""The paper's cost figure, drawn from the same model as plot_cost_model.py.
+"""The paper's cost figure (Fig 12), drawn from the same model as plot_cost_model.py.
 
   paper_cost_figure.py results.tsv prices.json --space space.json
                        [--tier-variant ch64k-adm] [--cassandra-mode serial]
                        [--cpu-workload a] [--h-workload c] [--read-fraction 0.25]
                        --out bench/fig_cost
 
-Writes <out>.{pdf,png} (double-column: panel (a) the projection, panel (b) the
-bill at 10 TB) and <out>_col.{pdf,png} (single column: panel (a) alone).
+Writes <out>.{pdf,png} (double column: panel (a) the projection, panel (b)
+the bill at --breakdown-at) and <out>_col.{pdf,png} (single column: panel
+(a) alone).
 
-Panel (a) is plot_cost_model.py's figure cut to what the text argues from:
-three series (OzoneKV with the high RAM cache, Cassandra on EBS, Cassandra on
-local NVMe as the gray context line; --tier adds OzoneKV with an SSD tier per
-writer), the x-axis from the smallest measured dataset, every line solid across the
-measured decade and dotted beyond it, filled markers on the measured sizes
-and none beyond, one "cheaper from" marker per OzoneKV line,
-and the 10 TB and 100 TB value labels. --read-fraction overrides
-prices.json's projection.read_fraction (the offered mix; writes are blind
-puts, so this is the insert workload `ai` of the cost experiment, not workload a).
+Panel (a) is plot_cost_model.py's figure cut to three series: OzoneKV with
+the high RAM cache, Cassandra on EBS, and Cassandra on local NVMe as the
+gray context line. --tier adds OzoneKV with an SSD tier per writer. The
+x-axis starts at the smallest measured dataset. Every line is solid across
+the measured decade and dotted beyond it, with filled markers on the
+measured sizes and none beyond, one "cheaper from" marker per OzoneKV
+line, and a value label at the right end of each line. --read-fraction
+overrides prices.json's projection.read_fraction (the offered mix; writes
+are blind puts, so this is the insert workload `ai`, not workload a).
 Panel (b) is one decade of the same model split into its cost lines.
-Everything is computed here from Coefficients and Model; nothing is typed in.
-
-The paper's fig_cost* came from (run in bench/ozonedb-paper-figures/figure12_cost/scripts/):
-
-  python3 paper_cost_figure.py ../data/results-cost-20260828.tsv ../data/prices.json \
-      --space ../data/space.json --tier-variant ch64k-adm \
-      --cassandra-mode serial --read-fraction 0.10 --out ../fig_cost
+Everything is computed from Coefficients and Model; nothing is typed in.
 
 Run it with `uv run paper_cost_figure.py ...` and uv installs matplotlib
 from the inline metadata above; plain python3 needs matplotlib installed.
 plot_cost_model.py must sit in the same directory as this file; the two
-JSON files and the TSV can live anywhere.
+JSON files and the TSV can live anywhere. The frozen as-run copy and its
+inputs live in bench/ozonedb-paper-figures/figure12_cost/.
 """
 
 import argparse
@@ -58,8 +54,8 @@ import plot_cost_model as pcm  # noqa: E402
 GB = pcm.GB
 TB = 1000.0 * GB
 
-# Series hues (validated categorical slots, light surface): OzoneKV blue,
-# the tier aqua, Cassandra EBS orange; Cassandra NVMe is context, so gray.
+# Series hues: OzoneKV blue, the tier aqua, Cassandra EBS orange; Cassandra
+# NVMe is context, so gray.
 BLUE, AQUA, ORANGE, GRAY = "#2a78d6", "#1baf7a", "#eb6834", "#8a8a82"
 INK, INK2 = "#1f1f1e", "#5f5f5a"
 # Panel (b): one ramp per system, darkest = largest line.
@@ -105,9 +101,9 @@ def build(args):
 def cheaper_from(ds, ozone, cass):
     """The smallest D from which OzoneKV stays cheaper than the cheaper
     Cassandra layout over the rest of the grid. plot_cost_model.find_crossover
-    returns the first dip instead; between 9 and 13 TB the lines sit within
-    1 % of each other and dip in and out with the node steps, so the first dip
-    depends on the grid and the last one is the number the text can quote."""
+    returns the first dip instead. Where the lines sit close together they
+    dip in and out with the node steps, so the first dip depends on the grid
+    and the last one is the number the text quotes."""
     last_dearer = None
     for i, (o, c) in enumerate(zip(ozone, cass)):
         if o >= c:
@@ -119,13 +115,13 @@ def cheaper_from(ds, ozone, cass):
 
 def series(coef, model, prices, tier=False):
     pr = prices["projection"]
-    # The x-axis starts at the decade of the smallest measured dataset
-    # (10.24 GB -> 10 GB); everything to its right is the model.
+    # The x-axis starts at the decade of the smallest measured dataset;
+    # everything to its right is the model.
     d_min_gb = pr["d_min_gb"]
     if coef.measured_d:
         d_min_gb = 10 ** int(round(math.log10(min(coef.measured_d) / GB)))
     ds = pcm.grid(d_min_gb, pr["d_max_gb"], per_decade=48)
-    # The SSD tier is opt-in (--tier): off, disk_gb is 0 and every tier
+    # The SSD tier is opt-in (--tier). When off, disk_gb is 0 and every tier
     # series, marker, label and bar is skipped.
     disk_gb = float(pr.get("disk_gb_per_client", 0)) if tier else 0.0
     hi = pr["cache_gb_high"]
@@ -163,8 +159,8 @@ def panel_a(ax, coef, model, s, single):
     ax.set_xlim(x[0] / 1.12, x[-1] * (5.0 if single else 3.2))
 
     # Solid across the measured decade, dotted where only the model speaks.
-    # The cut sits on the last grid point at or below the largest measured
-    # size; both segments share that point, so each line stays continuous.
+    # The cut is the last grid point at or below the largest measured size;
+    # both segments share that point, so each line stays continuous.
     bx = max(coef.measured_d) / GB
     cut = max(i for i, v in enumerate(x) if v <= bx)
 
@@ -207,8 +203,8 @@ def panel_a(ax, coef, model, s, single):
     ax.plot([], [], "o", color=INK2, ms=3.8, mec="white", mew=0.6, label="measured")
     ax.plot([], [], ls=(0, (1, 1.6)), color=INK2, lw=1.4, label="projected")
 
-    # One exact-cost label per line, at its right end (100 TB). The x-axis
-    # runs a little past the last decade so the labels sit in clear space.
+    # One exact-cost label per line, at its right end. The x-axis runs a
+    # little past the last decade so the labels sit in clear space.
     ends = ["cass_nvme", "cass_ebs", "oz_hi"] + (["oz_disk"] if s["disk_gb"] else [])
     for key in ends:
         ax.annotate(
@@ -225,8 +221,8 @@ def panel_a(ax, coef, model, s, single):
     # Marker labels along the top.
     ytop = ymax / 1.25
     # One "cheaper from" marker per OzoneKV line: the size from which the line
-    # stays below the cheaper Cassandra layout. The earlier one is labelled to
-    # its left, the later one to its right, so the labels never meet.
+    # stays below the cheaper Cassandra layout. The earlier one is labelled
+    # to its left, the later one to its right, so the labels never meet.
     marks = [(s["x_disk"], AQUA, "tier"), (s["x_oz"], BLUE, f"{s['hi']} GB cache")]
     marks = sorted((d, c, n) for d, c, n in marks if d)
     if len(marks) == 1 or (

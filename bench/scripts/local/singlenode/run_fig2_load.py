@@ -1,19 +1,17 @@
 #!/usr/bin/env python3
-"""Load-phase orchestrator for the Fig 1 / Fig 2 sweep.
+"""Load step driver of the single-node comparison (paper Fig 19a).
 
-For each of the five systems, drops the working DB, runs a single-threaded
-YCSB load (1 M records × 1 KB), captures throughput / RSS / bytes-written,
-and renames the loaded DB to its `cached_*` location so subsequent run-phase
-sweeps start from this freshly-loaded state.
+For each of the five systems: remove the working DB, run a single-threaded
+YCSB load (1 M records × 1 KB), capture throughput, RSS and bytes written,
+and move the loaded DB to its `cached_*` location. The run sweeps start
+from that cached DB.
 
 Output:
     {results-dir}/{system}_load_t1_r1.log     per-cell log
     {results-dir}/load_results.csv            machine-readable summary
-    {results-dir}/skipped_runs.md             appended on permanent failure
 
-Default results-dir is the fig1 single-writer dir; load throughput belongs
-in the same place as single-writer run throughput so the plot can stack
-them on one axis.
+The default results-dir is the single-writer dir, so the plot can stack
+load throughput and single-writer run throughput on one axis.
 """
 
 from __future__ import annotations
@@ -32,7 +30,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-# Re-use orchestrator helpers / specs.
+# Helpers and system specs of the threads sweep.
 sys.path.insert(0, str(Path(__file__).parent))
 from run_fig2_sweep import (  # type: ignore
     SystemSpec, system_specs, drop_caches, kill_stragglers,
@@ -45,10 +43,10 @@ from run_fig2_sweep import (  # type: ignore
 
 
 def build_load_cmd(system: SystemSpec, record_count: int) -> tuple[list[str], dict, Optional[Path]]:
-    """Build a -load (insert-phase) YCSB command for the given system.
+    """Build the YCSB load command of one system.
 
-    Mirrors build_run_cmd in run_fig2_sweep.py but with `-load` instead of `-run`,
-    threadcount=1, operationcount=record_count, and no maxexecutiontime cap.
+    Same shape as build_run_cmd in run_fig2_sweep.py, with `-load` instead of
+    `-run`, threadcount=1, operationcount=record_count and no maxexecutiontime.
     """
     env = os.environ.copy()
     cwd: Optional[Path] = None
@@ -86,7 +84,7 @@ def build_load_cmd(system: SystemSpec, record_count: int) -> tuple[list[str], di
             "-P", str(YCSB_CPP_DIR / "rocksdb" / "rocksdb.properties"),
             "-p", f"rocksdb.dbname={system.work_path}",
             "-p", "rocksdb.destroy=true",
-            "-p", "rocksdb.per_op_db=false",   # load is single-thread; never per-op.
+            "-p", "rocksdb.per_op_db=false",   # one thread, one DB handle.
             "-p", "threadcount=1",
             "-p", f"recordcount={record_count}",
             "-p", f"operationcount={record_count}",
@@ -108,7 +106,7 @@ def build_load_cmd(system: SystemSpec, record_count: int) -> tuple[list[str], di
                 "--record_cnt", str(record_count),
             ], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
-        # Patch shared_config to point at the working dir for OzoneDB.
+        # Write a copy of the single-node config that points at the working dir.
         shared = OZONEDB_HOME / "src" / "config" / "local" / "shared_config_singlenode.json"
         with open(shared) as f:
             cfg = json.load(f)
@@ -138,19 +136,19 @@ def _aux_paths(spec: SystemSpec) -> list[Path]:
 
 
 def commit_to_cached(spec: SystemSpec) -> None:
-    """Move/copy the freshly-loaded DB to the cached_* location used by the run sweep."""
+    """Move the loaded DB to the cached_* location that the run sweeps read."""
     if spec.cached_path.exists():
         if spec.cached_path.is_dir():
             shutil.rmtree(spec.cached_path, ignore_errors=True)
         else:
             spec.cached_path.unlink(missing_ok=True)
-    # Aux files for the cached SQLite DB.
+    # Remove the aux files of the old cached DB.
     for suf in spec.aux_suffixes:
         p = spec.cached_path.with_name(spec.cached_path.name + suf)
         if p.exists():
             p.unlink(missing_ok=True)
 
-    # Move loaded files into cached_* location.
+    # Move the loaded files to the cached_* location.
     spec.cached_path.parent.mkdir(parents=True, exist_ok=True)
     if spec.work_path.is_dir():
         shutil.move(str(spec.work_path), str(spec.cached_path))
@@ -213,10 +211,8 @@ def run_load(spec: SystemSpec, record_count: int, results_dir: Path) -> LoadResu
 
     out = proc.stdout or ""
     err = proc.stderr or ""
-    # YCSB-cpp emits "Load throughput(ops/sec): N" at the end; YCSB-Java uses
-    # the same "[OVERALL], Throughput(ops/sec), N" format the run-phase parser
-    # already handles.  Re-use parse_throughput (handles both) but also fall
-    # back to "Load throughput".
+    # YCSB-cpp prints "Load throughput(ops/sec): N". YCSB-Java prints
+    # "[OVERALL], Throughput(ops/sec), N", which parse_throughput handles.
     throughput = parse_throughput(out + err)
     if throughput is None:
         m = re.search(r"Load throughput\(ops/sec\):\s*([\d.]+(?:[eE][+-]?\d+)?)", out + err)
@@ -239,7 +235,7 @@ def run_load(spec: SystemSpec, record_count: int, results_dir: Path) -> LoadResu
                           duration_s=elapsed,
                           error=f"returncode={proc.returncode}; throughput_parsed={throughput is not None}")
 
-    # Move loaded DB to its cached_* location so subsequent run sweeps use it.
+    # Move the loaded DB to its cached_* location.
     try:
         commit_to_cached(spec)
     except Exception as e:

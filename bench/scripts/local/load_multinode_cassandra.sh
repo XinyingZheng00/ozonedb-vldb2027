@@ -3,25 +3,24 @@ set -euo pipefail
 
 # Load the YCSB dataset into the Cassandra baseline, then snapshot it.
 #
-# The Cassandra analogue of populating /mnt/corfu/load: afterwards every
-# run_multinode_ycsb_with_cassandra.sh trial restores this snapshot
-# (cassandra_ctl.sh restore-load) so trials start from identical state.
+# The Cassandra twin of /mnt/corfu/load: every run_multinode_ycsb_with_cassandra.sh
+# trial restores this snapshot (cassandra_ctl.sh restore-load), so all trials
+# start from the same state.
 #
 # Steps (all servers = cassandra.ssh_hosts from ycsb.yaml):
 #   1. push bench/scripts/cassandra_ctl.sh to every server (scp)
 #   2. wipe every server (stop + empty data tree), start them, wait for CQL
 #   3. create the keyspace/table on the first server
 #      (rf = cassandra.replication_factor, columns = cassandra.fields)
-#   4. run load_local_ycsb_multiproc.py --db_name cassandra on ONE client
-#      host with --writers parallel processes (keys are partitioned per
-#      process; local.load.record_cnt / key_size come from that client's
-#      ycsb.yaml, like every other load)
+#   4. run load_local_ycsb_multiproc.py --db_name cassandra on one client host
+#      with --writers parallel processes (keys are partitioned per process;
+#      local.load.record_cnt / key_size come from that client's ycsb.yaml)
 #   5. save-load on every server (drain, stop, copy data -> data.load)
 #   6. start the servers again and leave them running
 #
 # Check that the cluster is free first: this wipes the Cassandra data tree
-# and runs a long JVM on a client. It never touches Corfu or MinIO, but it
-# shares the box with them by default.
+# and runs a long JVM on a client. It never touches Corfu or MinIO, but by
+# default it shares the box with them.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 : "${OZONEDB_HOME:=$(cd "$SCRIPT_DIR/../../.." && pwd)}"
@@ -107,10 +106,9 @@ LOAD_CMD="python3 \$OZONEDB_HOME/bench/scripts/local/load_local_ycsb_multiproc.p
 [[ -n "$CONSISTENCY" ]] && LOAD_CMD="$LOAD_CMD --cassandra_consistency $CONSISTENCY"
 [[ -n "$RECORD_CNT" ]] && LOAD_CMD="$LOAD_CMD --record_cnt $RECORD_CNT"
 
-# Server sample around the load on the first server. Same sampler and
-# cell naming as run_multinode_ycsb.py; the files land in
-# bench/results/local/_server/ next to the per-writer insert files, where
-# extract_cost_coefficients.py joins them as the "load" workload. Best effort.
+# Server sample around the load on the first server. Same sampler and cell
+# naming as run_multinode_ycsb.py. The files land in bench/results/local/_server/,
+# where extract_cost_coefficients.py joins them as the "load" workload. Best effort.
 SAMPLER_SRC="$OZONEDB_HOME/bench/scripts/server_sampler.sh"
 SAMPLER_REMOTE_DIR="ozonedb_server_samples/load"
 LOAD_MODE="${CONSISTENCY:-$(cfg --get cassandra.consistency 2>/dev/null || echo quorum)}"
@@ -154,8 +152,8 @@ rsh "${SERVERS[0]}" "$CTL schema --rf $RF --fields $FIELDS --keyspace $KEYSPACE"
 
 sampler_start
 echo "[load:$LOAD_HOST] $LOAD_CMD"
-# bash -lc: ~/.ozonedb.env is wired into .profile; a plain ssh command shell
-# would not see OZONEDB_HOME / JAVA_HOME (see run_multinode_ycsb.py).
+# bash -lc: ~/.ozonedb.env is wired into .profile. A plain ssh command shell
+# would not see OZONEDB_HOME or JAVA_HOME (see run_multinode_ycsb.py).
 rsh "$LOAD_HOST" "bash -lc '$LOAD_CMD'"
 sampler_stop
 

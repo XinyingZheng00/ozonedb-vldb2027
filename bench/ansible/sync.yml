@@ -1,8 +1,8 @@
 ---
 # Push the local working tree to every CloudLab client host at once.
 #
-# The fast inner loop, for a node that bootstrap.yml already stood up: skips
-# .git/ and moves only what you actually touched.
+# The incremental push for a node that bootstrap.yml has set up: it skips
+# .git/ and moves only changed files.
 #
 #   cd $OZONEDB_HOME/bench/ansible
 #   ansible-playbook sync.yml                        # push to every host
@@ -14,15 +14,15 @@
 # Sibling repos ride along:
 #   ansible-playbook sync.yml \
 #     -e '{"extra_repos":[{"src":"../../../slatedb/","dest":"slatedb"}]}'
-# Relative src resolves against this directory, relative dest against the remote
-# user's home.
+# A relative src resolves against this directory, a relative dest against
+# the remote user's home.
 #
-# For a node that has never been set up, use bootstrap.yml instead.
+# For a node that has never been set up, use bootstrap.yml.
 
 - name: Sync the OzoneDB working tree to the CloudLab clients
   hosts: "{{ target | default('clients') }}"
   gather_facts: false
-  # free: a slow host doesn't hold up the others at each task boundary.
+  # free: a slow host does not hold up the others.
   strategy: free
 
   vars:
@@ -47,8 +47,7 @@
       ansible.posix.synchronize:
         src: "{{ repo_src }}"
         dest: "{{ repo_dest }}/"
-        # archive implies -o/-g, which a non-root rsync cannot honour and which
-        # produce spurious "changed" churn. Everything else in -a is wanted.
+        # No -o/-g: a non-root rsync cannot set them, and they report spurious changes.
         owner: false
         group: false
         compress: true
@@ -59,18 +58,10 @@
       register: sync_result
       tags: [sync]
 
-    # rsync -a preserves the SOURCE mtime, which is the operator's local
-    # edit time. When that time falls before the node's last build -- easy
-    # across machines with different clocks, or after a rebase that
-    # restores an older file -- make sees a source older than its .o and
-    # skips it. The build then succeeds while silently linking stale
-    # objects, and the node runs code that is not what was pushed.
-    #
-    # Stamp the sources with the current node time whenever anything was
-    # transferred, so make compares against times it set itself. This
-    # forces a full rebuild after a sync that changed something, which
-    # costs about a minute on a 32-core node -- cheap next to debugging a
-    # binary that does not contain the change you just pushed.
+    # rsync -a keeps the source mtime. A source older than the node's last
+    # build (different clocks, or a rebase that restores an older file) makes
+    # make skip it and link stale objects. Touch the sources after a transfer
+    # so make compares against node time; this forces a full rebuild.
     - name: Refresh source mtimes so make rebuilds what changed
       ansible.builtin.raw: >-
         bash -lc 'cd {{ repo_dest | quote }} &&

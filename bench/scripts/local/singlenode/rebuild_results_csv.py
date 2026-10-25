@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Rebuild a unified results.csv from per-cell {system}_workload{w}_t{T}_r{R}.log
-files written by run_fig2_sweep.py.
+"""Rebuild results.csv from the per-cell {system}_workload{w}_t{T}_r{R}.log
+files that run_fig2_sweep.py writes.
 
-The orchestrator overwrites results.csv on every invocation, so a chained
-two-phase sweep (T={2,4,8,16} then T=1) leaves the CSV reflecting only the
-second phase.  This rebuild parses every .log file's `Run throughput(ops/sec)`
-line plus /usr/bin/time RSS and aggregates per (system, workload, threads)
-across repeats, producing the same schema as run_fig2_sweep.py emits.
+run_fig2_sweep.py overwrites results.csv on every invocation, so a chained
+pair of sweeps (T={2,4,8,16}, then T=1) leaves only the second sweep in the
+CSV. This script parses the throughput line and the /usr/bin/time RSS of
+every .log file, aggregates per (system, workload, threads) across repeats,
+and writes the same schema as run_fig2_sweep.py.
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ from pathlib import Path
 
 
 def _require_env(name: str) -> Path:
-    """Resolve a required environment variable to a Path, or exit clearly."""
+    """Return the Path in a required environment variable, or exit."""
     value = os.environ.get(name)
     if not value:
         raise SystemExit(f"{name} is not set")
@@ -31,9 +31,8 @@ OZONEDB_HOME = _require_env("OZONEDB_HOME")
 RESULTS_ROOT = OZONEDB_HOME / "bench" / "results" / "local"
 
 LOG_RE = re.compile(r"^(?P<sys>[a-z0-9]+)_workload(?P<wl>[a-z])_t(?P<t>\d+)_r(?P<r>\d+)\.log$")
-# YCSB-cpp emits "Run throughput(ops/sec): N"; YCSB-Java (OzoneDB) emits
-# "[OVERALL], Throughput(ops/sec), N" — match either.  N may be in scientific
-# notation (e.g. 1.11796e+06) for throughputs ≥ 1M ops/sec.
+# YCSB-cpp: "Run throughput(ops/sec): N". YCSB-Java (OzoneDB):
+# "[OVERALL], Throughput(ops/sec), N". N may use scientific notation (1.11796e+06).
 _NUM = r"[\d.]+(?:[eE][+-]?\d+)?"
 THROUGHPUT_RE = re.compile(
     rf"(?:Run throughput\(ops/sec\):\s*|^\[OVERALL\],\s+Throughput\(ops/sec\),\s+)({_NUM})",
@@ -111,10 +110,8 @@ def main() -> int:
                    help="Multi-writer (T>1) results directory")
     args = p.parse_args()
 
-    # Scan each directory and write its own CSV.  Each CSV contains every cell
-    # whose log files live in that directory — so fig1 ends up with T=1 rows
-    # and fig2 with T>1 rows under the convention enforced by the chain script
-    # and run_fig2_sweep.py --results-dir.
+    # Each directory gets its own CSV with every cell whose logs it holds:
+    # T=1 rows in fig1, T>1 rows in fig2.
     for label, d in [("fig1", args.fig1_dir), ("fig2", args.fig2_dir)]:
         if not d.exists():
             print(f"  {label}: skipped (dir does not exist)")

@@ -5,11 +5,11 @@
 #     "matplotlib",
 # ]
 # ///
-"""Plot compaction commit latency vs writer count from the contention sweep.
+"""Plot compaction commit latency against writer count from the contention sweep.
 
-Reads the summary CSV produced by run_corfu_compaction_contention.py
-(one row per (writer_count, trial)) and emits a PDF with mean / p50 / p95 /
-p99 series, error bars across trials.
+Reads the summary CSV that run_corfu_compaction_contention.py writes (one
+row per (writer_count, trial)) and writes a PDF with mean / p50 / p95 / p99
+series and error bars across trials.
 
 Usage:
     uv run plot_compaction_contention.py \\
@@ -60,8 +60,7 @@ def plot(data, out_path: Path) -> None:
             continue
         ws = sorted(per_w.keys())
         means = [sum(per_w[w]) / len(per_w[w]) for w in ws]
-        # Error bars: half the trial spread. With 3 trials this approximates
-        # ±range/2 around the mean — coarse but sufficient for a visual cue.
+        # Error bars: half the trial spread, (max - min) / 2, around the mean.
         errs = [
             (max(per_w[w]) - min(per_w[w])) / 2 if len(per_w[w]) > 1 else 0.0
             for w in ws
