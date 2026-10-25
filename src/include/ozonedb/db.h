@@ -40,44 +40,37 @@ class DiskCacheStorage;
 class DB {
  private:
   /**
-   * @brief the state of the database
-   *
+   * @brief State of the database.
    */
   std::atomic<bool> active;
   Mode mode;
 
   /**
-   * @brief different modules of the database
+   * @brief Storage modules of the database.
    *
-   * log_storage holds append-coordinated files (log layer, metadata log,
-   * task log). sstable_storage holds SSTables. When the config does not
-   * set a separate sstable_backend the two pointers alias and the
-   * destructor's guard prevents a double-free. Paper §3.5 split.
+   * log_storage holds the data log, the metadata log and the task log.
+   * sstable_storage holds SSTables (paper §3.5). Without a sstable_backend
+   * config key the two pointers alias. The destructor guards the double-free.
    */
   Storage* log_storage = nullptr;
   Storage* sstable_storage = nullptr;
-  // The disk tier in front of sstable_storage when disk_cache_dir is set;
-  // then sstable_storage IS this object and owns the backing store. Non-owning.
+  // The disk tier in front of sstable_storage when disk_cache_dir is set.
+  // Then sstable_storage is this object and owns the backing store. Non-owning.
   DiskCacheStorage* disk_cache = nullptr;
   Metadata* metadata;
   CompactionWatcher* watcher = nullptr;
-  // Only when Metadata::log_trim_enabled and the log backend is Corfu:
-  // this process checkpoints the log to sstable_storage and trims behind
-  // the checkpoint. Stopped in closeDB, which also runs
-  // its final cycle, and deleted first in ~DB because it uses both stores.
+  // Set only when Metadata::log_trim_enabled and the log backend is Corfu.
+  // closeDB stops it after its final cycle. ~DB deletes it first because
+  // it uses both stores.
   LogTrimmer* trimmer = nullptr;
   std::string fingerprint;
-  // Holds an immutable snapshot of the metadata-log view. Refreshed
-  // once per DB::get via std::atomic_load on the handler's internal
-  // shared_ptr — the shared_ptr extends the View's lifetime across
-  // the get's child-handler dispatch without deep-copying three
-  // hashmaps on every call. The raw pointer each child handler
-  // stores (setLatestView) aliases into this snapshot.
+  // Immutable snapshot of the View. DB::get refreshes it once per call with
+  // std::atomic_load. The raw pointer each child handler stores
+  // (setLatestView) aliases into this snapshot. Do not deep-copy the View.
   std::shared_ptr<View const> latest_view_snapshot;
 
   /**
-   * @brief different handlers for read-write
-   *
+   * @brief Handlers for reads and writes.
    */
   MetadataLogHandler* metadata_log = nullptr;
   LogHandler* log_handler = nullptr;
@@ -91,7 +84,7 @@ class DB {
   ~DB();
 
  public:
-  //set event listener
+  // Set the event listener.
   void setEventListener(EventListener* event_listener) {
     this->event_listener = event_listener;
     this->watcher->setEventListener(event_listener);
@@ -99,26 +92,26 @@ class DB {
   }
 
   /**
-   * @brief open the database
+   * @brief Open the database.
    *
-   * read metadata, create the handlers for RW, open the compaction watcher
+   * Reads the config, creates the handlers and starts the compaction watcher.
    *
    * @param db the database object
-   * @param shared_config_path  the path to the shared config file
-   * @return Status  the status of the operation
+   * @param shared_config_path path to the shared config file
+   * @return Status
    */
   static Status openDB(DB*& db, std::string const& shared_config_path);
 
   /**
-   * @brief to close the database
+   * @brief Close the database.
    *
    * @param db the database object
-   * @return Status the status of the operation
+   * @return Status
    */
   static Status closeDB(DB*& db);
 
   /**
-   * @brief put the key value pair in the database
+   * @brief Put a key-value pair.
    *
    * @param key
    * @param value
@@ -127,7 +120,7 @@ class DB {
   Status put(std::string const& key, std::string const& value);
 
   /**
-   * @brief delete the key from the database
+   * @brief Delete a key.
    *
    * @param key
    * @return Status
@@ -135,15 +128,13 @@ class DB {
   Status remove(std::string const& key);
 
   /**
-   * @brief get the value of the key from the database
+   * @brief Get the value of a key.
    *
-   * `value` aliases bytes inside `guard`'s Record. The caller MUST keep
-   * `guard` alive for as long as it dereferences `value`, otherwise a
-   * concurrent compaction or LRU eviction can free the bytes mid-read.
+   * value aliases bytes owned by guard. Keep guard alive while using value.
    *
    * @param key
    * @param value  output: pointer to the value bytes
-   * @param guard  output: shared_ptr keeping the value alive
+   * @param guard  output: shared_ptr that keeps the value alive
    * @return Status
    */
   Status get(std::string const& key, std::string const*& value,
@@ -152,20 +143,14 @@ class DB {
   /**
    * @brief Batch fence for strict reads (Metadata::linearizable_reads).
    *
-   * sync() takes ONE storage fence on the calling thread; every get()
-   * on this thread until clearSync() reuses it instead of fencing per
-   * call, so each of those reads linearizes at the sync() point — the
-   * analog of cr-sqlite's per-tick /barrier, and the amortization for
-   * read batches (poll loops, scans over many keys). The caller must
-   * pair every sync() with a clearSync(): a leaked token silently
-   * pins later reads on this thread to a stale fence. No-ops on
-   * non-fencing backends and in non-strict mode (a token is only
-   * consulted by the fenced read path).
+   * sync() takes one storage fence on the calling thread. Every get() on this
+   * thread reuses it until clearSync(), so each read linearizes at the sync()
+   * point. Pair every sync() with a clearSync(): a leaked token pins later
+   * reads on this thread to a stale fence. No-op on non-fencing backends and
+   * in non-strict mode.
    */
   Status sync();
   Status clearSync();
 };
 }  // namespace ozonedb
 #endif  // DB_H
-
-// Concurrent put get.

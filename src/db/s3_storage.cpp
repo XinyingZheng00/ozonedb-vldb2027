@@ -35,10 +35,7 @@ void maybeAwsShutdown() {
   }
 }
 
-// Wrap a raw byte pointer as an AWS IOStream without extra copies on the
-// upload path. The AWS SDK takes a std::shared_ptr<Aws::IOStream> for
-// PutObject bodies; a stringstream backed by the buffer is the simplest
-// way to hand it the bytes without rolling a custom PreallocatedStreamBuf.
+// Wrap bytes as the std::shared_ptr<Aws::IOStream> a PutObject body takes.
 std::shared_ptr<Aws::IOStream> makeBodyStream(unsigned char const* data, size_t size) {
   auto stream = Aws::MakeShared<Aws::StringStream>("S3Body");
   stream->write(reinterpret_cast<char const*>(data), static_cast<std::streamsize>(size));
@@ -62,11 +59,10 @@ S3Storage::S3Storage(std::string const& endpoint,
   cfg.region = region.empty() ? Aws::String("us-east-1") : Aws::String(region.c_str());
   if (!endpoint.empty()) {
     cfg.endpointOverride = Aws::String(endpoint.c_str());
-    // MinIO / R2 / Wasabi / SeaweedFS: the endpoint is an HTTP host, not
-    // an AWS service DNS name. Force path-style addressing so the client
-    // sends `http://host:port/bucket/key` instead of
-    // `http://bucket.host:port/key`. Real AWS users should set
-    // use_path_style=false and leave endpoint empty.
+    // A custom endpoint (MinIO, R2, Wasabi, SeaweedFS) is a plain HTTP
+    // host, not an AWS service DNS name. With use_path_style the client
+    // sends `http://host:port/bucket/key`. For AWS proper, leave endpoint
+    // empty and set use_path_style=false.
     if (endpoint.rfind("http://", 0) == 0) {
       cfg.scheme = Aws::Http::Scheme::HTTP;
       cfg.verifySSL = false;
@@ -81,8 +77,8 @@ S3Storage::S3Storage(std::string const& endpoint,
         Aws::Client::AWSAuthV4Signer::PayloadSigningPolicy::Never,
         /*useVirtualAddressing=*/!use_path_style);
   } else {
-    // Fall through to the default credential provider chain (env vars,
-    // instance profile, etc.). Useful for real AWS deployments.
+    // No keys: use the default credential provider chain (env vars,
+    // instance profile).
     client_ = std::make_unique<Aws::S3::S3Client>(
         cfg,
         Aws::Client::AWSAuthV4Signer::PayloadSigningPolicy::Never,
@@ -91,8 +87,7 @@ S3Storage::S3Storage(std::string const& endpoint,
 }
 
 S3Storage::~S3Storage() {
-  // Flush any pending batched writes. This mirrors ~CorfuDBStorage's
-  // cached_file drain and ~CorfuDBStorage's destructor flush path.
+  // Flush pending batched writes.
   std::unique_lock<std::mutex> lock(mtx_);
   if (!cached_file_.empty()) {
     std::vector<std::string> keys;
@@ -142,20 +137,13 @@ Status S3Storage::flushLocked(std::string const& fileName) {
 }
 
 Status S3Storage::append(std::string const& fileName, unsigned char* const& data, int length) {
-  // S3 has no native append. Callers that truly need atomic append
-  // (log / metadata / task logs) must route those files to a different
-  // backend — S3Storage is the "regular storage" tier for SSTables per
-  // paper §3.5. Implement append as "buffer + immediate flush" so any
-  // legacy call site that doesn't distinguish log vs sstable still works.
+  // S3 has no append. The three logs must use another backend; this
+  // tier is for SSTables (paper §3.5). append is buffer + immediate flush.
   //
-  // flushLocked MOVES the buffer out and erases the map entry, so a naive
-  // second append would PutObject only the new bytes and silently
-  // truncate everything written before it. Keep the accumulated bytes and
-  // re-put the whole object each time, which is the only way to emulate
-  // append on a store that has no append.
-  //
-  // That makes append O(object size) per call. It is correct, not fast.
-  // Do not route a log file here.
+  // flushLocked moves the buffer out and erases the map entry, so a
+  // second append would put only the new bytes. Keep the accumulated
+  // bytes and re-put the whole object on every call. That makes append
+  // O(object size) per call: correct, not fast.
   std::vector<unsigned char> snapshot;
   {
     std::lock_guard<std::mutex> lk(mtx_);
@@ -167,7 +155,7 @@ Status S3Storage::append(std::string const& fileName, unsigned char* const& data
   Status s = flushLocked(fileName);
   if (s != Status::kSuccess) return s;
   // flushLocked erased the entry; restore it so the next append re-puts
-  // the whole object instead of just its own bytes.
+  // the whole object.
   {
     std::lock_guard<std::mutex> lk(mtx_);
     cached_file_[fileName] = std::move(snapshot);
@@ -184,9 +172,8 @@ Status S3Storage::appendNoFlush(std::string const& fileName, unsigned char* cons
 }
 
 Status S3Storage::appendInBatch(std::string const& fileName, unsigned char* const& data, int length) {
-  // For SSTable writes we just accumulate and let flush() transfer the
-  // whole object in one PutObject. No timer-based partial flushes — one
-  // SSTable is one object.
+  // Accumulate only; flush() sends the whole object in one PutObject.
+  // One SSTable is one object.
   return appendNoFlush(fileName, data, length);
 }
 
@@ -229,14 +216,13 @@ Status S3Storage::read(std::string const& fileName, unsigned char*& data, size_t
 
 size_t S3Storage::size(std::string fileName) {
   {
-    // Pending bytes in the local buffer haven't been PUT yet; callers
-    // reading a just-written file must still see the full size.
+    // Bytes in the local buffer are not PUT yet; a reader of a
+    // just-written file must still see the full size.
     std::lock_guard<std::mutex> lk(mtx_);
     auto it = cached_file_.find(fileName);
     if (it != cached_file_.end() && !it->second.empty()) {
-      // If we have a local buffer, the remote object may not exist yet.
-      // Return buffer size as an optimistic upper bound — callers about
-      // to read will flush first.
+      // The remote object may not exist yet. Return the buffer size; a
+      // caller about to read flushes first.
       return it->second.size();
     }
   }
@@ -249,9 +235,9 @@ size_t S3Storage::size(std::string fileName) {
 }
 
 void S3Storage::seal(std::string fileName) {
-  // Flush any pending batched data first so readers observe the final
-  // object on the next GetObject. S3 objects are immutable once PUT, so
-  // the "seal marker" is just the fact that we stop accepting appends.
+  // Flush pending data first, so the next GetObject sees the final
+  // object. S3 objects are immutable once PUT; the seal is local and
+  // only stops further appends.
   flushLocked(fileName);
   std::lock_guard<std::mutex> lk(mtx_);
   sealed_files_.insert(fileName);
@@ -262,8 +248,8 @@ bool S3Storage::isSealed(std::string fileName) {
     std::lock_guard<std::mutex> lk(mtx_);
     if (sealed_files_.count(fileName)) return true;
   }
-  // For files written by a different process, treat "object exists on S3
-  // with no local append buffer" as sealed — SSTables are write-once.
+  // A file written by another process: an object on S3 with no local
+  // buffer counts as sealed, because SSTables are write-once.
   return exist(fileName);
 }
 

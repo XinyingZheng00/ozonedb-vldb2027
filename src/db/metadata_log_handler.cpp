@@ -11,15 +11,12 @@
 namespace ozonedb {
 
 namespace {
-// Emit `[COMPACTION_COMMITTED]` when a COMPACT OperationRecord has been
-// applied to the local view. Every peer fires this independently from its
-// own rollforward thread, including the winner. The benchmark harness joins
-// these with `[COMPACTION_NEEDED]` from task_log_handler.cpp by task_id.
+// Log `[COMPACTION_COMMITTED]` when a COMPACT record is applied to the local
+// View. Every process logs it from its own replay, the compactor included.
+// The line pairs with `[COMPACTION_NEEDED]` from task_log_handler.cpp by task_id.
 inline void logCompactionCommitted(OperationRecord const* record) {
-  // A COMPACT can carry no outputs (every input was empty, or was removed
-  // under the compactor by a peer's execution of an overlapping task);
-  // indexing output_file(0) then dereferenced null. The destination is
-  // not known for such a record; log it under the input level.
+  // A COMPACT can carry no outputs when every input was empty. Its
+  // destination is then unknown, so log it under the input level.
   int dest_level = record->output_file_size() > 0
                        ? getNumberInTheEnd(getPrefix(record->output_file(0)))
                        : getNumberInTheEnd(getPrefix(record->input_files(0)));
@@ -36,9 +33,8 @@ inline void logCompactionCommitted(OperationRecord const* record) {
 }
 }  // namespace
 
-// All accessors use find() so probing for a missing prefix/file
-// doesn't mutate the underlying maps. This is required now that
-// View instances are shared behind a shared_ptr<View const>.
+// All accessors use find(), so a probe for a missing prefix or file never
+// mutates the maps. Views are shared behind a shared_ptr<View const>.
 int View::getFileNumber(std::string const& prefix) const {
   auto it = storage_layout.find(prefix);
   return it == storage_layout.end() ? 0 : static_cast<int>(it->second.size());
@@ -62,15 +58,13 @@ size_t View::getFileSize(std::string const& file_name) const {
   return it == file_size.end() ? 0 : it->second;
 }
 
-// Serialize a FileRecord to a file
+// Append an OperationRecord to the metadata log.
 void MetadataLogHandler::appendToMetadataLog(OperationRecord const& record) {
   int buffer_size;
   unsigned char* buffer = protobuf::serializeMessage(record, buffer_size);
-  // No lock: active_unit is set once in the constructor and not mutated;
-  // the storage layer (e.g. CorfuDBStorage::append) handles its own
-  // concurrency and returns a globally ordered address from Corfu. Holding
-  // read_mutex here would block every concurrent readMetadataLog() on
-  // peer writers across the Corfu round-trip.
+  // No lock: active_unit never changes after the constructor, and the
+  // storage layer orders concurrent appends itself. read_mutex here would
+  // block every readMetadataLog across the Corfu round trip.
   this->storage->append(this->active_unit, buffer, buffer_size);
   delete[] buffer;
   buffer = nullptr;
@@ -88,23 +82,21 @@ Status MetadataLogHandler::stopViewUpdate() {
   return Status::kSuccess;
 }
 
-// get latest view
+// Copies the View. Hot paths use latestViewSnapshot instead.
 void MetadataLogHandler::getLatestView(View& view) {
   std::shared_lock<std::shared_mutex> lock(view_mutex);
   view = latest_view;
 }
 
 std::shared_ptr<View const> MetadataLogHandler::latestViewSnapshot() const {
-  // Free-function std::atomic_load on shared_ptr works in C++17. A
-  // null result is possible before the first publishSnapshotLocked()
-  // runs; callers treat that as "no files yet". This is the hot path
-  // from DB::get — keep it lock-free.
+  // Hot path from DB::get: keep it lock-free. The result is null before
+  // the first publishSnapshotLocked; callers treat that as "no files yet".
   return std::atomic_load(&latest_snapshot_);
 }
 
 void MetadataLogHandler::publishSnapshotLocked() {
-  // Called under unique_lock<view_mutex> after every mutation. One
-  // deep copy per mutation amortizes into a refcount bump per read.
+  // Caller holds view_mutex as a unique_lock. One copy per mutation;
+  // each read is a refcount bump.
   auto snap = std::make_shared<View>(latest_view);
   std::atomic_store(&latest_snapshot_,
                     std::shared_ptr<View const>(std::move(snap)));
@@ -115,7 +107,7 @@ void MetadataLogHandler::markAppliedLocked(size_t start, size_t end) {
   if (start <= applied_offset_) {
     if (end > applied_offset_) applied_offset_ = end;
   } else {
-    // Applied ahead of the watermark — park until the hole below fills.
+    // Applied ahead of the watermark: park until the hole below fills.
     size_t& parked_end = applied_gaps_[start];
     if (end > parked_end) parked_end = end;
   }
@@ -126,15 +118,13 @@ void MetadataLogHandler::markAppliedLocked(size_t start, size_t end) {
   }
 }
 
-// Deserialize FileRecords from a file.
+// Read the OperationRecords appended since the last read.
 //
-// read_mutex is not held across storage->size() + storage->read(), which
-// for Corfu fences the tailer and can stall for seconds under concurrent
-// writer load. Instead we snapshot the offset,
-// do the I/O lock-free, then take the lock only long enough to commit
-// the new offset — and only if nobody else advanced it in the meantime.
-// Loser of a race discards its records and the caller catches up on
-// the next tick.
+// read_mutex is not held across storage->size() and storage->read(): on
+// Corfu they fence the tailer and can stall. The offset is snapshotted
+// under the lock and the I/O runs lock-free. The offset is then committed
+// under the lock, only if nobody advanced it meanwhile. A loser drops its
+// records; the caller catches up on the next pass.
 std::vector<OperationRecord*> MetadataLogHandler::readMetadataLog(size_t* observed_size,
                                                                   size_t* batch_start) {
   if (observed_size != nullptr) *observed_size = 0;
@@ -171,9 +161,8 @@ std::vector<OperationRecord*> MetadataLogHandler::readMetadataLog(size_t* observ
   {
     std::unique_lock<std::shared_mutex> lock(read_mutex);
     if (this->offset != local_offset) {
-      // Another thread advanced the offset while we were doing I/O.
-      // Our records either overlap theirs or have already been applied;
-      // drop them and let the caller catch up next tick.
+      // Another thread advanced the offset during the I/O. Its batch
+      // covers this one; drop these records.
       for (auto const& r : records) {
         delete static_cast<OperationRecord*>(r);
       }
@@ -197,20 +186,15 @@ std::string MetadataLogHandler::rollforwardSingleOperationRecord(OperationRecord
     std::deque<std::string>& level_layout = this->latest_view.storage_layout[prefix];
     if (this->latest_view.current_log_tail.empty() || this->latest_view.current_log_tail == input_file) {
       level_layout.push_back(output_file);
-      // Sealed tail size is shipped on the record by the rolling writer
-      // (see log_handler.cpp:newTail). Avoids a fenced storage->size()
-      // call under view_mutex. Older records without the field fall
-      // back to 0.
-      //
-      // HEURISTIC ONLY — it feeds compaction sizing.
-      // It is the emitter's unfenced view size, so it undercounts peer
-      // records appended just before the seal. Readers must NOT use it as
-      // a read bound; LRUCache::sealedLogSize fences for that.
+      // The rolling writer ships the sealed tail size on the record
+      // (log_handler.cpp, newTail), so no fenced storage->size() runs under
+      // view_mutex. Records without the field fall back to 0.
+      // Heuristic only: it is the emitter's unfenced size and feeds
+      // compaction sizing. Readers must not use it as a read bound;
+      // LRUCache::sealedLogSize fences for that.
       this->latest_view.file_size[input_file] =
           record->has_sealed_input_bytes() ? record->sealed_input_bytes() : 0;
       this->latest_view.current_log_tail = output_file;
-      // this->latest_view.tail_size = this->storage->size(output_file);
-      // this->latest_view.file_size[output_file] = this->latest_view.tail_size; => update at outside
       delete record;
       return "tail" + prefix;
     }
@@ -224,9 +208,9 @@ std::string MetadataLogHandler::rollforwardSingleOperationRecord(OperationRecord
     std::string const& input_file = record->input_files()[0];
     std::string input_prefix = getPrefix(input_file);
     std::deque<std::string>& level_layout = this->latest_view.storage_layout[input_prefix];
-    // front() of an empty deque was undefined behaviour; an input that is
-    // not in the level at all (a duplicate record) is parked at INT_MAX
-    // like its last-level counterpart below.
+    // A record whose first input does not head the level waits in the
+    // buffer. An input that is not in the level at all (a duplicate record)
+    // is parked at INT_MAX and never applied.
     if (level_layout.empty() || level_layout.front() != input_file) {
       auto it = std::find(level_layout.begin(), level_layout.end(), input_file);
       int index = (it == level_layout.end())
@@ -236,7 +220,7 @@ std::string MetadataLogHandler::rollforwardSingleOperationRecord(OperationRecord
       return "buffered";
     }
     for (auto const& input_file : record->input_files()) {
-      // remove input file from latest_view
+      // Remove the input from latest_view.
       latest_view.storage_layout[input_prefix].pop_front();
       if (latest_view.key_range.find(input_file) != latest_view.key_range.end()) {
         latest_view.key_range.erase(input_file);
@@ -250,9 +234,8 @@ std::string MetadataLogHandler::rollforwardSingleOperationRecord(OperationRecord
       std::string output_prefix = getPrefix(output_file);
       latest_view.storage_layout[output_prefix].push_back(output_file);
       latest_view.key_range[output_file] = std::make_pair(record->key_start(i), record->key_end(i));
-      // Size is carried on the record by the compactor (see compaction.cpp);
-      // old records without output_bytes fall back to 0 — this field only
-      // feeds size heuristics only, no correctness impact.
+      // The compactor ships the output size on the record. Records without
+      // output_bytes fall back to 0; the field feeds size heuristics only.
       latest_view.file_size[output_file] =
           (i < record->output_bytes_size()) ? record->output_bytes(i) : 0;
     }
@@ -265,21 +248,15 @@ std::string MetadataLogHandler::rollforwardSingleOperationRecord(OperationRecord
     std::string input_prefix = getPrefix(input_file);
     std::deque<std::string>& level_layout = this->latest_view.storage_layout[input_prefix];
 
-    // Canonical replay for last-level COMPACT records. The picker
-    // (initInputUnitInlastLayer) takes the first run of same-version files
-    // from the front of the level, so the oldest commit within a version
-    // has its first input at the front of that version's region (the files
-    // of one version are contiguous: outputs go where their inputs were).
-    // A record whose first input is not at the front of its region is
-    // deferred until the records before it in that order have applied,
-    // so every process applies the same records in the same order and
-    // ends with the same deque, whatever its replay batching. Without
-    // this, two processes at different replay offsets could apply records
-    // in different orders, hold different deque shapes, and pick
-    // overlapping input sets in the next round. A record whose inputs are
-    // not in the layout at all (a duplicate COMPACT, KNOWN-ISSUES.md 1) is
-    // parked at the lowest priority and never applied; the old code
-    // erased end() there.
+    // Canonical replay order for last-level COMPACT records. The files of
+    // one version are contiguous. The picker takes the first run of
+    // same-version files from the front of the level. A record applies only
+    // when its first input heads its version region; otherwise it waits in
+    // the buffer until the records before it have applied. Every process
+    // therefore applies the same records in the same order. All end with
+    // the same deque, whatever their replay batching. A duplicate COMPACT
+    // (KNOWN-ISSUES.md 1) has no inputs in the layout. It is parked at the
+    // lowest priority and never applied.
     int input_version = getNumberBeforeUnderscore(input_file);
     size_t version_start = 0;
     while (version_start < level_layout.size() &&
@@ -326,11 +303,9 @@ std::string MetadataLogHandler::rollforwardSingleOperationRecord(OperationRecord
 }
 
 // Apply every buffered record for `layer` that can apply now. Each pass
-// takes the whole buffer and retries every record (one that still cannot
-// apply re-buffers itself), and repeats until a pass applies nothing.
-// Retrying only the lowest-index record, as the callers used to, blocked
-// the layer behind one record that could not apply (a parked duplicate,
-// or a last-level record waiting on a later one in canonical order).
+// takes the whole buffer and retries every record; one that still cannot
+// apply re-buffers itself. Repeat until a pass applies nothing, so one
+// parked record never blocks the layer.
 // Caller holds view_mutex as a unique_lock.
 void MetadataLogHandler::drainBuffer(std::string const& layer) {
   while (true) {
@@ -373,9 +348,8 @@ void MetadataLogHandler::drainCacheEvents() {
   }
   if (this->lru_cache == nullptr) return;
   for (auto const& ev : events) {
-    // The View dropped the inputs already; now the cache does. A reader
-    // on the old snapshot may still probe an input: it misses, and its
-    // GET on a removed object is the documented transient miss.
+    // The View dropped the inputs already; now the cache does. A reader on
+    // the old snapshot may still probe an input and see a transient miss.
     size_t cached_input_blocks = 0;
     bool log_inputs = !ev.inputs.empty();
     for (auto const& input : ev.inputs) {
@@ -383,20 +357,16 @@ void MetadataLogHandler::drainCacheEvents() {
       if (this->sstable_removed_listener_) this->sstable_removed_listener_(input);
       if (LRUCache::levelSlot(input) != 0) log_inputs = false;
     }
-    // The outputs go to the warm worker, which applies the
-    // policy (enabled, level, budget, affinity = the blocks just dropped,
-    // or the destination level's lookups when the inputs are log files).
+    // The warm worker decides whether to prefetch the outputs: enabled,
+    // level, budget, and affinity (the blocks dropped, or the destination
+    // level's lookups when the inputs are log files).
     this->lru_cache->onCompactionApplied(ev.outputs, ev.output_bytes, ev.dest_level, cached_input_blocks, log_inputs);
   }
 }
 
-// Roll forward the metadata log to get the latest view.
-//
-// The periodic tail-size refresh must not call storage->size() while holding
-// unique_lock<view_mutex>, which would stall all foreground reads/writes
-// during Corfu tailer catch-up. Instead it samples the tail name under a brief shared_lock,
-// call storage->size() with no lock held, then apply the result under a
-// brief unique_lock — but only if the tail hasn't rotated in the meantime.
+// Background replay of the metadata log, every 100 ms. The tail-size
+// refresh runs with no lock held (refreshTailSizeUnlocked). A Corfu fence
+// therefore never stalls foreground reads and writes under view_mutex.
 void MetadataLogHandler::rollForwardMetadataLogPeriodically(std::atomic<bool> const* active) {
   while (*active) {
     size_t observed = 0;
@@ -416,7 +386,7 @@ void MetadataLogHandler::rollForwardMetadataLogPeriodically(std::atomic<bool> co
       markAppliedLocked(batch_start, observed);
       publishSnapshotLocked();
     }
-    drainCacheEvents();  // outside the view_mutex scope, by design
+    drainCacheEvents();  // outside the view_mutex scope
     refreshTailSizeUnlocked();
     if (this->event_listener != nullptr)
       this->event_listener->onViewUpdate();
@@ -424,10 +394,9 @@ void MetadataLogHandler::rollForwardMetadataLogPeriodically(std::atomic<bool> co
   }
 }
 
-// Refresh latest_view.tail_size / file_size[current_log_tail] without
-// holding view_mutex exclusively across the storage->size() call. The
-// size query can fence the Corfu tailer for seconds under load; keeping
-// it out of the critical section lets foreground ops proceed.
+// Refresh latest_view.tail_size and file_size[current_log_tail]. The
+// storage->size() call can fence the Corfu tailer, so it runs with no
+// lock held.
 void MetadataLogHandler::refreshTailSizeUnlocked() {
   std::string tail_name;
   {
@@ -437,7 +406,7 @@ void MetadataLogHandler::refreshTailSizeUnlocked() {
   if (tail_name.empty()) return;
   size_t tail_size = this->storage->size(tail_name);
   std::unique_lock<std::shared_mutex> lock(view_mutex);
-  // Only apply if the tail hasn't rotated since we sampled.
+  // Apply only if the tail has not rolled since the sample.
   if (tail_name == this->latest_view.current_log_tail) {
     this->latest_view.tail_size = tail_size;
     this->latest_view.file_size[tail_name] = tail_size;
@@ -445,21 +414,14 @@ void MetadataLogHandler::refreshTailSizeUnlocked() {
   }
 }
 
-// Fence + synchronous rollforward, no View copy. Same invariant as the
-// periodic variant: keep storage->size() out of unique_lock<view_mutex>.
-// See the header comment for the linearizable_reads role.
+// Fence and synchronous replay, no View copy. storage->size() stays out of
+// unique_lock<view_mutex>. See the header for the linearizable_reads role.
 size_t MetadataLogHandler::syncView() {
-  // `target` is the metadata-log length observed by the first
-  // readMetadataLog — on Corfu that size() is fenced on the global
-  // sequencer tail (or served from state already synced to the
-  // caller's SyncScope fence), so it covers every operation sequenced
-  // before the caller's fence point. The loop guards against the
-  // offset-CAS race: a loser's batch
-  // is discarded by readMetadataLog while the winner may have committed
-  // less than our target, and returning then would publish a view short
-  // of our fence. Iteration count is bounded in practice (offset is
-  // monotone and every loser observes the winner's advance next pass);
-  // the cap is a livelock backstop for a persistently failing read.
+  // `target` is the log length the first readMetadataLog observed. On Corfu
+  // that size() is fenced, so it covers every operation sequenced before
+  // the caller's fence point. The loop handles the offset race: a loser's
+  // batch is discarded while the winner may have applied less than target.
+  // The pass cap is a livelock backstop for a read that keeps failing.
   size_t target = 0;
   bool have_target = false;
   constexpr int kMaxPasses = 100;
@@ -482,27 +444,22 @@ size_t MetadataLogHandler::syncView() {
       if (!records.empty()) {
         markAppliedLocked(batch_start, observed);
       }
-      // Publish only when the view changed, or when no snapshot exists
-      // yet (openDB's first rollforward needs a non-null snapshot even
-      // with zero records). Publishing deep-copies the View, and strict
-      // mode runs syncView once per get — an unconditional publish
-      // would reintroduce the per-get O(files) copy.
+      // Publish only when the View changed or no snapshot exists yet
+      // (openDB's first replay needs a non-null snapshot). A publish copies
+      // the View, and strict reads call syncView once per get.
       if (!records.empty() || std::atomic_load(&latest_snapshot_) == nullptr) {
         publishSnapshotLocked();
       }
-      // Gate on applied_offset_, not `offset`: readMetadataLog commits
-      // the offset before its caller applies the batch, and in that
-      // window the view lags the offset. A racing winner applies within
-      // microseconds; the loop just re-checks until it has.
+      // Gate on applied_offset_, not `offset`: readMetadataLog commits the
+      // offset before its caller applies the batch. The loop re-checks
+      // until a racing winner has applied.
       if (applied_offset_ >= target) {
         reached = true;
         applied = applied_offset_;
       }
     }
-    // Cache work for the COMPACTs this pass applied, after the lock and
-    // before the caller sees the new view (the compactor calls this right
-    // after its own append, so its inputs' blocks go now, not 100 ms
-    // later on the periodic thread).
+    // Cache work for the COMPACTs this pass applied: after the lock, before
+    // the caller sees the new View.
     drainCacheEvents();
     if (reached) return applied;
   }
@@ -515,9 +472,8 @@ size_t MetadataLogHandler::syncView() {
   }
 }
 
-// Roll forward the metadata log to get the latest view. Called from
-// foreground log-roll / put paths, which want the copy and the tail
-// refresh; per-get strict reads use syncView() directly to skip both.
+// Synchronous replay that returns a copy of the View with a fresh tail
+// size. The log-roll and put paths use it; strict reads use syncView().
 View MetadataLogHandler::rollForwardMetadataLog() {
   syncView();
   refreshTailSizeUnlocked();
@@ -525,7 +481,7 @@ View MetadataLogHandler::rollForwardMetadataLog() {
   return latest_view;
 }
 void MetadataLogHandler::initSSTMetadata() {
-  // this is invoked only when the database starts so no need to lock
+  // Runs only at open, before any other thread exists, so no lock.
   for (auto const& entry : this->latest_view.storage_layout) {
     if (entry.first.find("sstable") == std::string::npos) {
       continue;

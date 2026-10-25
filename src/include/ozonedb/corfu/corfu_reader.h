@@ -1,9 +1,9 @@
 #ifndef OZONEDB_CORFU_READER_H
 #define OZONEDB_CORFU_READER_H
 #ifdef OZONEDB_ENABLE_CORFU
-// The sequential tailer. It reads the
-// GLOBAL address space in order, [next_, tail_], in batches of
-// read_batch addresses, and classifies every address:
+// The sequential tailer. It reads the global address space in order,
+// [next_, tail_], in batches of read_batch addresses, and classifies
+// every address:
 //
 //   DATA with the stream in BACKPOINTER_MAP  -> delivered to the sink
 //   DATA without it, or HOLE                 -> skipped
@@ -11,9 +11,8 @@
 //                                               wait, then fill a HOLE
 //   TRIMMED, or trimmed_error                -> Poll::kTrimmed
 //
-// That is correct only while every entry in the log belongs to this one
-// stream; corfu_native_probe verifies it on the loaded datasets. It needs
-// no address map and no Roaring bitmap.
+// This is correct only while every entry in the log belongs to this one
+// stream. corfu_native_probe checks that on a dataset.
 #include "corfu/corfu_codec.h"
 #include "corfu/corfu_rpc.h"
 #include "corfu_client.h"
@@ -36,7 +35,7 @@ class Reader {
   ~Reader();
 
   // CorfuClient::pollBatch semantics. Single consumer: one thread at a
-  // time (the tailer, or the constructor during the replay).
+  // time, the tailer or the constructor during replay.
   CorfuClient::Poll pollBatch(int timeout_ms, int max_entries, CorfuClient::EntrySink const& sink);
   // CorfuClient::seek: next_ = addr, forget the decoded remainder.
   bool seek(int64_t addr);
@@ -71,8 +70,8 @@ class Reader {
   std::atomic<uint64_t> foreign_skipped_{0};
 
   // Fetch [next_, min(tail_, next_ + read_batch - 1)] into resp_.
-  // Returns kTrimmed / kError on failure, kEntries when a batch (possibly
-  // with nothing deliverable) is loaded.
+  // Returns kTrimmed / kError on failure, kEntries when a batch is
+  // loaded, even one with nothing deliverable.
   CorfuClient::Poll fetchBatch();
   // Deliver from resp_ until max_entries, an EMPTY, or the end. Returns
   // the count delivered; stops at an EMPTY with next_ on it.

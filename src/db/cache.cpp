@@ -33,23 +33,22 @@ void LRUCache::noteProbe(std::string const& file_name, int kind) {
   }
 }
 
-// Function to move a key to the front of the LRU list
+// Moves a block to the front of the LRU list.
 void LRUCache::updateLRU(std::string const& file_name, std::string const& index_value) {
   lru_list.erase(file_to_entry_map[file_name].lru_itr[index_value]);
   lru_list.push_front({file_name, index_value});
   file_to_entry_map[file_name].lru_itr[index_value] = lru_list.begin();
 }
 
-// Function to evict the least recently used item
+// Evicts least recently used blocks until current_size <= capacity.
 void LRUCache::evict() {
   while (current_size > capacity) {
     auto it = lru_list.rbegin();
     auto& entry = file_to_entry_map[it->first];
     current_size -= entry.block_size[it->second];
-    // block_records values are heap-allocated maps; the inner map's
-    // shared_ptr<Record> values release on map destruction. A reader
-    // that lifted a shared_ptr out of get() keeps its Record alive
-    // independently — eviction no longer races with use.
+    // block_records values are heap maps; their shared_ptr<Record> values
+    // release on map destruction. A reader that holds a shared_ptr keeps
+    // its Record alive.
     auto block_it = entry.block_records.find(it->second);
     if (block_it != entry.block_records.end()) {
       delete block_it->second;
@@ -62,7 +61,7 @@ void LRUCache::evict() {
   }
 }
 // Fenced size of a sealed log file, memoized. Never call this while
-// holding `mutex` — see the sealed_size_ comment in cache.h.
+// holding `mutex`; see sealed_size_ in cache.h.
 size_t LRUCache::sealedLogSize(std::string const& file_name) {
   {
     std::lock_guard<std::mutex> lk(sealed_size_mtx_);
@@ -71,9 +70,8 @@ size_t LRUCache::sealedLogSize(std::string const& file_name) {
   }
   size_t fenced = log_storage_->size(file_name);
   if (fenced == 0) {
-    // The file is not applied locally yet (or is already removed). Fall
-    // back to the View rather than memoizing a zero that would suppress
-    // every later read of this file.
+    // The file is not applied locally yet, or is already removed. Use the
+    // View instead of memoizing a zero.
     return latest_view != nullptr ? latest_view->getFileSize(file_name) : 0;
   }
   std::lock_guard<std::mutex> lk(sealed_size_mtx_);
@@ -82,16 +80,11 @@ size_t LRUCache::sealedLogSize(std::string const& file_name) {
 }
 
 void LRUCache::checkReadMoreLog(std::string const& file_name, bool& read_more, size_t& cached_offset, size_t& size) {
-  // Sample cache state under a shared lock, then release before any
-  // storage->size() call. Holding LRUCache::mutex across the Corfu
-  // fence inverted locks against the tailer's remote-append listener
-  // (which calls putLogRecordSingle → LRUCache::mutex): the tailer
-  // could not advance past an entry it was trying to publish, and
-  // this thread could not wake because last_applied_addr_ was stuck
-  // behind that same entry. The sampled state is eventually
-  // consistent — a stale (low) cached_offset at worst triggers one
-  // extra no-op readDataLog on the next tick; sealed only flips once
-  // so a stale "unsealed" resolves on the next call.
+  // Sample the cache state under a shared lock, then release it before
+  // any storage->size() call. Holding `mutex` across the Corfu fence
+  // deadlocks against the tailer's listener, which takes `mutex` in
+  // putLogRecordSingle. The sampled state may be stale: a low
+  // cached_offset costs one no-op readDataLog, and sealed only flips once.
   bool is_tail = false;
   {
     std::shared_lock<std::shared_mutex> lock(mutex);
@@ -105,15 +98,11 @@ void LRUCache::checkReadMoreLog(std::string const& file_name, bool& read_more, s
     }
     is_tail = (file_name == latest_view->current_log_tail);
   }
-  // latest_view->getFileSize lags behind the storage layer for the active
-  // tail whenever the writer uses appendInBatch: the view is refreshed on
-  // a ~100ms cycle and ignores the local cached_file_ buffer. Ask storage
-  // directly for the tail so the read covers not-yet-flushed bytes too.
-  //
-  // A sealed file never grows, but the View is still the wrong source for
-  // its size: that number is the emitter's stale sealed_input_bytes, so
-  // peer records written just before the seal fall outside the bound and
-  // never become readable. Fence once per sealed file and memoize.
+  // For the active tail, the View's size lags the storage layer when the
+  // writer uses appendInBatch. Ask storage directly. For a sealed file the
+  // View's size is the sealing writer's unfenced sealed_input_bytes. Peer
+  // records written right before the seal fall outside it. Fence once per
+  // sealed file and memoize.
   if (is_tail) {
     size = log_storage_->size(file_name);
   } else {
@@ -131,11 +120,10 @@ void LRUCache::readDataLog(std::string const& file_name, size_t cached_offset, s
   Status read_status = this->log_storage_->read(
       file_name, buffer, cached_offset, size - cached_offset);
   file_lock.unlock();
-  // Race window: between our caller's checkReadMoreLog and this read,
-  // a peer's compaction can emit REMOVE for `file_name`. The local
-  // tailer applies the REMOVE, read returns kNotFound, buffer stays
-  // null. Bail out — there's nothing left to deserialize and the
-  // metadata-log rollforward will eventually drop this file from view.
+  // A peer compaction can REMOVE `file_name` between checkReadMoreLog and
+  // this read. The tailer applies the REMOVE, read returns kNotFound and
+  // buffer stays null. Return; the metadata log replay drops the file
+  // from the View.
   if (read_status != Status::kSuccess || buffer == nullptr) {
     delete[] buffer;
     read_failures_.fetch_add(1, std::memory_order_release);
@@ -149,8 +137,7 @@ void LRUCache::readDataLog(std::string const& file_name, size_t cached_offset, s
   buffer = nullptr;
   std::unordered_map<std::string, std::shared_ptr<Record>> records_tmp;
   for (auto* msg : messages) {
-    // Wrap each freshly-parsed Record in a shared_ptr so the cache and
-    // any future borrowers (LogKeyIndex, readers) share ownership.
+    // The cache and later borrowers (LogKeyIndex, readers) share ownership.
     std::shared_ptr<Record> rec(static_cast<Record*>(msg));
     auto const& k = rec->key();
     records_tmp[k] = std::move(rec);
@@ -160,10 +147,8 @@ void LRUCache::readDataLog(std::string const& file_name, size_t cached_offset, s
 }
 
 void LRUCache::getSSTable(std::string const& file_name, Table*& table) {
-  // Singleflight: only one thread opens a given file; concurrent
-  // readers wait on the same future. Without this, N readers that hit
-  // a cold file each issue 4–5 S3 GETs in Table::open and the later
-  // putSSTableMeta calls leak all but the last Table*.
+  // Single-flight: one thread opens a file; concurrent readers wait on
+  // the same future.
   std::shared_future<void> waiter;
   std::shared_ptr<std::promise<void>> my_promise;
 
@@ -191,11 +176,10 @@ void LRUCache::getSSTable(std::string const& file_name, Table*& table) {
     return;
   }
 
-  // Leader path. Any exception from Table::open / setCache must not
-  // leave a dangling entry in table_inflight_ or an unset promise —
-  // doing so would wedge every future reader of this file on a
-  // broken_promise future and the block would never be refetched.
-  // The scope guard fires on both normal and exceptional exit.
+  // Leader path. An exception from Table::open or setCache must not leave
+  // an entry in table_inflight_ or an unset promise. Every later reader
+  // of this file would wait on a broken promise. The guard runs cleanup
+  // on normal and exceptional exit.
   Table* opened = nullptr;
   bool cleanup_done = false;
   auto cleanup = [&]() {
@@ -204,21 +188,17 @@ void LRUCache::getSSTable(std::string const& file_name, Table*& table) {
     {
       std::unique_lock<std::shared_mutex> lock(mutex);
       if (opened != nullptr) {
-        // Merge: a prior compaction write-through may have populated
-        // block_records before any reader opened the file. Only the
-        // Table* needs setting; wiping the CacheEntry wholesale would
-        // throw away those warm blocks.
+        // Set only the Table*: a compaction write-through may have put
+        // block_records in the entry before any reader opened the file.
         file_to_entry_map[file_name].table = opened;
       }
       table_inflight_.erase(file_name);
     }
     try { my_promise->set_value(); } catch (...) {}
   };
-  // Store the callable by value — a reference member can't bind to
-  // the lambda-to-std::function rvalue conversion. The held
-  // std::function still references the surrounding locals (lambda
-  // captures are [&]); Guard is in the same scope, so it is
-  // destroyed before those captures go out of scope.
+  // The callable is held by value: a reference member cannot bind to the
+  // lambda-to-std::function conversion. The lambda captures by reference;
+  // Guard is destroyed before those captures go out of scope.
   struct Guard {
     std::function<void()> f;
     ~Guard() { f(); }
@@ -240,7 +220,7 @@ void LRUCache::getSSTable(std::string const& file_name, Table*& table) {
     try {
       opened->setCache(this);
     } catch (...) {
-      // Table* is still usable; just log.
+      // Table* is still usable.
       std::cerr << "[lru_cache] setCache threw for " << file_name << "\n";
     }
   }
@@ -259,12 +239,9 @@ void LRUCache::needReadBlock(std::string const& file_name, bool& read_more, std:
 }
 
 void LRUCache::readDataBlocks(std::string const& file_name, std::string const& index_value, Table* caller_table) {
-  // Singleflight on (file, block). Without this, concurrent readers on
-  // a cold block each S3-GET it AND each call putSSTableRecords —
-  // double-counting current_size, leaking prior records maps, and
-  // evicting hot blocks immediately. Separator must never appear in
-  // either component of the key; '\0' is safe for both file paths and
-  // serialized BlockIdentifier protos.
+  // Single-flight on (file, block): one leader fetches and publishes, the
+  // others wait. '\0' never appears in a file path or a serialized
+  // BlockIdentifier, so it separates the two key components.
   std::string inflight_key = file_name;
   inflight_key.push_back('\0');
   inflight_key.append(index_value);
@@ -276,8 +253,8 @@ void LRUCache::readDataBlocks(std::string const& file_name, std::string const& i
   {
     std::unique_lock<std::shared_mutex> lock(mutex);
     auto it = file_to_entry_map.find(file_name);
-    // Re-check under the write lock: a leader may have published
-    // between Table::get's needReadBlock and this call.
+    // Re-check under the write lock: a leader may have published since
+    // needReadBlock.
     if (it != file_to_entry_map.end() &&
         it->second.block_records.find(index_value) != it->second.block_records.end()) {
       sstable_cache_hits_.fetch_add(1, std::memory_order_relaxed);
@@ -301,13 +278,10 @@ void LRUCache::readDataBlocks(std::string const& file_name, std::string const& i
     return;
   }
 
-  // Leader path. Any exception from blockReader / iterator / parse
-  // must not leave block_inflight_ populated with an unset promise;
-  // if that happened, all subsequent readers for this block would
-  // wait on a broken_promise future and then return without fetching,
-  // wedging the block permanently. Under multi-writer Corfu loads
-  // these errors do happen, so we guard with a scope that always
-  // runs the publish-or-drop cleanup.
+  // Leader path. An exception from blockReader, the iterator or the parse
+  // must not leave block_inflight_ holding an unset promise. Every later
+  // reader of this block would wait on a broken promise and return
+  // without a fetch. The guard always runs the publish-or-drop cleanup.
   Iterator* iter = nullptr;
   std::unordered_map<std::string, std::shared_ptr<Record>>* records_tmp = nullptr;
   size_t size = 0;
@@ -322,9 +296,8 @@ void LRUCache::readDataBlocks(std::string const& file_name, std::string const& i
         auto& entry = file_to_entry_map[file_name];
         auto existing = entry.block_records.find(index_value);
         if (existing != entry.block_records.end()) {
-          // Lost a race with another publisher (shouldn't happen
-          // given singleflight, but defensive). Drop our clone — the
-          // shared_ptr destructors free Records cleanly.
+          // Another publisher won the race. Drop our copy; the shared_ptr
+          // destructors free the Records.
           delete records_tmp;
           records_tmp = nullptr;
         } else {
@@ -345,17 +318,16 @@ void LRUCache::readDataBlocks(std::string const& file_name, std::string const& i
     }
     try { my_promise->set_value(); } catch (...) {}
   };
-  // See getSSTable above for why this is by value, not by reference.
+  // Held by value; see getSSTable.
   struct Guard {
     std::function<void()> f;
     ~Guard() { f(); }
   } guard{cleanup};
 
   try {
-    // No Table* in the entry: the compaction write-through created the
-    // entry before any reader opened the file, or a REMOVE erased it
-    // between needReadBlock and here. Fall back to the caller's Table;
-    // without one the block is unreadable and this is a miss.
+    // No Table* in the entry. Either the compaction write-through created
+    // it before any read, or a REMOVE erased it after needReadBlock. Use
+    // the caller's Table; without one the block is a miss.
     if (table == nullptr) table = caller_table;
     if (table == nullptr) {
       throw std::runtime_error("readDataBlocks: no Table for " + file_name);
@@ -365,8 +337,8 @@ void LRUCache::readDataBlocks(std::string const& file_name, std::string const& i
       std::shared_lock<std::shared_mutex> file_lock(file_mutex);
       iter = table->blockReader(table, index_value);
     }
-    // blockReader returns null when the storage read fails, which is
-    // what a GET on a just-removed object looks like.
+    // blockReader returns null when the storage read fails, for example a
+    // GET on a removed object.
     if (iter == nullptr) {
       throw std::runtime_error("readDataBlocks: block read failed for " + file_name);
     }
@@ -387,25 +359,25 @@ void LRUCache::readDataBlocks(std::string const& file_name, std::string const& i
     read_failures_.fetch_add(1, std::memory_order_release);
   }
   if (iter) delete iter;
-  // cleanup() publishes + erases + signals the promise; Guard
-  // guarantees it fires exactly once even if anything below throws.
+  // Guard runs cleanup() exactly once: publish, erase the in-flight
+  // entry, signal the promise.
 }
 
-// SSTable variant — returns a shared_ptr copy so the Record stays
-// alive past a concurrent evict() that drops the block.
+// SSTable variant. Returns a shared_ptr copy so the Record outlives a
+// concurrent evict() that drops the block.
 void LRUCache::get(std::string const& file_name, std::string const& key, std::shared_ptr<Record>& record, std::string const& index_value) {
   std::unique_lock<std::shared_mutex> lock(mutex);
-  // Lookups only, no operator[]: after a failed readDataBlocks (file
-  // removed under the reader) the block is absent, and creating an
-  // entry with a null records map here would crash the next reader.
+  // Lookups only, no operator[]. After a failed readDataBlocks the block
+  // is absent. An entry with a null records map would crash the next
+  // reader.
   record = nullptr;
   auto file_it = file_to_entry_map.find(file_name);
   if (file_it == file_to_entry_map.end()) return;
   auto block_it = file_it->second.block_records.find(index_value);
   if (block_it == file_it->second.block_records.end() || block_it->second == nullptr) return;
   updateLRU(file_name, index_value);
-  // First read of a block the warm worker published: one warm hit, and
-  // the mark goes so the block counts once.
+  // First read of a block the warm worker published: one warm hit. The
+  // mark goes so the block counts once.
   if (!file_it->second.warmed_blocks.empty() && file_it->second.warmed_blocks.erase(index_value) != 0) {
     warm_hits_.fetch_add(1, std::memory_order_relaxed);
   }
@@ -413,9 +385,9 @@ void LRUCache::get(std::string const& file_name, std::string const& key, std::sh
   if (record_it != block_it->second->end()) record = record_it->second;
 }
 
-// Log variant — returns a shared_ptr copy so the Record is kept alive
-// past a concurrent invalidateLogFile or a same-key overwrite. Holds
-// only a shared_lock; no LRU bookkeeping.
+// Log variant. Returns a shared_ptr copy so the Record outlives a
+// concurrent invalidateLogFile or a same-key overwrite. Holds a
+// shared_lock only; no LRU bookkeeping.
 void LRUCache::getLog(std::string const& file_name, std::string const& key,
                       std::shared_ptr<Record>& record) {
   std::shared_lock<std::shared_mutex> lock(mutex);
@@ -433,7 +405,7 @@ void LRUCache::putLogRecords(std::string const& key, std::unordered_map<std::str
   std::unique_lock lock(mutex);
   auto it = file_to_entry_map.find(key);
   if (it != file_to_entry_map.end()) {
-    // Key exists, merge the records and update the offset if necessary
+    // Merge the records and update the offset when it moved forward.
     if (offset > it->second.offset) {
       for (auto& record : records) {
         it->second.records[record.first] = std::move(record.second);
@@ -441,10 +413,10 @@ void LRUCache::putLogRecords(std::string const& key, std::unordered_map<std::str
       it->second.offset = offset;
       it->second.sealed = sealed;
     }
-    // Lost the offset race: drop the local map. shared_ptr destructors
-    // release any peer borrowers' refcounts safely.
+    // Offset not newer: drop the local map. The shared_ptr destructors
+    // release the Records.
   } else {
-    // Key does not exist, insert new entry
+    // New entry.
     file_to_entry_map.emplace(key, CacheEntry(std::move(records), offset, sealed));
   }
 }
@@ -453,9 +425,8 @@ void LRUCache::putLogRecordSingle(std::string const& file_name, std::shared_ptr<
   std::unique_lock lock(mutex);
   auto it = file_to_entry_map.find(file_name);
   if (it == file_to_entry_map.end()) {
-    // No cache entry yet — create one with offset=0 so a later
-    // checkReadMoreLog will still trigger a full readDataLog. The index
-    // gets shared ownership either way.
+    // No entry yet: create one with offset 0 so a later checkReadMoreLog
+    // triggers a full readDataLog. The index shares ownership either way.
     CacheEntry entry;
     auto key = record->key();
     entry.records[std::move(key)] = std::move(record);
@@ -464,28 +435,23 @@ void LRUCache::putLogRecordSingle(std::string const& file_name, std::shared_ptr<
     file_to_entry_map[file_name] = std::move(entry);
     return;
   }
-  // Overwrite is now safe under shared_ptr semantics: any borrower
-  // (LogKeyIndex, an in-flight reader) keeps the prior Record alive
-  // via their own shared_ptr until they release it. The Record only
-  // deallocates when the last refcount drops.
+  // A borrower (LogKeyIndex, an in-flight reader) keeps the prior Record
+  // alive through its own shared_ptr until it releases it.
   auto key = record->key();
   it->second.records[std::move(key)] = std::move(record);
 }
 
 void LRUCache::invalidateLogFile(std::string const& file_name) {
   {
-    // Drop the memoized fenced size: the file is being compacted away,
-    // and a later file could reuse the name.
+    // Drop the memoized fenced size: a later file could reuse the name.
     std::lock_guard<std::mutex> lk(sealed_size_mtx_);
     sealed_size_.erase(file_name);
   }
   std::unique_lock lock(mutex);
   auto it = file_to_entry_map.find(file_name);
   if (it == file_to_entry_map.end()) return;
-  // Log records release via shared_ptr — deallocation is deferred
-  // until the last borrower drops its reference. Concurrent readers
-  // that already lifted a pointer out of LogKeyIndex stay safe.
-  // Log entries shouldn't carry sstable state, but clean up defensively.
+  // Records free when the last borrower releases its shared_ptr. A log
+  // entry should carry no SSTable state; clean up defensively.
   for (auto& block : it->second.block_records) {
     delete block.second;
     auto itr = it->second.lru_itr.find(block.first);
@@ -496,10 +462,9 @@ void LRUCache::invalidateLogFile(std::string const& file_name) {
       current_size -= size_it->second;
     }
   }
-  // Never delete the Table here: a reader that took the raw Table* from
-  // getSSTable may be inside Table::get on it right now (the reader
-  // holds no lock across the block read). Retire it and free it after
-  // the grace period, see retired_tables_ in cache.h.
+  // Never delete the Table here. A reader that took the raw Table* from
+  // getSSTable may be inside Table::get on it, with no lock held. Retire
+  // it and free it after the grace period (retired_tables_ in cache.h).
   auto const now = std::chrono::steady_clock::now();
   if (it->second.table != nullptr) retired_tables_.emplace_back(now, it->second.table);
   file_to_entry_map.erase(it);
@@ -533,8 +498,8 @@ size_t LRUCache::invalidateSSTable(std::string const& file_name) {
       current_size -= size_it->second;
     }
   }
-  // Same rule as invalidateLogFile: a reader that took the raw Table*
-  // from getSSTable may be inside Table::get on it right now.
+  // Same rule as invalidateLogFile: a reader may be inside Table::get on
+  // the raw Table*.
   if (entry.table != nullptr) retired_tables_.emplace_back(now, entry.table);
   file_to_entry_map.erase(it);
   return blocks;
@@ -550,20 +515,13 @@ void LRUCache::snapshotLogFileRecords(std::string const& file_name,
 
 void LRUCache::putSSTableMeta(std::string const& key, Table* table) {
   std::unique_lock lock(mutex);
-  // if (lru_list.size() >= capacity) {
-  //   evict();
-  // }
-  // lru_list.push_front(key);
   CacheEntry entry(table);
   file_to_entry_map[key] = entry;
 }
 
 void LRUCache::putSSTableRecords(std::string const& key, std::unordered_map<std::string, std::shared_ptr<Record>>* records, std::string const& index_value, size_t size, bool warmed) {
-  // Defensive: the singleflight path in readDataBlocks now handles
-  // publishing. If this is still called directly by older callers and
-  // races publish the same block twice, drop the duplicate instead of
-  // double-counting current_size. shared_ptr destructors free the
-  // duplicate Records cleanly.
+  // A duplicate publish of the same block is dropped, not counted twice.
+  // The shared_ptr destructors free the duplicate Records.
   std::unique_lock<std::shared_mutex> lock(mutex);
   auto& entry = file_to_entry_map[key];
   auto existing = entry.block_records.find(index_value);
@@ -610,9 +568,8 @@ void LRUCache::setLiveFileCheck(std::function<bool(std::string const&)> check) {
 
 void LRUCache::onCompactionApplied(std::vector<std::string> const& outputs, std::vector<size_t> const& output_bytes, int dest_level, size_t cached_input_blocks, bool log_inputs) {
   {
-    // Before startWarmWorker (openDB's replay of the metadata log offers
-    // every historical COMPACT) or after stop: count as disabled, not as
-    // a policy skip, so the per-rule counters describe the run only.
+    // Before startWarmWorker (openDB replays every historical COMPACT) or
+    // after stop: count as disabled, not as a policy skip.
     std::lock_guard<std::mutex> lk(warm_mtx_);
     if (!warm_started_ || warm_stop_) {
       warm_skipped_disabled_.fetch_add(outputs.size(), std::memory_order_relaxed);
@@ -726,8 +683,8 @@ void LRUCache::warmOne(std::string const& file_name) {
       return;
     }
   }
-  // The open every peer pays on its first read of the file anyway
-  // (singleflight with those readers).
+  // The open every peer pays on its first read of the file; single-flight
+  // with those readers.
   Table* table = nullptr;
   getSSTable(file_name, table);
   if (table == nullptr) {
@@ -740,7 +697,7 @@ void LRUCache::warmOne(std::string const& file_name) {
   warm_blocks_.fetch_add(blocks, std::memory_order_relaxed);
   warm_bytes_.fetch_add(bytes, std::memory_order_relaxed);
   if (s != Status::kSuccess) {
-    // A removed object mid-read: what was published stays valid.
+    // The object was removed mid-read. What was published stays valid.
     warm_skipped_gone_.fetch_add(1, std::memory_order_relaxed);
     return;
   }
@@ -770,11 +727,9 @@ LRUCache::Stats LRUCache::stats() {
   s.warm_skipped_built = warm_skipped_built_.load(std::memory_order_relaxed);
   s.warm_dropped = warm_dropped_.load(std::memory_order_relaxed);
 
-  // Liveness comes from a fresh View snapshot when DB gave us the check
-  // (setLiveFileCheck): the raw latest_view pointer is refreshed only by
-  // DB::get, so at the end of a pure load it is the open-time View and
-  // every file built since would count as dead. Tests without a DB set
-  // latest_view directly.
+  // Liveness comes from the DB's check (setLiveFileCheck) when set. Only
+  // DB::get refreshes the raw latest_view pointer, so after a pure load it
+  // is stale. Tests without a DB set latest_view directly.
   std::function<bool(std::string const&)> live;
   {
     std::lock_guard<std::mutex> lk(warm_mtx_);
@@ -815,8 +770,8 @@ void LRUCache::printCacheStats() {
             << " current_size=" << s.current_size
             << " files=" << s.files
             << std::endl;
-  // Levels print as "<level>:<count>" pairs up to the highest level that
-  // saw a hit or a miss (slot 0 = names that are not "sstable<L>/…").
+  // Levels print as "<level>:<count>" pairs up to the highest level with
+  // a hit or a miss. Slot 0 = names that are not "sstable<L>/...".
   int top = 0;
   for (int i = 0; i < kLevelSlots; ++i) {
     if (s.level_hits[i] != 0 || s.level_misses[i] != 0) top = i;

@@ -1,5 +1,5 @@
-// The native C++ CorfuClient: tokens and writes
-// on the `ctl` connection, the sequential tailer on `tail`, no JVM.
+// The C++ CorfuClient: tokens and writes on the `ctl` connection, the
+// sequential tailer on `tail`.
 #ifdef OZONEDB_ENABLE_CORFU
 #include "corfu/corfu_codec.h"
 #include "corfu/corfu_reader.h"
@@ -99,8 +99,8 @@ class NativeCorfuClient : public CorfuClient {
         }
         TokenResponseMsg tok = rpc_.token(req);
         if (tok.resp_type() != TokenResponseMsg::TX_NORMAL) {
-          // A refused token consumed no address. token.sequence names
-          // the offending address (StreamsView -> TransactionAbortedException).
+          // A refused token has no address. token.sequence names the
+          // offending address (StreamsView -> TransactionAbortedException).
           switch (tok.resp_type()) {
             case TokenResponseMsg::TX_ABORT_CONFLICT: out.abort = kAbortConflict; break;
             case TokenResponseMsg::TX_ABORT_NEWSEQ: out.abort = kAbortNewSequencer; break;
@@ -117,8 +117,8 @@ class NativeCorfuClient : public CorfuClient {
           return out;
         }
         if (addr == kRetry) {
-          // StreamsView.append: check for conflicts only from the
-          // previous attempt's position on.
+          // StreamsView.append: check conflicts only from the previous
+          // attempt's position on.
           snapshot_epoch = tok.token().epoch();
           snapshot_seq = tok.token().sequence();
           continue;
@@ -223,7 +223,7 @@ class NativeCorfuClient : public CorfuClient {
       backpointers.emplace_back(corfu::fromMsg(bp.key()), bp.value());
     }
     if (backpointers.empty()) {
-      // Every Java reader skips an entry whose BACKPOINTER_MAP lacks the
+      // A Java reader skips an entry whose BACKPOINTER_MAP lacks the
       // stream (AddressMapStreamView). The sequencer always returns the
       // map for a stream token; guard anyway.
       backpointers.emplace_back(stream_, -1);

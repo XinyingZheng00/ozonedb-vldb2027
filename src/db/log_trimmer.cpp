@@ -96,7 +96,7 @@ bool LogTrimmer::runCycle(bool force) {
     history_.push_back(snap.covered_addr);
   }
 
-  // Trim behind the previous checkpoint (the grace rule, see the header).
+  // Trim behind the previous checkpoint, never the new one (see the header).
   long trim_mark = -1;
   if (last >= 0) {
     if (log_->prefixTrim(last)) {

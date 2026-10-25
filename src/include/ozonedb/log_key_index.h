@@ -12,25 +12,19 @@
 
 namespace ozonedb {
 
-// Per-LogHandler in-memory key -> latest Record index. Lets readRecord
-// short-circuit the multi-file scan (and, on Corfu, the storage fence).
-// Records are co-owned with the LRUCache via shared_ptr — the index
-// keeps a reference so a cache invalidate (compaction, REMOVE) cannot
-// free the Record out from under a reader that just lifted it out of
-// the index.
-// Position of a record in the shared log's global order.
+// LogKeyIndex (below) is the per-LogHandler in-memory index from key to
+// newest Record. readRecord uses it to skip the file scan and, on Corfu,
+// the fence. Records are co-owned with the LRUCache through shared_ptr,
+// so a cache invalidate cannot free a Record a reader holds.
 //
-// `addr` is the Corfu global address of the entry that carried the
-// record. `sub` orders records inside one entry, because a single
-// batched APPEND carries many records and the later ones are newer.
-//
-// An unordered source (a local backend with no global order, or a
-// backfill scan) uses addr = -1, which never displaces a ranked entry
-// and is always displaced by one.
-//
-// At namespace scope, not nested in LogKeyIndex: a nested type's default
-// member initializers are not usable in a default argument of the
-// enclosing class, which is still incomplete at that point.
+// LogRank is the position of a record in the shared log's global order.
+// addr is the Corfu global address of the entry that carried the record.
+// sub orders records inside one entry: a later record is newer.
+// A source with no global order (local backend, backfill scan) uses
+// addr = -1. It never displaces a ranked entry and any ranked entry
+// displaces it.
+// At namespace scope: a nested type's default member initializers cannot
+// be used in a default argument of the enclosing, still incomplete class.
 struct LogRank {
   long addr = -1;
   uint32_t sub = 0;
@@ -48,12 +42,9 @@ class LogKeyIndex {
   explicit LogKeyIndex(size_t capacity) : capacity_(capacity) {}
 
   std::shared_ptr<Record> lookup(std::string const& key);
-  // Insert or replace the entry for `key`. A record whose Rank is BELOW
-  // the stored one is dropped: the index is a newest-wins cache, and
-  // the tailer can deliver a peer's older record after the local writer
-  // has already indexed a newer one for the same key. The old
-  // last-writer-by-arrival-time rule let that stale record win, and
-  // nothing ever corrected it.
+  // Insert or replace the entry for key. Newest rank wins: a record whose
+  // rank is below the stored one is dropped, because the tailer can
+  // deliver a peer's older record after a newer local one.
   void upsert(std::string const& key, std::shared_ptr<Record> rec,
               std::string const& source_file, LogRank rank = LogRank{});
   void invalidateFile(std::string const& file);

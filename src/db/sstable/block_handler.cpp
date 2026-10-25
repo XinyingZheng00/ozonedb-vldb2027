@@ -8,7 +8,7 @@
 #include <cassert>
 namespace ozonedb {
 BlockBuilder::BlockBuilder(int block_restart_interval)
-    : comparator_(newBytewiseComparator()),  // default for now
+    : comparator_(newBytewiseComparator()),
       block_restart_interval(block_restart_interval),
       accumulated_size_(0),
       counter_(0),
@@ -52,7 +52,7 @@ void BlockBuilder::add(std::string const& key, std::string const& value) {
 
   size_t shared = 0;
   if (counter_ < block_restart_interval) {
-    // See how much sharing to do with previous string
+    // Count the prefix shared with the previous key
     const size_t min_length = std::min(last_key_piece.size(), key.size());
     char const* a = last_key_piece.data();
     char const* b = key.data();
@@ -70,16 +70,14 @@ void BlockBuilder::add(std::string const& key, std::string const& value) {
   block_entry->set_shared_bytes(shared);
   block_entry->set_unshared_bytes(non_shared);
 
-  // Add string delta to buffer_ followed by value
+  // Store the key delta and the value
   block_entry->set_key_delta(key.data() + shared, non_shared);
   block_entry->set_value(value.data(), value.size());
 
   accumulated_size_ += block_entry->ByteSizeLong();
 
-  // Update state
-  // shrink last_key_ to the shared length
+  // Set last_key_ to key
   last_key_ = last_key_.substr(0, shared);
-  // last_key_.shrink(shared);
   last_key_.append(key.data() + shared, non_shared);
   assert(last_key_ == key);
   counter_++;
@@ -89,8 +87,7 @@ Status readBlock(Storage* storage,
                  std::string const& fileName,
                  BlockIdentifier const& identifier,
                  BlockData*& result) {
-  // Read the block contents
-  // See table_builder.cc for the code that built this structure.
+  // Read and parse one block; TableBuilder::writeBlock wrote it.
   size_t n = identifier.length();
   unsigned char* block_data_contents = nullptr;
   Status status = storage->read(fileName, block_data_contents, identifier.offset(), n);

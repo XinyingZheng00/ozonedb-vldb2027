@@ -6,8 +6,7 @@ enum ValueType {
 }
 
 message Record {
-  // maybe add timestamp here
-  required bytes key = 1;  // change to bytesz
+  required bytes key = 1;
   optional bytes value = 2;
   required ValueType type = 3;
 }
@@ -22,18 +21,14 @@ message OperationRecord {
   repeated string output_file = 3;
   repeated string key_start = 4;
   repeated string key_end = 5;
-  repeated string input_files = 6;  // for COMPACT operations, it's the input files, for CREATE operations, it's the identified current tail.
-  // Byte length of each entry in output_file, populated by the compactor so
-  // peer writers can avoid a fenced storage->size() call while holding
-  // view_mutex during rollforward. Parallel array with output_file. Older
-  // records without this field fall back to 0 (heuristic-only, no correctness
-  // impact — only feeds size heuristics).
+  repeated string input_files = 6;  // COMPACT: the input files. LOGCREATE: the current log tail.
+  // Byte length of each output_file entry, parallel to output_file. Lets a
+  // peer roll forward without a fenced storage->size() under view_mutex.
+  // 0 when absent; only size heuristics use it.
   repeated int64 output_bytes = 7;
-  // For LOGCREATE: byte length of the sealed log file at input_files[0],
-  // populated by the log-rolling writer so peer rollforward can update
-  // latest_view.file_size without calling storage->size() under view_mutex.
-  // Unset for the very first LOGCREATE (no prior tail); older records
-  // without this field fall back to 0 (heuristic-only).
+  // LOGCREATE: byte length of the sealed log file input_files[0]. Lets a
+  // peer roll forward without a fenced storage->size() under view_mutex.
+  // Unset for the first LOGCREATE. 0 when absent; only size heuristics use it.
   optional int64 sealed_input_bytes = 8;
 }
 
@@ -42,30 +37,25 @@ message CorfuEntry {
     APPEND = 0;
     SEAL = 1;
     REMOVE = 2;
-    // Appended by LogTrimmer right before prefixTrim(X); payload is the
-    // decimal text of X and file_name is ".trim". It records IN THE STREAM
-    // that every entry of this stream at or below X is gone. A process
-    // that replays from address S and meets a TRIM with X >= S has no
-    // complete history and refuses to open (CorfuDBStorage::bootstrap).
-    // Unlike the sequencer's in-memory trim mark this survives a server
-    // restart, and unlike the log unit's mark it is per stream.
+    // LogTrimmer appends it right before prefixTrim(X). payload is the
+    // decimal text of X; file_name is ".trim". Every entry of the stream
+    // at or below X is gone. A replay from address S that meets a TRIM
+    // with X >= S refuses to open (CorfuDBStorage::bootstrap). The mark
+    // survives a server restart and is per stream.
     TRIM = 3;
   }
   required string file_name = 1;
   required Op op = 2;
   optional bytes payload = 3;
-  // Randomly-generated 64-bit id of the CorfuDBStorage instance that
-  // produced this entry. The local tailer uses it to skip entries the
-  // local writer has already self-applied into file_buffers_. Optional
-  // so entries written before this field existed still parse; those
-  // entries just fall through to the unconditional-apply branch.
+  // Random 64-bit id of the CorfuDBStorage instance that wrote the entry.
+  // The tailer uses it to skip entries the local writer already applied
+  // to file_buffers_. An entry without it is applied unconditionally.
   optional uint64 client_id = 4;
 }
 
-// A checkpoint of the shared log: the exact live state after every entry
-// with global address <= covered_addr. Written to the object store by
-// LogTrimmer, read by CorfuDBStorage::bootstrap so a joining process
-// replays only the entries above covered_addr.
+// A checkpoint of the shared log: the live state after every entry with
+// global address <= covered_addr. LogTrimmer writes it to the object store.
+// CorfuDBStorage::bootstrap reads it and replays only entries above covered_addr.
 message CheckpointManifest {
   required int64 covered_addr = 1;       // every entry <= this address is applied
   required int64 prev_covered_addr = 2;  // covered_addr of the previous checkpoint, -1 if none
@@ -82,7 +72,7 @@ message CheckpointManifest {
   repeated string removed = 4;
   optional string creator = 5;           // writer fingerprint
   optional int64 created_unix_ms = 6;
-  // Fields 20-29 are reserved for the `cas` branch (key_versions).
+  // Fields 20-29 are reserved.
 }
 
 message TaskRecord {
@@ -99,6 +89,6 @@ message TaskRecord {
     TASK_COMPLETE = 2;
     TASK_DEAD = 3;
   }
-  required TaskStatus status = 3;  // 0 - compete for the task, 1 - task heartbeat, 3 - task complete
+  required TaskStatus status = 3;  // TASK_BEGIN claims, TASK_IN_PROGRESS is a heartbeat, TASK_COMPLETE releases
   required uint32 owner_generation = 4;
 }

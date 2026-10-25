@@ -24,19 +24,12 @@ class View {
   std::string current_log_tail;
   size_t tail_size = 0;
 
-  // All accessors are const and non-mutating so a View can be held
-  // immutably behind a shared_ptr<View const> and read concurrently
-  // from many threads without copying. Prior versions used
-  // operator[] which silently inserted default entries, making the
-  // View unsafe to share across threads.
+  // All accessors are const and never insert. A View is shared behind a
+  // shared_ptr<View const> and read from many threads without a copy.
   int getFileNumber(std::string const& prefix) const;
 
-  // Returns a reference into the map (no copy). On miss returns a
-  // reference to a shared static empty deque so callers can still
-  // write `auto const& files = view.getWithPrefix(p);` without
-  // special-casing the not-found path. Only valid as long as the
-  // caller holds a reference to the View (i.e. the enclosing
-  // shared_ptr is alive).
+  // Returns a reference into the map, or a static empty deque on a miss.
+  // The reference is valid while the caller keeps the View alive.
   std::deque<std::string> const& getWithPrefix(std::string const& prefix) const;
 
   std::pair<std::string, std::string> getKeyRange(std::string const& file_name) const;
@@ -54,66 +47,54 @@ class MetadataLogHandler {
   std::string active_unit;
   Storage* storage = nullptr;
   LRUCache* lru_cache = nullptr;
-  // Called with each COMPACT input after the RAM cache dropped it, outside
-  // view_mutex (drainCacheEvents). The DB wires the disk tier here.
+  // Called with each COMPACT input after the LRU cache dropped it, outside
+  // view_mutex. The DB wires the disk tier here.
   std::function<void(std::string const&)> sstable_removed_listener_;
   std::thread* update_view_thread = nullptr;
   View latest_view;
-  // Immutable snapshot of latest_view, swapped atomically by
-  // publishSnapshotLocked after each mutation. Readers (DB::get hot
-  // path) atomically load this instead of deep-copying latest_view
-  // under a shared_lock per call — converts an O(files) per-get copy
-  // into a refcount bump. std::atomic free functions on
-  // std::shared_ptr are used; C++20's atomic<shared_ptr> isn't
-  // required.
+  // Immutable snapshot of latest_view. publishSnapshotLocked swaps it
+  // after each mutation with the std::atomic free functions on shared_ptr.
+  // Readers load it instead of copying latest_view.
   std::shared_ptr<View const> latest_snapshot_;
-  // Contiguous metadata-log prefix whose records have been APPLIED into
-  // latest_view; guarded by view_mutex. Distinct from `offset` (guarded
-  // by read_mutex), which readMetadataLog commits BEFORE its caller
-  // applies the batch — in that window the view lags the offset, so
-  // syncView must gate on this, not on `offset`, to guarantee the
-  // published snapshot covers its fence target. Batches can apply out
-  // of order (reader A commits [0,L1), is preempted, reader B applies
-  // [L1,L2) first); applied_gaps_ parks such ranges until the watermark
-  // reaches them, so the watermark never overclaims an unapplied hole.
+  // Length of the contiguous metadata-log prefix applied into latest_view.
+  // Guarded by view_mutex. readMetadataLog commits `offset` (guarded by
+  // read_mutex) before its caller applies the batch. syncView therefore
+  // gates on this value, not on `offset`. Batches can apply out of order;
+  // applied_gaps_ parks a range until the prefix below it is applied.
   size_t applied_offset_ = 0;
   std::map<size_t, size_t> applied_gaps_;
-  // Record that [start, end) has been applied into latest_view and
-  // advance applied_offset_ over any now-contiguous parked ranges.
-  // Caller must hold view_mutex as a unique_lock.
+  // Record that [start, end) is applied into latest_view and advance
+  // applied_offset_ over any parked ranges that are now contiguous.
+  // Caller holds view_mutex as a unique_lock.
   void markAppliedLocked(size_t start, size_t end);
   Metadata* metadata = nullptr;
   std::shared_mutex view_mutex;
   std::shared_mutex read_mutex;
   std::unordered_map<std::string, std::priority_queue<std::pair<int, OperationRecord*>, std::vector<std::pair<int, OperationRecord*>>, std::greater<>>> buffer;
 
-  // Deserialize OperationRecords from a file. When `observed_size` /
-  // `batch_start` are non-null they receive the metadata-log length
-  // this call saw (0 when the log does not exist yet) and the offset
-  // the returned batch begins at — i.e. the batch spans
-  // [batch_start, observed_size). On Corfu that size() is fenced on the
-  // global tail, so the first observation doubles as syncView's fence.
+  // Read the OperationRecords appended since the last read. When set,
+  // observed_size receives the log length this call saw, 0 when the log
+  // does not exist. batch_start receives the offset the batch starts at.
+  // On Corfu size() is fenced, so the first observation is syncView's fence.
   std::vector<OperationRecord*> readMetadataLog(size_t* observed_size = nullptr,
                                                 size_t* batch_start = nullptr);
   std::string rollforwardSingleOperationRecord(OperationRecord* record);
-  // Apply every buffered record for `layer` that can apply now; see the
-  // definition. Caller holds view_mutex as a unique_lock.
+  // Apply every buffered record for `layer` that can apply now.
+  // Caller holds view_mutex as a unique_lock.
   void drainBuffer(std::string const& layer);
-  // Refresh latest_view.tail_size without holding view_mutex across
-  // storage->size() — keeps the Corfu fence out of the critical section.
+  // Refresh latest_view.tail_size. storage->size() runs without view_mutex,
+  // which keeps the Corfu fence out of the critical section.
   void refreshTailSizeUnlocked();
-  // Publish a fresh shared_ptr<View const> snapshot from the current
-  // latest_view. Caller must hold view_mutex as a unique_lock.
+  // Publish a new shared_ptr<View const> snapshot of latest_view.
+  // Caller holds view_mutex as a unique_lock.
   void publishSnapshotLocked();
 
-  // Cache work owed for COMPACT records applied to the view. The apply runs under
-  // unique_lock<view_mutex>, and the cache mutex must never be taken
-  // there: the Corfu tailer's listener takes the cache mutex, and a
-  // foreground thread may hold it while fencing on the tailer. So both
-  // COMPACT branches queue an event (guarded by view_mutex) and the two
-  // callers drain the queue once their lock scope has ended. The atomic
-  // flag lets syncView, which strict reads call per get, skip the
-  // unique_lock when there is nothing to drain.
+  // Cache work owed for COMPACT records applied to the View. The cache
+  // mutex must never be taken under view_mutex: the Corfu tailer's listener
+  // takes the cache mutex. A foreground thread may hold it while it
+  // fences on the tailer. The COMPACT branches queue an event under
+  // view_mutex; the callers drain the queue after their lock scope ends.
+  // The atomic flag lets syncView skip the unique_lock when the queue is empty.
   struct CompactionEvent {
     std::vector<std::string> inputs;
     std::vector<std::string> outputs;
@@ -132,64 +113,52 @@ class MetadataLogHandler {
     this->storage = storage;
     this->active_unit = metadata_log;
   };
-  // set event listener
   void setEventListener(EventListener* event_listener) { this->event_listener = event_listener; }
   
-  // set lru cache
   void setLRUCache(LRUCache* lru_cache) { this->lru_cache = lru_cache; }
 
-  // Called with each COMPACT input after the RAM cache dropped it, outside
-  // view_mutex (drainCacheEvents). The DB wires the disk tier here.
+  // Called with each COMPACT input after the LRU cache dropped it, outside
+  // view_mutex. The DB wires the disk tier here.
   void setSSTableRemovedListener(std::function<void(std::string const&)> listener) { this->sstable_removed_listener_ = std::move(listener); }
 
-  // set metadata
   void setMetadata(Metadata* metadata) { this->metadata = metadata; }
 
   ~MetadataLogHandler(){};
-  // get view mutex
   std::shared_mutex& getViewMutex() { return view_mutex; }
 
-  // used by get module
+  // Background thread: replays the metadata log every 100 ms.
   void rollForwardMetadataLogPeriodically(std::atomic<bool> const* active);
 
-  // used by compaction module and put module
+  // Synchronous replay that returns a copy of the View. The compaction and
+  // put paths use it.
   View rollForwardMetadataLog();
 
-  // Synchronous rollforward with no View copy: ingests every
-  // LOGCREATE/COMPACT the storage layer can currently see, closing the
-  // ~100ms window of the background view thread. Fencing is the
-  // storage layer's business: with no fence token on the calling
-  // thread, readMetadataLog's storage calls each fence on the global
-  // sequencer tail; under a Storage::SyncScope (the strict DB::get
-  // path) they reuse the caller's single fence and read local state.
-  // Either way the resulting view covers everything sequenced before
-  // the caller's fence point. This is the per-get hook for
-  // Metadata::linearizable_reads; unlike rollForwardMetadataLog it
-  // avoids the O(files) return-by-value copy (a known hot-path
-  // regression) and skips the tail-size refresh (the strict read path
-  // re-fences the tail itself in checkReadMoreLog).
+  // Synchronous replay with no View copy: applies every LOGCREATE/COMPACT
+  // the storage layer can see now. With no fence token on the calling
+  // thread, readMetadataLog fences on the global tail; under a
+  // Storage::SyncScope it reuses the caller's fence and reads local state.
+  // Either way the View then covers everything sequenced before the
+  // caller's fence point. This is the per-get hook for linearizable_reads.
+  // It skips the tail-size refresh; the strict read path re-fences the
+  // tail itself in checkReadMoreLog.
   //
-  // Loops until the committed offset covers the log length sampled at
-  // entry: readMetadataLog's offset-CAS means a racing caller can lose
-  // its batch to a concurrent winner and come back empty-handed while
-  // the view is still short of this caller's fence — tolerable for the
-  // background thread, not for a linearizable get. Returns the
-  // committed offset the published view reflects; DB::get compares it
-  // against a post-scan fenced log length to detect a compaction that
-  // landed mid-scan.
+  // Loops until applied_offset_ covers the log length sampled at entry:
+  // a caller can lose its batch to a concurrent readMetadataLog winner
+  // while the View is still short of its fence. Returns the applied
+  // offset the published View reflects. DB::get compares it with a
+  // post-scan fenced log length to detect a compaction that landed mid-scan.
   size_t syncView();
 
   void initSSTMetadata();
 
   void getLatestView(View& view);
 
-  // Atomic load of the latest View snapshot. Returns a shared_ptr by
-  // value; the refcount bump keeps the View alive for the caller's
-  // use regardless of subsequent mutations. Preferred over
-  // getLatestView for read-only hot paths — no lock, no copy.
+  // Atomic load of the latest View snapshot. The returned shared_ptr keeps
+  // the View alive for the caller. Read-only hot paths use this: no lock,
+  // no copy.
   std::shared_ptr<View const> latestViewSnapshot() const;
 
-  // Serialize a OperationRecord to a file
+  // Append an OperationRecord to the metadata log.
   void appendToMetadataLog(OperationRecord const& record);
 
   // Start a thread to roll forward the metadata log periodically

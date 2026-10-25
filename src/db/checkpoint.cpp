@@ -15,11 +15,11 @@ std::string parentOf(std::string const& key) {
   return pos == std::string::npos ? std::string() : key.substr(0, pos);
 }
 
-// One object = appendNoFlush + flush. On S3 that is a single PutObject of
-// the whole payload. On FileStorage it is a write to a stream opened in
-// append mode, so a key must never be written twice with different bytes
-// -- every key below carries covered_addr, except LATEST, whose reader
-// takes the last line for exactly this reason.
+// One object = appendNoFlush + flush. On S3 that is one PutObject of the
+// whole payload. On FileStorage it is a write to an append-mode stream,
+// so a key must never be written twice with different bytes. Every key
+// below carries covered_addr, except LATEST, whose reader takes the
+// last line.
 Status putObject(Storage& store, std::string const& key,
                  unsigned char const* data, size_t len) {
   std::string parent = parentOf(key);
@@ -30,8 +30,8 @@ Status putObject(Storage& store, std::string const& key,
     if (s != Status::kSuccess) return s;
   } else {
     // An empty payload still needs an object, or the reader cannot tell
-    // "empty file" from "missing object". One zero byte would change the
-    // size, so write nothing and let the manifest's size=0 stand in.
+    // "empty file" from "missing object". A zero byte would change the
+    // size, so write nothing; the manifest's size=0 stands in.
     return Status::kSuccess;
   }
   Status s = store.flush(key);

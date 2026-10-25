@@ -8,11 +8,10 @@
 #include <vector>
 namespace ozonedb {
 
-// Only one policy is live: every process runs a background
-// CompactionWatcher that claims tasks through the task log (compaction_policy
-// = 0 in every config). Two experimental policies were removed.
+// The only policy: every process runs a CompactionWatcher that claims
+// tasks through the task log (compaction_policy = 0).
 enum class CompactionPolicy {
-  kHoAl  // each client identifies tasks and executes them right away.
+  kHoAl  // Each process picks tasks and runs them at once.
 };
 
 enum class BackendKind {
@@ -24,40 +23,35 @@ enum class BackendKind {
 class Metadata {
  public:
   /**
-   * @brief Path info for all files
-   *
+   * @brief Paths and backends.
    */
   std::string DBpath;
   BackendKind backend_kind = BackendKind::kLocal;
-  // Corfu backend settings
+  // Corfu backend settings.
   std::string corfu_endpoint;
   std::string corfu_stream_name = "ozonedb";
-  // Ack a Corfu data append on the sequencer's answer (the fast path of
-  // CorfuDBStorage::submitBatch). "false" / "0" makes every append wait
-  // for the tailer instead; only for A/B measurement.
+  // true: ack an append on the sequencer's answer (fast path).
+  // false or 0: every append waits for the tailer.
   bool corfu_fast_ack = true;
-  // Client tuning. Defaults mirror the Java runtime's own settings.
+  // Corfu client tuning.
   int corfu_read_batch = 1000;             // addresses per ReadLogRequest
   int corfu_idle_poll_ms = 5;              // wait between stream-tail queries
   int corfu_hole_fill_timeout_ms = 10000;  // EMPTY address -> HOLE write
   int corfu_request_timeout_ms = 5000;     // per RPC
 
-  // Optional separate backend for SSTable storage. When unset, SSTables
-  // share the main backend (backward-compat with all existing configs).
-  // The paper's §3.5 regular-storage tier for SSTables is the motivation:
-  // SSTables are immutable, don't need atomic append, and are a bad fit
-  // for the Corfu shared log.
+  // Optional separate backend for SSTables (paper §3.5). Unset: SSTables
+  // share the log backend.
   bool sstable_backend_set = false;
   BackendKind sstable_backend_kind = BackendKind::kLocal;
   std::string sstable_dir;  // key prefix inside the S3 bucket
-  // S3 / MinIO / R2 / Wasabi / SeaweedFS settings (used when
-  // sstable_backend_kind == kS3). Endpoint empty == real AWS endpoint.
+  // S3-compatible store settings, used when sstable_backend_kind == kS3.
+  // Empty endpoint: the AWS endpoint.
   std::string s3_endpoint;
   std::string s3_region = "us-east-1";
   std::string s3_bucket;
   std::string s3_access_key;
   std::string s3_secret_key;
-  bool s3_use_path_style = true;  // MinIO default; real S3 users flip explicitly
+  bool s3_use_path_style = true;  // MinIO default. Set false for AWS S3.
   std::string metadata_log = "metadata.log";
   std::string task_log = "task.log";
   std::string log_prefix = "datalog";
@@ -65,8 +59,7 @@ class Metadata {
   int mode = -1;
 
   /**
-   * @brief Limit info for all files
-   *
+   * @brief Size limits.
    */
   uint64_t log_file_size_limit;
   int max_level;
@@ -77,126 +70,96 @@ class Metadata {
 
   CompactionPolicy compaction_policy;
 
-  // SSTable block cache capacity in bytes. Governs how much data the
-  // LRU cache holds across all SSTables; when exceeded, least-recently-
-  // used blocks are evicted and re-fetched on next read (an S3 GetObject
-  // round-trip on the Corfu + object-store setup). Default 32 MB matches
-  // the pre-config behavior; bump to hundreds of MB / GBs when the
-  // working set is bigger than the default.
+  // LRU cache capacity in bytes for log records and SSTable blocks.
+  // Default 32 MB.
   uint64_t lru_cache_bytes = 33554432;
-  // Largest ranged read that compaction issues for one SSTable input
-  // (Table::getAll). The default equals level_file_size_limit, so one
-  // input is one read; lower it to bound memory per in-flight compaction.
+  // Largest ranged read compaction issues for one SSTable input
+  // (Table::getAll). Default equals level_file_size_limit, so one input is
+  // one read. Lower it to bound memory per compaction.
   uint64_t compaction_read_bytes = 67108864;
 
-  // Compaction-aware block cache.
-  // When a COMPACT is applied to this process's view, the outputs are
-  // read once (compaction_read_bytes per ranged read) and published into
-  // the block cache, so the peers of the compactor do not fetch them one
-  // block per GET. Off by default; each rule below skips an output and
-  // counts the skip in the `[lru_cache] levels` line.
+  // Cache warming. When a COMPACT is applied to this process's View, the
+  // outputs are read once and put in the block cache. Off by default.
+  // Each rule below skips an output and counts the skip in the
+  // "[lru_cache] levels" line.
   bool cache_warm_enabled = false;
-  // Warm outputs whose level is at most this (L1 holds the newest
-  // versions of the hot keys; the last level is the cold bulk).
+  // Warm outputs whose level is at most this.
   int cache_warm_max_level = 1;
   // Warm an output only if its size is at most this fraction of
-  // lru_cache_bytes, so one file cannot flush the cache.
+  // lru_cache_bytes.
   double cache_warm_max_fraction = 0.25;
   // Warm only if this process held at least this many cached blocks of
-  // the compaction's inputs: a process that never read the region does
-  // not warm it, and a pure load warms nothing.
+  // the compaction's inputs.
   uint64_t cache_warm_min_input_blocks = 1;
 
-  // Disk-backed read-through tier for SSTables.
-  // Empty dir = off. The dir gets a trailing '/'. Requires sstable_backend.
+  // Disk tier for SSTables. Empty dir: off. The dir gets a trailing '/'.
+  // Requires sstable_backend and disk_cache_bytes > 0.
   std::string disk_cache_dir;
   uint64_t disk_cache_bytes = 0;
   uint64_t disk_cache_chunk_bytes = 67108864;
   bool disk_cache_drop_pages = true;
   uint64_t disk_cache_fill_queue = 256;
-  // "file" keeps whole SSTables, "chunk" keeps disk_cache_entry_bytes pieces
-  // of them; "frequency" is TinyLFU admission, "always" is evict-to-fit.
+  // "file" keeps whole SSTables. "chunk" keeps disk_cache_entry_bytes pieces.
+  // "frequency" is TinyLFU admission. "always" is evict-to-fit.
   std::string disk_cache_mode = "chunk";
   uint64_t disk_cache_entry_bytes = 65536;
   std::string disk_cache_admission = "frequency";
   uint64_t disk_cache_admit_window = 0;
 
-  // When true, log reads trust the in-memory key index (kept fresh by
-  // local addRecord and, on Corfu, the tailer's remote-append listener)
-  // and skip the synchronous log-file scan entirely. Removes the
-  // fenced storage->size() round-trip on the active tail. Index miss
-  // => log miss; the DB layer still consults SSTables as usual.
+  // true: log reads trust the key index and skip the log-file scan.
+  // addRecord and, on Corfu, the remote-append listener keep the index
+  // current. An index miss is a log miss. The DB still reads SSTables.
   bool trust_background_tail = false;
 
-  // When true, every DB::get linearizes against the shared log: it
-  // synchronously fences on the log's global tail and rolls the
-  // metadata-log view forward before scanning, and the unfenced
-  // key-index probe in LogHandler::readRecord is bypassed. This makes
-  // reads strict (a get observes every put acked before it started, on
-  // any writer process) at the cost of ONE fence per get: DB::get takes
-  // a Storage::SyncScope (sequencer round-trip + tailer wait), and
-  // every later storage call in the get reuses that thread-local fence
-  // token, reading already-synced local state instead of re-fencing.
-  // Mutually exclusive with trust_background_tail — the
-  // constructor rejects configs that set both. The end-to-end guarantee
-  // also assumes the write side keeps its sync defaults (every put is
-  // sequenced in the log before it acks; see CorfuDBStorage::sync_mode_).
+  // true: every DB::get takes one fence (Storage::SyncScope), rolls the
+  // View forward, and skips the unfenced key-index probe. Every later
+  // storage call in the get reuses the thread-local fence token. A get
+  // then sees every put acked before it started, on any writer.
+  // Mutually exclusive with trust_background_tail: the constructor throws
+  // on both. Assumes the write side keeps its sync defaults
+  // (CorfuDBStorage::sync_mode_).
   bool linearizable_reads = false;
 
-  // Log trimming. When log_trim_enabled is true THIS
-  // process runs a LogTrimmer: every log_trim_interval_ms it writes a
-  // checkpoint of the live log state to sstable_storage under
-  // <sstable_dir>/<checkpoint_dir>/ and trims the Corfu stream behind the
-  // previous checkpoint. One process per cluster is enough. Every process,
-  // trimmer or not, loads the newest checkpoint at open when one exists.
-  // Requires backend = corfu and a separate sstable_backend: a checkpoint
-  // written into the log being trimmed would be trimmed with it.
+  // Log trimming. true: this process runs a LogTrimmer. Every
+  // log_trim_interval_ms it writes a checkpoint of the live log state to
+  // sstable_storage under <sstable_dir>/<checkpoint_dir>/ and trims the
+  // Corfu stream behind the previous checkpoint. One trimmer per cluster
+  // is enough. Every process loads the newest checkpoint at open.
+  // Requires backend = corfu and a separate sstable_backend.
   bool log_trim_enabled = false;
   uint64_t log_trim_interval_ms = 30000;
   uint64_t log_trim_min_entries = 100000;
   int log_trim_keep_checkpoints = 2;
   std::string checkpoint_dir = "checkpoint";
 
-  // Dead-task takeover. A writer that claims a compaction task appends a
-  // TASK_IN_PROGRESS heartbeat every 100 ms; every writer counts ticks
-  // since the last heartbeat it replayed for each task. A task whose count
-  // reaches this many ticks is dead and any writer may claim it at the next
-  // owner_generation (paper section 4.4). 30 ticks is 3 s. The task log is
-  // replayed at most every third of this, so a live task's count stays
-  // well below it. On Corfu a tailer stall (a hole left by a dead peer)
-  // delays heartbeat replay by the hole-fill timeout, so the Corfu configs
-  // set this above corfu_hole_fill_timeout_ms / 100.
+  // Dead-task takeover (paper section 4.4). A task owner appends a
+  // heartbeat every 100 ms. A task with this many ticks since its last
+  // replayed heartbeat is dead, and any writer may claim it at the next
+  // owner_generation. 30 ticks is 3 s. The task log is replayed at most
+  // every third of this. On Corfu set it above
+  // corfu_hole_fill_timeout_ms / 100, because a hole stalls the tailer.
   int task_heartbeat_threshold_ticks = 30;
 
-  // false starts no compaction watcher: the process only appends to the
-  // logs and reads. The churn experiment loads its dataset this way so
-  // every trial starts from the same compaction backlog.
+  // false: start no compaction watcher. The process only appends and reads.
   bool compaction_enabled = true;
 
-  // Fault injection for the churn experiment (paper section 6, Table 4):
-  // with this probability a claimed compaction is abandoned at the start
-  // of its work, as if the writer had died there. The claim is left
-  // without a TASK_COMPLETE, so after task_heartbeat_threshold_ticks the
-  // peers (or this writer) reclaim it at the next owner_generation. 0 is
-  // off. Not a tuning knob: every abort is wasted work.
+  // Fault injection (paper section 6). With this probability a claimed
+  // compaction is abandoned before any work, as if the writer had died.
+  // The claim gets no TASK_COMPLETE, so peers reclaim it after
+  // task_heartbeat_threshold_ticks. 0 is off. Not a tuning knob.
   double compaction_abort_rate = 0.0;
 
   /**
-   * @brief Local Metadata, read from local config file
-   *
+   * @brief Local settings.
    */
-  // int64_t max_memory_size;
-  int compaction_input_file_number = 2;  // number of files to be compacted
+  int compaction_input_file_number = 2;  // files per compaction
 
   /**
-   * @brief Construct a new Metadata object
-   *
-   * read config files and store all the information into a this metadata object
+   * @brief Read the config file into this object.
    *
    * @param shared_config_path
    */
   Metadata(std::string const& shared_config_path) {
-    // read metadata from shared storage
     std::map<std::string, std::string> result = parseJSON(shared_config_path);
     DBpath = result["db_path"];
     log_file_size_limit = std::stol(result["log_file_size_limit"]);
@@ -237,10 +200,7 @@ class Metadata {
       }
     }
 
-    // Optional SSTable-specific backend. See paper §3.5 — SSTables don't
-    // need the atomic-append primitive and are usually better served by a
-    // regular object store than by the log backend. Absent => share the
-    // main backend and all existing configs keep working.
+    // Optional SSTable backend (paper §3.5). Absent: share the log backend.
     auto sb_it = result.find("sstable_backend");
     if (sb_it != result.end()) {
       sstable_backend_set = true;
@@ -275,10 +235,8 @@ class Metadata {
     }
 
     max_level = std::stoi(result["max_level"]);
-    // assert(level_size.size() == max_level - 1);
-    // assert(level_file_size_limit.size() == max_level - 1);
 
-    assert(max_level >= 2);  // otherwise the initoutput logic need to be modified
+    assert(max_level >= 2);  // The output-unit logic needs two levels.
     base_file_number_limit = std::stoi(result["base_file_number_limit"]);
     if (std::stoi(result["compaction_policy"]) != 0) {
       throw std::runtime_error("config error: compaction_policy must be 0 (the task-log policy); the experimental policies were removed");
@@ -405,13 +363,6 @@ class Metadata {
           "sstable_backend (the checkpoint must not live in the log it trims)");
     }
     if (log_trim_keep_checkpoints < 2) log_trim_keep_checkpoints = 2;
-
-    // std::cout<<shared_config_path<<std::endl;
-    // std::cout << "DBpath: " << DBpath << std::endl;
-    // std::cout << "max_log_file_size: " << max_log_file_size << std::endl;
-    // std::cout << "base_file_number_limit: " << base_file_number_limit << std::endl;
-    // std::cout << "max_level: " << max_level << std::endl;
-    // std::cout << "policy: " << static_cast<int>(policy) << std::endl;
   };
 };
 }  // namespace ozonedb

@@ -30,33 +30,24 @@ struct TableBuilder::Rep {
   FilterBlockBuilder* filter_block = nullptr;
   FilterBlockBuilder* filter_block_for_file = nullptr;
 
-  // Write-through block cache. Null = no-op; set by setLRUCache()
-  // during compaction setup. See TableBuilder::flush for publication.
+  // Write-through block cache; null disables it. flush() publishes into it.
   LRUCache* lru_cache = nullptr;
-  // Records buffered for the currently-open data block, in insertion
-  // order. Copied out at flush() into the heap-owned map the cache
-  // expects, then cleared. Holds Record by value so the cache gets an
-  // independent clone and compaction is free to drop its own copy.
+  // Records of the open data block, in insertion order, held by value.
+  // flush() copies them into the map the cache owns, then clears them.
   std::vector<std::pair<std::string, Record>> pending_records;
 
-  // We do not emit the index entry for a block until we have seen the
-  // first key for the next data block.  This allows us to use shorter
-  // keys in the index block.  For example, consider a block boundary
-  // between the keys "the quick brown fox" and "the who".  We can use
-  // "the r" as the key for the index block entry since it is >= all
-  // entries in the first block and < all entries in subsequent
-  // blocks.
-  //
-  // Invariant: r->pending_index_entry is true only if data_block is empty.
+  // The index entry of a block is emitted when the first key of the next
+  // block is known, so a shorter separator key can be used.
+  // Invariant: pending_index_entry is true only if data_block is empty.
   bool pending_index_entry = false;
   BlockIdentifier* pending_index_identifier = nullptr;  // Handle to add to index block
 
   Rep(Storage* storage, std::string fileName) : storage(storage),
                                                 fileName(std::move(fileName)),
-                                                data_block(8),                           // default to 8, can be changed later
-                                                index_block(1),                          // cannot be changed
-                                                comparator(newBytewiseComparator()),     // default for now
-                                                filter_policy(newBloomFilterPolicy(10))  // default for now
+                                                data_block(8),                           // data block restart interval
+                                                index_block(1),                          // must stay 1
+                                                comparator(newBytewiseComparator()),     // byte-wise order
+                                                filter_policy(newBloomFilterPolicy(10))  // 10 bits per key
                                                 {};
 };
 
@@ -115,10 +106,8 @@ void TableBuilder::add(std::string const& key, Record const& record) {
   std::string value = record.SerializeAsString();
   r->data_block.add(key, value);
   if (r->lru_cache != nullptr) {
-    // Buffer a copy so flush() can publish a heap-owned record map
-    // to the block cache. Only the last-wins entry per key in this
-    // block needs to survive — but add() asserts keys are strictly
-    // increasing, so duplicates aren't possible within a block.
+    // Buffer a copy for the write-through in flush(). Keys are strictly
+    // increasing, so a block has no duplicate keys.
     r->pending_records.emplace_back(key, record);
   }
 
@@ -138,17 +127,13 @@ void TableBuilder::flush() {
   r->data_block.reset();
   if (ok()) {
     r->pending_index_entry = true;
-    // r->status = r->storage->flush(r->fileName);
   }
   if (r->filter_block != nullptr) {
     r->filter_block->startBlock(r->offset);
   }
-  // Write-through cache publish. Must run AFTER writeBlock populated
-  // pending_index_identifier's offset+length — readers use the exact
-  // SerializeAsString bytes of the same-shaped BlockIdentifier as the
-  // cache key (via the index iterator), so serializing the identifier
-  // here produces an identical key deterministically for the two
-  // uint64 fields BlockIdentifier carries.
+  // Write-through publish. Must run after writeBlock set
+  // pending_index_identifier: the cache key is the identifier's
+  // SerializeAsString bytes, the same bytes readers take from the index entry.
   if (r->lru_cache != nullptr && !r->pending_records.empty() && ok() &&
       r->pending_index_identifier != nullptr) {
     std::string id_bytes = r->pending_index_identifier->SerializeAsString();
@@ -174,7 +159,7 @@ void TableBuilder::writeBlock(google::protobuf::Message const& block, BlockIdent
   identifier = new BlockIdentifier();
   identifier->set_offset(r->offset);
   identifier->set_length(block_data_vector_size);
-  r->status = r->storage->appendNoFlush(r->fileName, block_data_vector, block_data_vector_size);  // change
+  r->status = r->storage->appendNoFlush(r->fileName, block_data_vector, block_data_vector_size);
   delete[] block_data_vector;
   block_data_vector = nullptr;
   if (ok()) {
@@ -191,9 +176,8 @@ Status TableBuilder::finish() {
   flush();
   assert(!r->closed);
   r->closed = true;
-  // Every data block went through the write-through in flush(): tell the
-  // cache, so its warm worker does not read this file back into the
-  // process that built it.
+  // Every data block was published in flush(); tell the cache so its
+  // warm worker skips this file.
   if (r->lru_cache != nullptr && ok()) {
     r->lru_cache->markSSTableComplete(r->fileName);
   }
@@ -256,18 +240,13 @@ Status TableBuilder::finish() {
       r->offset += footer_encoding_size;
     }
   }
-  // The flush is what actually transfers the object (one PutObject on
-  // S3). Discarding its status let a failed upload look like a finished
-  // SSTable: the compactor then published a COMPACT record naming a file
-  // that does not exist and deleted the inputs behind it. Keep an
-  // earlier failure if there already is one.
+  // The flush transfers the object to storage, so its status is the
+  // result of the table. An earlier failure wins.
   Status flush_status = r->storage->flush(r->fileName);
   if (ok()) r->status = flush_status;
-  // r->storage->seal(r->fileName);
   delete filter_block_identifier;
   delete filter_block_for_file_identifier;
-  // delete metaindex_block_identifier;
-  // delete index_block_identifier; this is already deleted by the footer
+  // The footer owns metaindex_block_identifier and index_block_identifier.
   return r->status;
 }
 
@@ -275,8 +254,7 @@ void TableBuilder::abandon() {
   Rep* r = rep_;
   assert(!r->closed);
   r->closed = true;
-  // Drop any buffered records for the in-progress block. Not publishing
-  // them matches the on-disk state — abandon() never wrote the block.
+  // Drop the buffered records; the block was never written.
   r->pending_records.clear();
 }
 

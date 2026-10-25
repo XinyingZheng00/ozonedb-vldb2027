@@ -71,7 +71,7 @@ Layout parseLayout(std::string const& json) {
       }
       l.has_cluster_id = true;
     } else if (cid.kind_case() == Value::kStructValue) {
-      // Defensive: a {mostSigBits, leastSigBits} object.
+      // Also accept a {mostSigBits, leastSigBits} object.
       Struct const& s = cid.struct_value();
       l.cluster_id.msb = asInt(field(s, "mostSigBits"), "clusterId.mostSigBits");
       l.cluster_id.lsb = asInt(field(s, "leastSigBits"), "clusterId.leastSigBits");

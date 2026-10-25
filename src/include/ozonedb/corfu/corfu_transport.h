@@ -1,19 +1,19 @@
 #ifndef OZONEDB_CORFU_TRANSPORT_H
 #define OZONEDB_CORFU_TRANSPORT_H
 #ifdef OZONEDB_ENABLE_CORFU
-// One TCP connection to a Corfu node, speaking the Netty framing of
+// One TCP connection to a Corfu node, with the Netty framing of
 // NettyClientRouter / NettyCorfuMessageEncoder:
 //
-//   int32 BE length   -- covers the marker and the protobuf
-//   byte  marker      -- 0x01 RequestMsg, 0x02 ResponseMsg
+//   int32 BE length   (covers the marker and the protobuf)
+//   byte  marker      (0x01 RequestMsg, 0x02 ResponseMsg)
 //   bytes protobuf
 //
 // The server echoes the request header, so several threads can have
-// requests in flight on one socket: the reader thread demultiplexes the
+// requests in flight on one socket. The reader thread demultiplexes
 // replies on header.request_id. The handshake (HandshakeRequestMsg) is
-// mandatory; the server drops every other request until it completes.
-// Keepalive mirrors RuntimeParameters: a PingRequest after 2 s of write
-// idle, and 7 s of read idle marks the connection dead.
+// mandatory: the server drops every other request until it completes.
+// Keepalive follows RuntimeParameters: a PingRequest after 2 s of write
+// idle; 7 s of read idle marks the connection dead.
 #include "corfu/corfu_codec.h"
 #include <atomic>
 #include <chrono>
@@ -36,7 +36,7 @@ class ResponsePayloadMsg;
 namespace ozonedb::corfu {
 
 // A dead socket, a timeout, or a malformed frame. The connection is
-// unusable until reopen(); every pending call fails with this.
+// unusable until reopen(). Every pending call fails with this.
 class TransportError : public std::runtime_error {
  public:
   using std::runtime_error::runtime_error;
@@ -53,7 +53,7 @@ struct TransportOptions {
 constexpr uint8_t kRequestMarker = 0x01;
 constexpr uint8_t kResponseMarker = 0x02;
 
-// Frame helpers, unit-tested without a socket.
+// Frame helpers; they need no socket.
 std::string encodeFrame(uint8_t marker, std::string const& body);
 // Decode one frame at the front of buf. True with `consumed` set when a
 // whole frame is there; false with consumed = 0 when more bytes are
@@ -89,7 +89,7 @@ class Connection {
 
   // Send one request and wait for its reply (request_timeout_ms). Throws
   // TransportError on a dead connection or a timeout. A ServerErrorMsg
-  // reply is returned as-is; the caller interprets it.
+  // reply is returned as is; the caller interprets it.
   org::corfudb::runtime::ResponsePayloadMsg call(org::corfudb::runtime::RequestPayloadMsg const& payload,
                                                  bool ignore_epoch = false,
                                                  bool ignore_cluster_id = false);

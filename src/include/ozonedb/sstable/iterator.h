@@ -2,15 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file. See the AUTHORS file for names of contributors.
 //
-// An iterator yields a sequence of key/value pairs from a source.
-// The following class defines the interface.  Multiple implementations
-// are provided by this library.  In particular, iterators are provided
-// to access the contents of a Table or a DB.
-//
-// Multiple threads can invoke const methods on an Iterator without
-// external synchronization, but if any of the threads may call a
-// non-const method, all threads accessing the same Iterator must use
-// external synchronization.
+// An Iterator yields key/value pairs from a source such as a block.
+// Const methods may run on many threads without synchronization.
+// Any non-const call requires external synchronization for the whole Iterator.
 
 #ifndef STORAGE_OZONEDB_INCLUDE_ITERATOR_H_
 #define STORAGE_OZONEDB_INCLUDE_ITERATOR_H_
@@ -23,62 +17,52 @@ namespace ozonedb {
 
 class Iterator {
  public:
-  BlockData* block_data_ = nullptr;  // this is just used to delete the block_data
+  BlockData* block_data_ = nullptr;  // owned; the iterator deletes it
   Iterator() = default;
   virtual ~Iterator() = default;
 
-  // An iterator is either positioned at a key/value pair, or
-  // not valid.  This method returns true iff the iterator is valid.
+  // True iff the iterator is positioned at an entry.
   virtual bool valid() const = 0;
 
-  // Position at the first key in the source.  The iterator is Valid()
-  // after this call iff the source is not empty.
+  // Position at the first entry. valid() iff the source is not empty.
   virtual void seekToFirst() = 0;
 
-  // Position at the last key in the source.  The iterator is
-  // Valid() after this call iff the source is not empty.
+  // Position at the last entry. valid() iff the source is not empty.
   virtual void seekToLast() = 0;
 
-  // Position at the first key in the source that at or past target
-  // The iterator is Valid() after this call iff the source contains
-  // an entry that comes at or past target.
+  // Position at the first entry at or past target. valid() iff one exists.
   virtual void seek(std::string const& target) = 0;
 
-  // Moves to the next entry in the source.  After this call, Valid() is
-  // true iff the iterator was not positioned at the last entry in the source.
-  // REQUIRES: Valid()
+  // Move to the next entry. valid() iff the iterator was not at the last entry.
+  // REQUIRES: valid()
   virtual void next() = 0;
 
-  // Moves to the previous entry in the source.  After this call, Valid() is
-  // true iff the iterator was not positioned at the first entry in source.
-  // REQUIRES: Valid()
+  // Move to the previous entry. valid() iff the iterator was not at the first entry.
+  // REQUIRES: valid()
   virtual void prev() = 0;
 
-  // Return the key for the current entry.  The underlying storage for
-  // the returned slice is valid only until the next modification of
-  // the iterator.
-  // REQUIRES: Valid()
+  // Key of the current entry.
+  // REQUIRES: valid()
   virtual std::string key() const = 0;
 
-  // Return the value for the current entry.  The underlying storage for
-  // the returned slice is valid only until the next modification of
-  // the iterator.
-  // REQUIRES: !AtEnd() && !AtStart()
+  // Value of the current entry. The reference is valid until the next
+  // change of the iterator.
+  // REQUIRES: valid()
   virtual std::string const& value() const = 0;
 
-  // If an error has occurred, return it.  Else return an ok status.
+  // Status of the last operation; kSuccess if no error occurred.
   virtual Status const& status() const = 0;
 };
 
 class BlockIter : public Iterator {
  private:
   Comparator* comparator_;
-  google::protobuf::RepeatedPtrField<BlockEntry> const& entries_;  // Direct reference to the repeated BlockEntry
+  google::protobuf::RepeatedPtrField<BlockEntry> const& entries_;  // aliases the BlockData entries
   google::protobuf::RepeatedField<uint32_t> const& restarts_;
-  const uint32_t num_restarts_;  // Number of uint32_t entries in restart array
+  const uint32_t num_restarts_;  // Entries in restarts_
 
-  uint32_t current_entry_index;  // Offset in entries_ of current entry. -1 if !Valid
-  uint32_t restart_index_;       // Index of restart block in which current_ falls, -1 if !Valid
+  uint32_t current_entry_index;  // Index in entries_ of the current entry; -1 if !valid()
+  uint32_t restart_index_;       // Restart region of the current entry; -1 if !valid()
   std::string key_;
   std::string const* value_ptr_;
   Status status_;

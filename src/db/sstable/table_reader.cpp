@@ -19,11 +19,9 @@ struct Table::Rep {
   LRUCache* lru_cache = nullptr;
   Comparator* comparator = nullptr;
   std::string fileName;
-  uint64_t file_size = 0;  // as reported by storage->size() at open; bounds getAll's reads
-  // The index block. index_iter owns it (BlockIter deletes its
-  // BlockData); this alias lets scanBlocks copy it into a private
-  // iterator, because index_iter is shared with every reader of the
-  // Table and a seek from one thread would corrupt a scan on another.
+  uint64_t file_size = 0;  // storage->size() at open; bounds the reads of scanBlocks
+  // Index block, owned by index_iter. scanBlocks copies it into a private
+  // iterator, because index_iter is shared by every reader of the Table.
   BlockData* index_block = nullptr;
   Iterator* index_iter = nullptr;
   FilterPolicy const* filter_policy = nullptr;
@@ -38,10 +36,9 @@ void Table::setCache(LRUCache* cache) {
 Status Table::open(Storage* storage,
                    std::string const& fileName,
                    Table*& table) {
-  // read the footer
-  size_t size = storage->size(fileName);//tobe changed.
-  // A missing, empty or truncated object would underflow the offset
-  // below and read from an absurd address.
+  // Read the footer
+  size_t size = storage->size(fileName);
+  // A file shorter than the footer would underflow the offset below.
   if (size < FOOTER_BLOCK_SIZE) return Status::kFailure;
   unsigned char* footer_vector = nullptr;
   Status s = storage->read(fileName, footer_vector, size - FOOTER_BLOCK_SIZE, FOOTER_BLOCK_SIZE);
@@ -54,12 +51,11 @@ Status Table::open(Storage* storage,
   if (s != Status::kSuccess) return s;
   if (footer.empty()) return Status::kFailure;
   auto* footer_block = static_cast<FooterBlock*>(footer[0]);
-  // read index block based on the index identifier in the footer
+  // Read the index block named by the footer
   BlockData* index_block = nullptr;
   s = readBlock(storage, fileName, footer_block->index_identifier(), index_block);
   if (s != Status::kSuccess || index_block == nullptr) {
-    // The footer owns the index identifier; free it on the failure path
-    // too, or every failed open leaks one FooterBlock.
+    // The footer owns the index identifier; free it on failure too.
     delete footer_block;
     return s == Status::kSuccess ? Status::kFailure : s;
   }
@@ -68,7 +64,7 @@ Status Table::open(Storage* storage,
     rep->storage = storage;
     rep->fileName = fileName;
     rep->file_size = size;
-    rep->comparator = newBytewiseComparator();  // set to default for now
+    rep->comparator = newBytewiseComparator();
     rep->index_block = index_block;
     rep->index_iter = newIterator(index_block, rep->comparator);
     rep->filter_policy = newBloomFilterPolicy(10);
@@ -88,7 +84,7 @@ void Table::readMeta(FooterBlock const& footer) {
   BlockData* meta_index_block;
   Status s = readBlock(rep_->storage, rep_->fileName, footer.metaindex_identifier(), meta_index_block);
   if (s != Status::kSuccess) {
-    // do not propagate the error, since meta index block is optional
+    // The metaindex block is optional; ignore the error.
     return;
   }
   Iterator* miiter = newIterator(meta_index_block, rep_->comparator);
@@ -141,8 +137,8 @@ void Table::setFilterReaderToNull() {
   rep_->filter_block_for_file_reader = nullptr;
 }
 
-// Convert an index iterator value (i.e., an encoded BlockIdentifier)
-// into an iterator over the contents of the corresponding block.
+// Read the block named by an index entry value (an encoded BlockIdentifier)
+// and return an iterator over it. The caller deletes the iterator; null on failure.
 Iterator* Table::blockReader(Table* table,
                              std::string const& index_value) {
   BlockIdentifier identiifer;
@@ -162,8 +158,7 @@ Iterator* Table::blockReader(Table* table,
 }
 
 Status Table::get(std::string const& key, std::shared_ptr<Record>& record) {
-  // index_iter is built from the index block in Table::open. A Table
-  // that reached a reader without one cannot answer anything.
+  // A Table without an index iterator or a cache cannot answer.
   if (rep_ == nullptr || rep_->index_iter == nullptr || rep_->lru_cache == nullptr) {
     return Status::kNotFound;
   }
@@ -200,39 +195,19 @@ Status Table::get(std::string const& key, std::shared_ptr<Record>& record) {
         OZONEDB_PROFILE_COUNT(read_profile::tbl_found);
         return Status::kSuccess;
       }
-      // A block was consulted (cache hit or GET) and the key is not in
-      // it: a filter false positive, or a file without a usable filter.
+      // The block was read and does not hold the key: a filter false
+      // positive, or a file without a filter.
       this->rep_->lru_cache->noteProbe(rep_->fileName, 2);
       OZONEDB_PROFILE_COUNT(read_profile::tbl_miss_after_read);
       return Status::kNotFound;
     }
   }
-  // Key past the last index entry, or an unparseable identifier: no
-  // block touched. Counted as pruned.
+  // No block touched: key past the last index entry, or an unparseable
+  // identifier. Counted as pruned.
   this->rep_->lru_cache->noteProbe(rep_->fileName, 1);
   OZONEDB_PROFILE_COUNT(read_profile::tbl_index_invalid);
   return Status::kNotFound;
 }
-
-/*
-Status Table::getBlockPosition(std::string const& key, std::string& index_value) {
-  // check file filter first
-  if (rep_->filter_block_for_file_reader != nullptr && !rep_->filter_block_for_file_reader->keyMayMatch(0, key)) {
-    return Status::kNotFound;
-  }
-  Status s;
-  this->rep_->index_iter->seek(key);
-  if (this->rep_->index_iter->valid()) {
-    index_value = this->rep_->index_iter->value();
-    BlockIdentifier identifier;
-    bool s = identifier.ParseFromString(index_value);
-    if (rep_->filter_block_reader != nullptr && !rep_->filter_block_reader->keyMayMatch(identifier.offset(), key)) {
-      return Status::kNotFound;
-    }
-  }
-  return Status::kSuccess;
-}
-*/
 
 void Table::setFileSizeForTesting(uint64_t size) {
   rep_->file_size = size;
@@ -244,13 +219,9 @@ Status Table::scanBlocks(size_t max_read_bytes,
     return Status::kFailure;
   }
 
-  // 1. Collect the block identifiers in index order and validate them
-  //    before touching storage: ascending, non-overlapping, inside the
-  //    file. TableBuilder::writeBlock lays data blocks out contiguously,
-  //    so a violation means a corrupt or foreign index, not a layout we
-  //    should try to serve. The index entry's raw value is kept as well:
-  //    it is the cache key Table::get and TableBuilder::flush use.
-  //    A private iterator over a copy of the index block, because
+  // 1. Collect the block identifiers in index order and validate them:
+  //    ascending, non-overlapping, inside the file. The raw index value
+  //    is kept as the cache key. The iterator is a private copy, because
   //    rep_->index_iter is shared with concurrent Table::get callers.
   std::vector<BlockIdentifier> blocks;
   std::vector<std::string> index_values;
@@ -271,9 +242,8 @@ Status Table::scanBlocks(size_t max_read_bytes,
     delete index;
   }
 
-  // 2. Read block-aligned chunks of at most max_read_bytes and slice the
-  //    blocks out of each. Every parsed block goes through the same
-  //    deserializer and iterator as readBlock/blockReader.
+  // 2. Read block-aligned chunks of at most max_read_bytes and parse
+  //    each block out of its chunk.
   size_t i = 0;
   while (i < blocks.size()) {
     uint64_t const base = blocks[i].offset();
@@ -292,8 +262,7 @@ Status Table::scanBlocks(size_t max_read_bytes,
       std::vector<google::protobuf::Message*> parsed;
       s = protobuf::deserializeMessages(buf + (blocks[k].offset() - base), blocks[k].length(), parsed,
                                         []() { return new BlockData(); });
-      // A block is one serialized BlockData; anything past [0] is
-      // unexpected and freed, as readBlock does implicitly.
+      // A block is one BlockData; free anything past [0].
       for (size_t m = 1; m < parsed.size(); ++m) delete parsed[m];
       if (s != Status::kSuccess || parsed.empty() || parsed[0] == nullptr) {
         if (!parsed.empty()) delete parsed[0];

@@ -17,23 +17,21 @@ class BlockBuilder {
  public:
   explicit BlockBuilder(int block_restart_interval);
 
-  // Reset the contents as if the BlockBuilder was just constructed.
+  // Reset to the state after construction.
   void reset();
 
-  // REQUIRES: Finish() has not been callled since the last call to Reset().
-  // REQUIRES: key is larger than any previously added key
+  // REQUIRES: finish() not called since the last reset().
+  // REQUIRES: key is larger than every key added before.
   void add(std::string const& key, std::string const& value);
 
-  // Finish building the block and return a Block that refers to the
-  // block contents.  The returned Block will remain valid for the
-  // lifetime of this builder or until Reset() is called.
+  // Finish the block and return it. The returned BlockData stays valid
+  // until reset() or the destruction of this builder.
   BlockData& finish();
 
-  // Returns an estimate of the current (uncompressed) size of the block
-  // we are building.
+  // Estimated size of the block under construction.
   size_t currentSizeEstimate() const;
 
-  // Return true iff no entries have been added since the last Reset()
+  // True iff no entry was added since the last reset().
   bool empty() const {
     return block_.entries_size() == 0;
   }
@@ -42,18 +40,17 @@ class BlockBuilder {
   Comparator* comparator_;
   int block_restart_interval;       // Restart interval
   BlockData block_;                 // Destination block
-  int accumulated_size_;            // Current size of blockEntry_buffer_
+  int accumulated_size_;            // Serialized size of the entries added so far
   std::vector<uint32_t> restarts_;  // Restart points
-  int counter_;                     // Number of entries emitted since restart
+  int counter_;                     // Entries emitted since the last restart
   bool finished_;
 
- public:  // Has Finish() been called?
+ public:
   std::string last_key_;
 };
 
 Status readBlock(Storage* storage,
                  std::string const& fileName,
-                 //  ReadOptions const& options,
                  BlockIdentifier const& identifier,
                  BlockData*& result);
 }  // namespace ozonedb

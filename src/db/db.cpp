@@ -15,12 +15,10 @@
 namespace ozonedb {
 
 namespace {
-// Build a Storage instance for one of the supported backend kinds.
-// Used twice from DB::DB — once for the log layer (always required) and
-// optionally a second time for SSTable storage if the config picks a
-// separate backend per paper §3.5. checkpoint_store is only read by the
-// Corfu backend: the object store it loads the newest checkpoint from at
-// open (null => replay from address 0).
+// Build a Storage for one backend kind. DB::DB calls it for the log
+// storage and, with sstable_backend set, again for the SSTable storage
+// (paper §3.5). Only the Corfu backend reads checkpoint_store: it loads the
+// newest checkpoint from it at open. Null means replay from address 0.
 Storage* makeStorage(BackendKind kind, Metadata const& md, bool for_sstables,
                      Storage* checkpoint_store) {
   switch (kind) {
@@ -70,18 +68,15 @@ DB::DB(std::string const& shared_config_path) {
     this->mode = Mode::MultipleProcesses;
   }
 
-  // The SSTable store is built FIRST when it is separate: the Corfu log
-  // backend loads the newest checkpoint from it during construction
-  // (CorfuDBStorage::bootstrap), so it has to exist before the log does.
+  // Build sstable_storage first: CorfuDBStorage::bootstrap loads the
+  // newest checkpoint from it.
   if (this->metadata->sstable_backend_set) {
     this->sstable_storage = makeStorage(this->metadata->sstable_backend_kind,
                                         *this->metadata, /*for_sstables=*/true,
                                         /*checkpoint_store=*/nullptr);
   }
-  // Disk-backed read-through tier in front of the SSTable object store.
-  // Metadata's constructor already rejects
-  // disk_cache_dir without sstable_backend, so sstable_storage above is
-  // guaranteed non-null here whenever this fires.
+  // Disk tier in front of the SSTable store. Metadata rejects disk_cache_dir
+  // without sstable_backend, so sstable_storage is non-null here.
   if (!this->metadata->disk_cache_dir.empty()) {
     DiskCacheStorage::Options o;
     o.dir = this->metadata->disk_cache_dir;
@@ -102,7 +97,7 @@ DB::DB(std::string const& shared_config_path) {
                                   *this->metadata, /*for_sstables=*/false,
                                   /*checkpoint_store=*/this->sstable_storage);
   if (!this->metadata->sstable_backend_set) {
-    // Backward-compat: SSTables share the main backend.
+    // No sstable_backend: the two pointers alias.
     this->sstable_storage = this->log_storage;
   }
 
@@ -116,9 +111,8 @@ DB::DB(std::string const& shared_config_path) {
   }
   this->metadata_log->setMetadata(this->metadata);
   {
-    // Compaction-aware block cache. Policy and the liveness check are set
-    // before any thread runs; the worker itself starts in openDB once a view
-    // exists and stops in closeDB before the counters print.
+    // Cache warm policy and liveness check, set before any thread runs.
+    // openDB starts the warm worker. closeDB stops it before the counters print.
     LRUCache::WarmPolicy policy;
     policy.enabled = this->metadata->cache_warm_enabled;
     policy.max_level = this->metadata->cache_warm_max_level;
@@ -128,17 +122,14 @@ DB::DB(std::string const& shared_config_path) {
     this->lru_cache->setWarmPolicy(policy);
     MetadataLogHandler* mlh = this->metadata_log;
     this->lru_cache->setLiveFileCheck([mlh](std::string const& file_name) {
-      // The snapshot is a shared_ptr, so the View stays alive for the
-      // check; the cache's raw latest_view pointer is not used here.
+      // The shared_ptr snapshot keeps the View alive for the check.
       auto view = mlh->latestViewSnapshot();
       return view != nullptr && view->key_range.find(file_name) != view->key_range.end();
     });
   }
-  // Enable the in-memory key index on all backends. On Corfu, the
-  // storage layer's remote-append listener (see CorfuDBStorage and
-  // LogHandler::onRemoteAppend) keeps the index in sync with peer
-  // writes; on non-shared backends the writer path is the only
-  // updater, so the listener hook defaults to a no-op.
+  // The key index is on for all backends. On Corfu the remote-append
+  // listener (LogHandler::onRemoteAppend) adds peer writes. On other
+  // backends only the writer path updates it.
   this->log_handler = new LogHandler(
       this->metadata->log_file_size_limit, this->metadata->log_prefix,
       this->log_storage, lru_cache, metadata_log, /*enable_key_index=*/true,
@@ -166,17 +157,15 @@ DB::DB(std::string const& shared_config_path) {
 
 DB::~DB() {
 #ifdef OZONEDB_ENABLE_CORFU
-  delete this->trimmer;  // uses both stores: first out
+  delete this->trimmer;  // Uses both stores, so it goes first.
 #endif
   delete this->watcher;
   delete this->sstable_handler;
   delete this->log_handler;
   delete this->lru_cache;
   delete this->metadata_log;
-  // Guard against double-free when SSTable storage isn't split off the
-  // log backend (the legacy single-storage case where both pointers
-  // alias). When split, the SSTable backend is destroyed first to flush
-  // any pending PutObject requests before the log backend tears down.
+  // The two pointers alias without sstable_backend: guard the double-free.
+  // When split, delete sstable_storage first so pending writes flush.
   if (this->sstable_storage != this->log_storage) {
     delete this->sstable_storage;
   }
@@ -187,18 +176,12 @@ DB::~DB() {
 }
 
 Status DB::openDB(DB*& db, std::string const& shared_config_path) {
-  // init DB Logic
   db = new DB(shared_config_path);
   db->active = true;
   db->metadata_log->rollForwardMetadataLog();
-  // Reconcile and start the fill worker BEFORE initSSTMetadata: that call
-  // opens every live SSTable through the LRU cache, and with an empty
-  // tier index every one of those reads would miss and enqueue a fill
-  // (queue depth disk_cache_fill_queue, overflow dropped) instead of
-  // being served from a warm local copy. reconcile() only needs a rolled-
-  // forward view, which rollForwardMetadataLog() above already produced,
-  // so it does not need to wait for the log_handler/lru_cache latest_view
-  // wiring below.
+  // Reconcile the disk tier and start its fill worker before
+  // initSSTMetadata, which opens every live SSTable. reconcile() needs only
+  // the rolled-forward View.
   if (db->disk_cache != nullptr) {
     std::shared_ptr<View const> view = db->metadata_log->latestViewSnapshot();
     size_t const removed = db->disk_cache->reconcile([view](std::string const& name, size_t bytes) {
@@ -210,12 +193,10 @@ Status DB::openDB(DB*& db, std::string const& shared_config_path) {
     db->disk_cache->startFillWorker();
   }
   db->metadata_log->initSSTMetadata();
-  // Seed the log key index from any log files already materialized in
-  // the cache by rollforward. Set latest_view on both log_handler and
-  // lru_cache first — warmKeyIndex calls cache->checkReadMoreLog which
-  // dereferences the cache's latest_view pointer. Pin the snapshot on
-  // the DB so the raw pointers handed to children stay valid past
-  // openDB.
+  // Seed the key index from log files the rollforward cached. Set
+  // latest_view on log_handler and lru_cache first: warmKeyIndex calls
+  // cache->checkReadMoreLog, which reads the cache's latest_view. The DB
+  // pins the snapshot so the raw pointers stay valid after openDB.
   db->latest_view_snapshot = db->metadata_log->latestViewSnapshot();
   View const* view_ptr = db->latest_view_snapshot.get();
   db->log_handler->setLatestView(view_ptr);
@@ -249,13 +230,11 @@ Status DB::closeDB(DB*& db) {
   db->watcher->stopCompactionWatcher();
   db->metadata_log->stopViewUpdate();
 #ifdef OZONEDB_ENABLE_CORFU
-  // Final checkpoint + trim before the stores go away, so a process that
-  // leaves publishes everything it saw (the load's last cycle is what
-  // keeps the bench's log snapshot small).
+  // Final checkpoint and trim before the stores go away.
   if (db->trimmer != nullptr) db->trimmer->stop();
 #endif
-  // Join the warm worker before the counters print, so a warm in flight
-  // is counted and no thread touches the stores after this point.
+  // Join the workers before the counters print. No thread touches the
+  // stores after this point.
   db->lru_cache->stopWarmWorker();
   if (db->disk_cache != nullptr) db->disk_cache->stopFillWorker();
   db->lru_cache->printCacheStats();
@@ -270,9 +249,7 @@ Status DB::put(std::string const& key, std::string const& value) {
   record.set_key(key);
   record.set_value(value);
   record.set_type(kTypeValue);
-  // Propagate the append status. A put that the log did not take must
-  // not report success to the client, and must not drive the compaction
-  // bookkeeping below either.
+  // Return the append status. A put the log did not take is not a success.
   return log_handler->addRecord(record);
 }
 
@@ -296,12 +273,9 @@ Status DB::remove(std::string const& key) {
 
 Status DB::get(std::string const& key, std::string const*& value,
                std::shared_ptr<Record>& guard) {
-  // Fast path: probe the log key index before refreshing the view.
-  // When trust_background_tail is enabled, the index is authoritative
-  // for log reads — kept current by local addRecord and, on Corfu, by
-  // the tailer's onRemoteAppend callback. A hit here avoids the View
-  // snapshot and the setLatestView calls below. Tombstones still
-  // terminate the read.
+  // Fast path. With trust_background_tail the key index is authoritative
+  // for log reads: addRecord and, on Corfu, onRemoteAppend keep it current.
+  // A hit skips the View snapshot and the fence. A tombstone ends the read.
   if (this->metadata->trust_background_tail) {
     std::shared_ptr<Record> fast_hit;
     if (this->log_handler->tryIndexLookup(key, fast_hit)) {
@@ -313,38 +287,21 @@ Status DB::get(std::string const& key, std::string const*& value,
     }
   }
 
-  // Strict mode (linearizable_reads): ONE fence per get, taken here.
-  // SyncScope samples the global log tail and waits for the tailer
-  // once (the linearization point); it records a thread-local fence
-  // token, so every fenced storage call below on this thread —
-  // syncView's metadata-log reads, the tail probe in checkReadMoreLog,
-  // the data-log reads (run inline in strict mode, see readRecord),
-  // and the post-scan validation — reuses the token instead of paying
-  // its own sequencer round-trip. After the fence, everything
-  // sequenced before this get began is in local state, so those reads
-  // need no further freshness. Without any of this the view lags by
-  // the background thread's ~100ms cycle, which both hides a peer's
-  // freshly rolled tail file and, during a peer compaction, opens a
-  // window where a key is temporarily in neither the (removed) input
-  // log file nor the (not-yet-visible) output SSTable.
+  // Strict mode (linearizable_reads): one fence per get. SyncScope waits
+  // for the tailer once, the linearization point, and records a
+  // thread-local fence token. Every storage call in this get reuses the
+  // token: syncView, checkReadMoreLog, the inline data-log scan and the
+  // post-scan size check.
   //
-  // The post-scan check closes that compaction window against ops
-  // sequenced *after* our fence: the tailer applies entries in address
-  // order, so if it removed a log file under our scan, the COMPACT
-  // that precedes the REMOVE has already grown the LOCAL metadata log
-  // past view_offset — the (token-fenced, i.e. local) size() below
-  // sees it and we retry against the fresh view. Ops not yet applied
-  // locally cannot have disturbed a scan that only read local state,
-  // which is also why retries do NOT re-fence: they only need to
-  // ingest what the tailer already applied, and the original fence
-  // remains a valid linearization point inside this get's window.
-  // Metadata ops are rare (log rolls and compactions), so retries are
-  // too; the cap only guards against a pathological storm, serving the
-  // last result instead of spinning.
-  // A caller-established batch fence (DB::sync) takes precedence: when
-  // this thread already holds a token, the get linearizes at the
-  // caller's fence point instead of taking its own — one sequencer
-  // round-trip amortized over the caller's whole read batch.
+  // The post-scan check guards against a peer compaction that removes a
+  // log file under the scan. The tailer applies entries in address order,
+  // so the COMPACT before that REMOVE has grown the local metadata log past
+  // view_offset. The size check sees it and the get retries. A retry does
+  // not re-fence: the original fence stays the linearization point. The
+  // attempt cap serves the last result instead of spinning.
+  //
+  // A token from DB::sync takes precedence: the get then linearizes at the
+  // caller's fence and takes none of its own.
   OZONEDB_PROFILE_COUNT(read_profile::reads);
   OZONEDB_PROFILE_SCOPE(profile_total, read_profile::total_ns);
   bool const strict = this->metadata->linearizable_reads;
@@ -352,17 +309,12 @@ Status DB::get(std::string const& key, std::string const*& value,
   if (strict && !log_storage->hasSyncToken()) {
     fence.emplace(*log_storage);
   }
-  // Default mode has the same compaction window and closes it the
-  // cheap way. The snapshot below is the periodic thread's (up to
-  // ~100 ms old). If a peer's compaction removes a listed file after
-  // the snapshot, the scan's read of that file fails at the storage
-  // layer and the key's new home (the output) is not in the snapshot:
-  // NOT_FOUND for a key that exists (1 to 7 per 0.8 M reads in the
-  // 600 s workload-a cells before this). The cache counts failed file
-  // reads; when the scan found nothing and that counter moved during
-  // the scan, the view is rolled forward (one fence, only on this
-  // path) and the scan runs again. A hit, or a miss with every listed
-  // file readable, costs nothing extra. The cap bounds a broken store.
+  // Default mode uses the periodic View snapshot. If a peer compaction
+  // removes a listed file after the snapshot, the read of that file fails
+  // and the output file is not in the snapshot. The cache counts failed
+  // file reads. When the scan found nothing and that counter moved, the
+  // get rolls the View forward (one fence) and scans again. The cap bounds
+  // a broken store.
   constexpr int kStrictMaxAttempts = 5;
   constexpr int kDefaultMaxAttempts = 5;
   for (int attempt = 0;; ++attempt) {
@@ -376,10 +328,8 @@ Status DB::get(std::string const& key, std::string const*& value,
       }
       read_failures_before = lru_cache->readFailures();
 
-      // Atomic snapshot of the metadata-log view — no deep copy, no lock.
-      // Held locally so children's raw latest_view pointers stay valid
-      // until this frame returns. Refresh publishes happen only on log
-      // rollforward / tail-size refresh, not per get.
+      // Atomic View snapshot: no deep copy, no lock. The DB holds it so
+      // the children's raw latest_view pointers stay valid during the get.
       this->latest_view_snapshot = metadata_log->latestViewSnapshot();
       view_ptr = this->latest_view_snapshot.get();
       if (view_ptr == nullptr) {
@@ -390,8 +340,7 @@ Status DB::get(std::string const& key, std::string const*& value,
       this->lru_cache->setLatestView(view_ptr);
     }
 
-    // The `offset` arguments below are always empty: they belonged to a
-    // tail cache that no longer exists.
+    // The offset arguments are unused and always empty.
     std::shared_ptr<Record> log_record;
     std::string const empty_offset;
     std::string latest_offset;

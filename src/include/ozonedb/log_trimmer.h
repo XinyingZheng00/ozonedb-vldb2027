@@ -18,22 +18,21 @@ namespace ozonedb {
  * the Corfu stream behind them.
  *
  * One process per cluster runs a trimmer (Metadata::log_trim_enabled). Two
- * trimmers are safe -- every checkpoint is self-contained and prefixTrim is
- * monotone -- but wasteful.
+ * trimmers are safe (every checkpoint is self-contained and prefixTrim is
+ * monotone) but wasteful.
  *
  * Cycle N (runCycle):
- *   1. takeSnapshot() -> C_N, the exact state at address C_N (see
- *      CorfuDBStorage::takeSnapshot for why that needs the write gate).
+ *   1. takeSnapshot() -> C_N, the exact state at address C_N. It holds
+ *      write_gate_ exclusively (see CorfuDBStorage::takeSnapshot).
  *   2. checkpoint::write: file objects, manifest, then LATEST = C_N.
- *   3. prefixTrim(C_{N-1}): trim behind the PREVIOUS checkpoint, never the
- *      new one. A live member whose tailer lags by less than one cycle is
- *      then never below the trim mark, and a joiner reads LATEST, which is a
- *      full cycle above the mark.
+ *   3. prefixTrim(C_{N-1}): trim behind the previous checkpoint, never the
+ *      new one. A live member whose tailer lags by less than one cycle
+ *      never falls below the trim mark. A joiner reads LATEST, a full
+ *      cycle above the mark.
  *   4. Delete checkpoints older than the newest `keep`.
  *
  * stop() joins the thread and runs one more cycle, so a process that exits
- * leaves the log as short as it can. That final cycle is what makes the
- * benchmark's load snapshot small.
+ * leaves the log as short as it can.
  */
 class LogTrimmer {
  public:

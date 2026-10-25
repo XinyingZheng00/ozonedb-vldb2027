@@ -4,7 +4,7 @@
 #include <iostream>
 #include <sstream>
 
-// Function to trim leading and trailing whitespaces from a string
+// Trim leading and trailing spaces.
 std::string trim(std::string const& str) {
   size_t first = str.find_first_not_of(' ');
   size_t last = str.find_last_not_of(' ');
@@ -13,7 +13,8 @@ std::string trim(std::string const& str) {
   return str.substr(first, last - first + 1);
 }
 
-// Function to parse key-value pairs from JSON
+// Parse a flat JSON object, one "key": value pair per line, into strings.
+// Every value is a string; an array stays a literal like "[1, 2]".
 std::map<std::string, std::string> parseJSON(std::string const& path) {
   std::map<std::string, std::string> result;
   std::ifstream ifs(path);
@@ -22,7 +23,7 @@ std::map<std::string, std::string> parseJSON(std::string const& path) {
     return result;
   }
 
-  // Read the entire contents of the file into a string
+  // Read the whole file
   std::string json_str((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
 
   std::istringstream iss(json_str);
@@ -40,7 +41,7 @@ std::map<std::string, std::string> parseJSON(std::string const& path) {
     if (colon_pos != std::string::npos) {
       std::string key = trim(line.substr(0, colon_pos));
       std::string value = trim(line.substr(colon_pos + 1));
-      // Remove quotes from the key, value
+      // Strip the quotes
       key.erase(std::remove_if(key.begin(), key.end(), [](char c) { return c == '"'; }), key.end());
       value.erase(std::remove_if(value.begin(), value.end(), [](char c) { return c == '"'; }), value.end());
       result[key] = value;
@@ -56,35 +57,34 @@ std::vector<std::string> jsonArrayToVector(std::string & json) {
   size_t pos = 0;
   std::string token;
 
-  // Trim and remove the surrounding brackets if present
+  // Strip the surrounding brackets
   json = trim(json);
   if (json[0] == '[') {
-    json.erase(0, 1);  // Remove '['
+    json.erase(0, 1);
   }
   if (json[json.length() - 1] == ']') {
-    json.erase(json.length() - 1, 1);  // Remove ']'
+    json.erase(json.length() - 1, 1);
   }
 
-  // Trim again after removing brackets
   json = trim(json);
 
-  // If no delimiter is found and json is not empty, it must be a single element
+  // No comma: zero or one element
   if (json.find(delimiter) == std::string::npos) {
     if (!json.empty()) {
-      vec.push_back(json);  // Single element case
+      vec.push_back(json);
     }
     return vec;
   }
 
-  // Handle multiple elements in the array
+  // Split on commas
   while ((pos = json.find(delimiter)) != std::string::npos) {
     token = json.substr(0, pos);
-    token = trim(token);  // Trim each token
+    token = trim(token);
     vec.push_back(token);
     json.erase(0, pos + delimiter.length());
   }
 
-  // If there's a last remaining token, add it to the vector
+  // The last element has no trailing comma
   if (!json.empty()) {
     json = trim(json);
     vec.push_back(json);

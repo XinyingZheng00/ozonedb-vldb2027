@@ -20,24 +20,21 @@ enum class Status { kSuccess,
                     kSealed,
                     kNotFound };
 
-// Signalled by shared-log backends (e.g. Corfu) when a *remote* writer
-// appends/removes a file entry. Lets the LogHandler maintain a key
-// index that stays correct under multi-writer semantics without
-// requiring every reader to fence against the shared log.
+// A shared-log backend signals a remote writer's APPEND or REMOVE of a
+// file entry. The LogHandler uses it to keep its key index current.
 enum class RemoteOp { kAppend,
                       kRemove };
-// `addr` is the entry's position in the backend's global order (the
-// Corfu global address). It ranks the records the payload carries, so a
-// peer entry that the tailer delivers late cannot overwrite a newer
-// record in LogKeyIndex. Backends with no global order pass -1.
+// addr is the entry's position in the backend's global order (the Corfu
+// global address). It ranks the records in the payload for LogKeyIndex.
+// Backends with no global order pass -1.
 using RemoteAppendListener =
     std::function<void(std::string const& file_name,
                        unsigned char const* data, size_t len, RemoteOp op,
                        long addr)>;
 
 /**
- * @brief Base class for all the storage classes
- *
+ * @brief Base class of all storage backends. Base methods throw for
+ * operations a backend does not override.
  */
 class Storage {
  protected:
@@ -50,23 +47,22 @@ class Storage {
   virtual ~Storage() = default;
 
   /**
-   * @brief Create Directory
+   * @brief Create a directory.
    *
    * @param name
    */
   virtual void createDirectory(std::string name) { throw std::runtime_error("createDirectory() is not implemented"); };
 
   /**
-   * @brief Append a record to the storage unit
+   * @brief Append bytes to a file.
    *
-   * @param record
    * @return Status
    */
   virtual Status append(std::string const& fileName, unsigned char* const& data, int length) { throw std::runtime_error("append is not implemented"); };
   virtual Status appendNoFlush(std::string const& fileName, unsigned char* const& data, int length) { throw std::runtime_error("appendNoFlush is not implemented"); };
   virtual Status appendInBatch(std::string const& fileName, unsigned char* const& data, int length) { throw std::runtime_error("appendInBatch is not implemented"); };
   /**
-   * @brief Flush the file
+   * @brief Flush a file.
    *
    * @param fileName
    * @return Status
@@ -74,93 +70,81 @@ class Storage {
   virtual Status flush(std::string const& fileName) { throw std::runtime_error("flush is not implemented"); };
 
   /**
-   * @brief Read all bytes from the storage unit
+   * @brief Read all bytes of a file.
    *
-   * @param records the results will be stored in this vector
+   * @param data output buffer, owned by the caller
+   * @param size output byte count
    * @return Status
    */
   virtual Status read(std::string const& fileName, unsigned char*& data, size_t& size) { throw std::runtime_error("read() is not implemented"); };
 
   /**
-   * @brief Read all bytes from the file position a, read length bytes.
-   *
+   * @brief Read length bytes from position a of a file.
    */
   virtual Status read(std::string const& fileName, unsigned char*& data, size_t a, size_t length) { throw std::runtime_error("read() is not implemented"); };
 
   /**
-   * @brief Return the size of the storage unit
-   *
-   * @return size_t
+   * @brief Return the size of a file in bytes.
    */
   virtual size_t size(std::string fileName) { throw std::runtime_error("size() is not implemented"); };
 
   /**
-   * @brief Make the storage unit readonly, seal is idempotent
-   *
+   * @brief Make a file read-only. Idempotent.
    */
   virtual void seal(std::string fileName) { throw std::runtime_error("seal() is not implemented"); };
 
   /**
-   * @brief Check whether the unit is sealed
-   *
+   * @brief Return true when the file is sealed.
    */
   virtual bool isSealed(std::string fileName) { throw std::runtime_error("isSealed() is not implemented"); };
 
   /**
-   * @brief Delete the storage unit
-   *
+   * @brief Delete a file.
    */
   virtual void remove(std::string fileName) { throw std::runtime_error("remove() is not implemented"); };
 
   /**
-   * @brief Check whether the unit is exist
-   *
+   * @brief Return true when the file exists.
    */
   virtual bool exist(std::string fileName) { throw std::runtime_error("exist() is not implemented"); };
 
   /**
-   * @brief Register a callback for remote (peer-writer) appends and
-   * removes. Default no-op — only shared-log backends like CorfuDB
-   * override. Should be called once before reads begin.
+   * @brief Register the callback for remote APPENDs and REMOVEs.
+   * Default no-op. Only shared-log backends override it. Call once
+   * before reads start.
    */
   virtual void setRemoteAppendListener(RemoteAppendListener /*listener*/) {}
 
   /**
    * @brief Global-order position of this thread's last successful append.
    *
-   * Valid only immediately after an append/appendInBatch/flush on the
-   * same thread returned kSuccess. Lets a caller rank the record it just
-   * wrote against records the tailer delivers later — without it, the
-   * local writer has no way to say which of two copies of a key is
-   * newer. Returns -1 on backends with no global order.
+   * Valid only directly after an append, appendInBatch or flush on the
+   * same thread returned kSuccess. Returns -1 on backends with no global
+   * order.
    */
   virtual long lastAppendAddressForThread() const { return -1; }
 
   /**
-   * @brief Establish a linearization fence for the CALLING THREAD.
+   * @brief Take a linearization fence for the calling thread.
    *
-   * On shared-log backends this samples the log's global tail once,
-   * waits for local state to cover it, and records a thread-local
-   * fence token; until clearSync(), every read/size/exist/isSealed on
-   * this thread reuses the token instead of re-fencing (their answers
-   * are then served from already-synced local state). Default no-op:
-   * on direct backends (local FS, S3) reads hit the backing
-   * store, which is always "synced".
+   * On a shared-log backend this samples the global tail once, waits for
+   * the tailer to cover it, and records a thread-local fence token. Until
+   * clearSync(), every read, size, exist and isSealed on this thread
+   * reuses the token. Default no-op: direct backends (local FS, S3) are
+   * always synced.
    *
-   * Token scope is one logical operation (a strict DB::get). Always
-   * clear via SyncScope — a leaked token would silently unfence later
-   * operations on the same thread.
+   * Clear the token with SyncScope. A leaked token pins later operations
+   * on this thread to a stale fence.
    */
   virtual void sync() {}
   virtual void clearSync() {}
-  // True when the CALLING THREAD holds a live sync() token for this
-  // storage. Lets DB::get reuse a caller-established fence (batch
-  // strict reads: one fence amortized over many gets, each linearized
-  // at the caller's sync() point) instead of stacking its own.
+  // True when the calling thread holds a live sync() token for this
+  // storage. DB::get then reuses the caller's fence (DB::sync) and takes
+  // none of its own.
   virtual bool hasSyncToken() const { return false; }
 
-  // RAII for the sync() token: clears it on scope exit so early
-  // returns and exceptions in the caller can't leak the fence.
+  // RAII for the sync() token: clears it on scope exit, also on early
+  // return or exception.
   class SyncScope {
    public:
     explicit SyncScope(Storage& storage) : storage_(storage) { storage_.sync(); }
@@ -184,22 +168,21 @@ class Storage {
 
  private:
   /**
-   * @brief move the pointer to the position in the file
+   * @brief Move the stream to position.
    *
-   * @param fileName
+   * @param file
    * @param position
    */
   virtual void seek(std::ifstream& file, int position) { throw std::runtime_error("seek() is not implemented"); };
 };
 
 /**
- * @brief FileStorage class for storage
- *
+ * @brief Local file system backend.
  */
 class FileStorage : public Storage {
  public:
   explicit FileStorage(std::string path) : Storage(path) {
-    // if the directory does not exist, create it
+    // Create the directory if it does not exist.
     if (!std::filesystem::exists(path)) {
       if (!std::filesystem::create_directories(path)) {
         if (std::filesystem::exists(path)) {
@@ -223,47 +206,36 @@ class FileStorage : public Storage {
   };
 
   void createDirectory(std::string name);
-  Status append(std::string const& fileName, unsigned char* const& data, int length);         // Method to append bytes to the file
-  Status appendNoFlush(std::string const& fileName, unsigned char* const& data, int length);  // Method to append bytes to the file without flushing, this is only used for sstable writing
+  Status append(std::string const& fileName, unsigned char* const& data, int length);         // Append bytes to the file.
+  Status appendNoFlush(std::string const& fileName, unsigned char* const& data, int length);  // Append without a flush. Only the SSTable writer uses it.
   Status appendInBatch(std::string const& fileName, unsigned char* const& data, int length) {
     return append(fileName, data, length);
   };
-  Status flush(std::string const& fileName);                                                // Method to flush the file
-  Status read(std::string const& fileName, unsigned char*& data, size_t& size);             // Method to read the all bytes from the file
-  Status read(std::string const& fileName, unsigned char*& data, size_t a, size_t length);  // Read all bytes from the file position a, read length bytes.
-  size_t size(std::string fileName);                                                        // Method to get the size of the file
-  void seal(std::string fileName);                                                          // Seal the file
-  bool isSealed(std::string fileName);                                                      // Check whether the file is sealed
-  void remove(std::string fileName);                                                        // Delete the file
-  bool exist(std::string fileName);                                                         // Check whether the file exists
+  Status flush(std::string const& fileName);                                                // Flush the file.
+  Status read(std::string const& fileName, unsigned char*& data, size_t& size);             // Read all bytes of the file.
+  Status read(std::string const& fileName, unsigned char*& data, size_t a, size_t length);  // Read length bytes from position a.
+  size_t size(std::string fileName);                                                        // Size of the file in bytes.
+  void seal(std::string fileName);                                                          // Seal the file.
+  bool isSealed(std::string fileName);                                                      // True when the file is sealed.
+  void remove(std::string fileName);                                                        // Delete the file.
+  bool exist(std::string fileName);                                                         // True when the file exists.
  private:
-  void seek(std::ifstream& file, int position);  // Move the pointer to the position in the file
+  void seek(std::ifstream& file, int position);  // Move the stream to position.
   std::unordered_map<std::string, std::unique_ptr<std::ifstream>> read_streams;
   std::unordered_map<std::string, std::unique_ptr<std::ofstream>> write_streams;
   std::shared_mutex read_mtx;
   std::shared_mutex write_mtx;
 
-  // Serializes writes to one file's ofstream.
-  //
-  // getWriteStream hands the SAME ofstream to every caller for a given
-  // name, and one append is a write + flush + fsync. Two threads
-  // appending concurrently interleave their bytes inside that stream, so
-  // metadata.log ends up with two half-records spliced together and is
-  // corrupt on disk, permanently.
-  //
-  // The lock belongs here, in the backend, not in MetadataLogHandler: the
-  // contract is that the storage layer owns its own concurrency (which
-  // CorfuDBStorage does), and every caller of append/appendNoFlush/flush
-  // benefits, not just the metadata log.
+  // One mutex per file serializes appends. getWriteStream hands the same
+  // ofstream to every caller, and an append is write + flush + fsync, so
+  // concurrent appends would interleave bytes. The storage layer owns
+  // its own concurrency.
   std::mutex append_map_mtx_;
   std::unordered_map<std::string, std::unique_ptr<std::mutex>> append_mtx_;
   std::mutex& appendMutexFor(std::string const& name);
-  // Same for reads: getReadStream hands the SAME ifstream to every caller
-  // for a given name, and a read is a seek + read on it. The YCSB thread
-  // probing an SSTable's blocks and the compaction thread reading the
-  // same SSTable as an input interleaved their seeks, each got the
-  // other's bytes, and the parse failures ended in readFilterBlock
-  // indexing an empty vector. read_mtx above only guards the map.
+  // One mutex per file serializes reads: getReadStream hands the same
+  // ifstream to every caller, and a read is seek + read. read_mtx above
+  // guards only the map.
   std::mutex read_map_mtx_;
   std::unordered_map<std::string, std::unique_ptr<std::mutex>> read_file_mtx_;
   std::mutex& readMutexFor(std::string const& name);

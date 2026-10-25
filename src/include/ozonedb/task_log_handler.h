@@ -8,13 +8,12 @@
 #include <unordered_map>
 
 /*
-In the very basic case, we can proof, the compaction is performed at most f times
-with (f-1) failure in the system.
+With f-1 writer failures, a compaction runs at most f times.
 */
 
 namespace ozonedb {
 
-// Define a custom hash function for TaskIdentifier
+// Hash of a TaskIdentifier over its input files.
 struct TaskIdentifierHash {
   std::size_t operator()(TaskRecord::TaskIdentifier const& task_id) const {
     std::size_t seed = 0;
@@ -25,20 +24,19 @@ struct TaskIdentifierHash {
   }
 };
 
-// Define equality operator for TaskIdentifier
+// Two TaskIdentifiers are equal when they list the same input files in the same order.
 struct TaskIdentifierEqual {
   bool operator()(TaskRecord::TaskIdentifier const& lhs, TaskRecord::TaskIdentifier const& rhs) const {
-    // Compare the repeated fields of input_files
     if (lhs.input_files_size() != rhs.input_files_size()) {
-      return false;  // Different sizes mean they are not equal
+      return false;
     }
 
     for (int i = 0; i < lhs.input_files_size(); ++i) {
       if (lhs.input_files(i) != rhs.input_files(i)) {
-        return false;  // Found a mismatch in elements
+        return false;
       }
     }
-    return true;  // All elements matched
+    return true;
   }
 };
 
@@ -52,22 +50,19 @@ class TaskLogHandler {
 
  private:
   // Bytes of task.log already replayed into task_map. Guarded by
-  // task_log_mutex; see readTaskLog for why the I/O itself is not.
+  // task_log_mutex. readTaskLog runs its I/O without the mutex.
   size_t offset;
   std::string active_unit;
   Storage* storage = nullptr;
-  // When rollForwardTaskLog last ran; rollForwardTaskLogIfDue paces on it.
-  // Both are called from the compaction thread only.
+  // Time of the last rollForwardTaskLog. Only the compaction thread uses it.
   std::chrono::steady_clock::time_point last_rollforward_{};
 
   std::unordered_map<TaskRecord::TaskIdentifier, TaskStatus, TaskIdentifierHash, TaskIdentifierEqual> task_map;
   std::shared_mutex task_map_mutex;
 
-  std::unordered_map<TaskRecord::TaskIdentifier, int, TaskIdentifierHash, TaskIdentifierEqual> dead_tasks;  // the value here is used to store the owner generation
-  // In 100 ms ticks (updateHeartbeats). Set from Metadata's
-  // task_heartbeat_threshold_ticks by DB::DB; the default matches it. The
-  // original literal was 10,000,000 (11.6 days), which left the dead-task
-  // path unreachable.
+  std::unordered_map<TaskRecord::TaskIdentifier, int, TaskIdentifierHash, TaskIdentifierEqual> dead_tasks;  // value: owner generation of the dead claim
+  // Ticks of 100 ms without a heartbeat before a claim is dead. DB::DB sets
+  // it from task_heartbeat_threshold_ticks; the default matches.
   int task_heartbeat_threshold = 30;
   std::shared_mutex dead_tasks_mutex;
   std::shared_mutex task_log_mutex;
@@ -93,21 +88,18 @@ class TaskLogHandler {
     stopHeartbeatThread();
   };
 
-  // Replay every record appended since the last replay, then mark as dead
-  // every task whose tick count reached the threshold. Replaying a task's
-  // own heartbeats is what resets its count, so this is the only place
-  // dead tasks are discovered, and it has to run periodically, not only
-  // when this writer attempts a claim.
+  // Replay every record appended since the last replay. Then mark dead
+  // every task whose tick count reached the threshold. A replayed heartbeat
+  // resets its task's count, so this is the only place dead tasks are found.
+  // It must run periodically, not only when this writer attempts a claim.
   void rollForwardTaskLog();
   // rollForwardTaskLog, at most once per third of the threshold. The
-  // compaction thread calls it on every pick: a replay is cheap on a local
-  // file and two fenced calls on Corfu, and a live task's count is reset
-  // by each replay, so this interval keeps it under a third of the
-  // threshold plus the replay latency.
+  // compaction thread calls it on every pick. On Corfu a replay is two
+  // fenced calls, so the replay is paced.
   void rollForwardTaskLogIfDue();
 
-  // Ticks without a heartbeat after which a task counts as dead. Call
-  // before the first rollForwardTaskLog.
+  // Ticks without a heartbeat after which a task is dead. Call before the
+  // first rollForwardTaskLog.
   void setHeartbeatThreshold(int ticks) { this->task_heartbeat_threshold = ticks; }
   int heartbeatThreshold() const { return this->task_heartbeat_threshold; }
 

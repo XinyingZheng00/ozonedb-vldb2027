@@ -9,12 +9,10 @@
 
 namespace ozonedb {
 
-// See doc/table_format.md for an explanation of the filter block format.
-
-// Generate new filter every 2KB of data
+// One filter per kFilterBase (2 KB) of data block offset.
 /*
-If block size < kFilterBase, multiple blocks will share the same filter.
-If block size > kFilterBase, each block will have its own filter and an empty filter will be added to the block.
+Blocks smaller than kFilterBase share one filter.
+A block larger than kFilterBase gets its own filter; the ranges it spans get empty filters.
 */
 static const size_t kFilterBaseLg = 11;
 static const size_t kFilterBase = 1 << kFilterBaseLg;
@@ -50,7 +48,7 @@ void FilterBlockBuilder::generateFilter() {
     return;
   }
 
-  // Generate filter for current set of keys and append to result_.
+  // Build a filter over the pending keys and append it.
   std::string filter;
   policy_->createFilter(tmp_keys_.data(), static_cast<int>(num_keys), &filter);
   block_.add_filters(filter);
@@ -66,11 +64,7 @@ bool filterBlockReader::keyMayMatch(uint64_t block_offset, std::string const& ke
   uint64_t index = block_offset >> block_->lg_base();
   if (index < block_->filters_size()) {
     // Borrow the filter bytes; never copy them. The file-level filter
-    // (Table::open -> readFileFilter) is one bloom filter over every key
-    // of the file, ~10 bits per key: 712 KB for a 570 MB SSTable, and
-    // Table::get probes it for every candidate file of every get. A copy
-    // here was an mmap + memcpy + munmap per probe, ~6 ms of client CPU
-    // per get at 100 GB.
+    // covers every key of the file and is probed on every get.
     std::string const& filter = block_->filters(index);
     return policy_->keyMayMatch(key, filter);
   }
@@ -81,8 +75,7 @@ Status readFilterBlock(Storage* storage,
                        std::string const& fileName,
                        BlockIdentifier const& identifier,
                        FilterBlock*& result) {
-  // Read the block contents
-  // See table_builder.cc for the code that built this structure.
+  // Read and parse the filter block; TableBuilder::finish wrote it.
   size_t n = identifier.length();
   unsigned char* block_data_contents = nullptr;
   Status status = storage->read(fileName, block_data_contents, identifier.offset(), n);
@@ -95,9 +88,8 @@ Status readFilterBlock(Storage* storage,
   });
   delete[] block_data_contents;
   block_data_contents = nullptr;
-  // A failed or empty parse used to index block_data[0] regardless and
-  // crash the reader; report it instead, the caller treats the file as
-  // having no usable filter.
+  // A failed or empty parse is an error; the caller treats the file as
+  // having no filter.
   if (status != Status::kSuccess || block_data.empty()) {
     for (auto* m : block_data) delete m;
     result = nullptr;

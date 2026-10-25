@@ -7,11 +7,10 @@
 namespace ozonedb {
 
 Status SSTableHandler::readRecordFromAllLevel(std::string const& key, std::shared_ptr<Record>& record, std::string const& offset) {
-  // sstable prefix is level prefix + number
+  // A level prefix is sstable_prefix + level number.
 
-  // latest_view aliases into the caller's View snapshot, which is null
-  // until MetadataLogHandler publishes the first one. lru_cache is set
-  // separately from construction. Neither is guaranteed here.
+  // latest_view is null until the first View is published.
+  // lru_cache is set after construction.
   if (this->latest_view == nullptr || this->lru_cache == nullptr) {
     return Status::kFailure;
   }
@@ -20,10 +19,8 @@ Status SSTableHandler::readRecordFromAllLevel(std::string const& key, std::share
     OZONEDB_PROFILE_SCOPE(profile_level, read_profile::level_ns[std::min(i, read_profile::kMaxLevels - 1)]);
     std::string prefix = this->sstable_prefix + std::to_string(i);
 
-    // Reference into the view snapshot — avoids a per-level deque
-    // copy on every get. Valid for the duration of DB::get (the
-    // caller holds the shared_ptr<View const> until the frame
-    // returns).
+    // tables aliases the View snapshot; the caller holds the snapshot
+    // until DB::get returns. Do not copy it.
     std::deque<std::string> const& tables = this->latest_view->getWithPrefix(prefix);
     std::shared_mutex record_mutex;
     int finished_threads = 0;
@@ -41,10 +38,8 @@ Status SSTableHandler::readRecordFromAllLevel(std::string const& key, std::share
       }
       Table* table = nullptr;
       this->lru_cache->getSSTable(file_name, table);
-      // getSSTable hands back null on three paths: Table::open failed,
-      // it threw, or we were a single-flight follower whose leader
-      // failed. Skip the file rather than dereferencing null — another
-      // level may still hold the key.
+      // getSSTable returns null when Table::open failed or threw, or when
+      // the single-flight leader failed. Skip the file.
       if (table == nullptr) continue;
       OZONEDB_PROFILE_COUNT(read_profile::level_table_gets[std::min(i, read_profile::kMaxLevels - 1)]);
       Status status = table->get(key, record);
@@ -52,61 +47,11 @@ Status SSTableHandler::readRecordFromAllLevel(std::string const& key, std::share
         OZONEDB_PROFILE_COUNT(read_profile::level_hits[std::min(i, read_profile::kMaxLevels - 1)]);
         return Status::kSuccess;
       }
-      /*
-      // currently, we don't need to use multi-thread to read the blocks from the sstable
-      std::shared_mutex& file_mutex = this->lru_cache->getMutexForFile(file_name);
-      std::unique_lock file_lock(file_mutex);
-      Table* table = nullptr;
-      this->lru_cache->getSSTable(file_name, table);
-      std::string identifier_value;
-      table->getBlockPosition(key, identifier_value);
-      if (identifier_value.empty()) {
-        continue;
-      }
-      bool read_more = true;
-      this->lru_cache->needReadBlock(file_name, read_more, identifier_value);
-      if (read_more) {
-        std::cout << __FILE__ << ":" << __LINE__ << std::endl;
-        count++;
-        thread_pool->enqueue([this, file_name, identifier_value, key, j,
-                              &record_file, &record, &record_mutex, &cv, &cv_mutex, &finished_threads]() {
-          this->lru_cache->readDataBlocks(file_name, identifier_value);
-          Record* record_tmp = nullptr;
-          this->lru_cache->get(file_name, key, record_tmp, identifier_value);
-          if (record_tmp) {
-            std::unique_lock<std::shared_mutex> lock(record_mutex);
-            if (j >= record_file) {
-              record = record_tmp;
-              record_file = j;
-            }
-          }
-          {
-            std::lock_guard<std::mutex> lock(cv_mutex);
-            finished_threads++;
-          }
-          cv.notify_one();
-        });
-      } else {
-        Record* record_tmp = nullptr;
-        this->lru_cache->get(file_name, key, record_tmp, identifier_value);
-        if (record_tmp) {
-          std::unique_lock<std::shared_mutex> lock(record_mutex);
-          if (j >= record_file) {
-            record = record_tmp;
-            record_file = j;
-          }
-          goto outer;
-        }
-      }*/
       if (offset == file_name) {
         goto outer;
       }
     }
   outer:
-    // {
-    //   std::unique_lock<std::mutex> lock(cv_mutex);
-    //   cv.wait(lock, [&finished_threads, count] { return finished_threads == count; });
-    // }
     if (record) {
       return Status::kSuccess;
     }

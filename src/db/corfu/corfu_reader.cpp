@@ -90,8 +90,8 @@ int Reader::deliver(int max_entries, CorfuClient::EntrySink const& sink, bool& h
       continue;
     }
     if (addr > next_) {
-      // The server skipped an address we asked for. Treat the gap as
-      // EMPTY at next_ and let settleEmpty decide.
+      // The server skipped a requested address. Treat the gap as EMPTY
+      // at next_ and let settleEmpty decide.
       hit_empty = true;
       return delivered;
     }
@@ -105,9 +105,8 @@ int Reader::deliver(int max_entries, CorfuClient::EntrySink const& sink, bool& h
     }
     switch (ld.type) {
       case DataType::kTrimmed:
-        // The cursor is below the trim mark. Do not advance: hand over
-        // what was delivered, and the next call reports kTrimmed (-1
-        // when nothing was delivered by this call).
+        // The cursor is below the trim mark. Do not advance. Hand over
+        // what was delivered; return -1 when this call delivered nothing.
         return delivered == 0 ? -1 : delivered;
       case DataType::kEmpty:
         hit_empty = true;
@@ -142,9 +141,9 @@ int Reader::deliver(int max_entries, CorfuClient::EntrySink const& sink, bool& h
 }
 
 Poll Reader::settleEmpty() {
-  // AddressSpaceView with waitForHole: re-read with backoff up to the
-  // hole-fill timeout, then write a HOLE. An OverwriteException means
-  // the writer landed first: re-read.
+  // Re-read with backoff up to the hole-fill timeout, then write a HOLE
+  // (AddressSpaceView with waitForHole). An overwrite error means the
+  // writer landed first: re-read.
   auto const deadline = std::chrono::steady_clock::now() +
                         std::chrono::milliseconds(options_.hole_fill_timeout_ms);
   int backoff_ms = 1;
@@ -229,8 +228,8 @@ Poll Reader::pollBatch(int timeout_ms, int max_entries, CorfuClient::EntrySink c
       }
       if (delivered_total >= max_entries) return Poll::kEntries;
       if (hit_empty) {
-        // Never pad: hand over what we have and settle the hole on the
-        // next call.
+        // Never pad: hand over what was delivered and settle the hole on
+        // the next call.
         if (delivered_total > 0) return Poll::kEntries;
         Poll s = settleEmpty();
         if (s != Poll::kEntries) return s;

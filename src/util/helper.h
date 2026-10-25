@@ -3,26 +3,24 @@
 #ifndef OZONEDB_HELPER_H
 #define OZONEDB_HELPER_H
 
-// helper function : get prefix of a string, the filename string is always in the format of prefix/suffix, the prefix may contain /
+// Prefix of a file name of the form prefix/suffix; "" if no match.
 std::string getPrefix(std::string const& filename);
 
-// helper function : get suffix of a string, the filename string is always in the format of prefix/number
+// Suffix of a file name of the form prefix/suffix; "" if no match.
 std::string getSuffix(std::string const& filename);
 
-// helper function : get the number in the end of a string, the filename string is always in the format of prefixnumber
+// Trailing number of a string; -1 if none.
 int getNumberInTheEnd(std::string const& filename);
 
 int getSSTLayerNumber(std::string const& filename);
-// Function to generate a client-specific fingerprint
+// Per-process fingerprint: a random UUID followed by a timestamp.
 std::string generateFingerprint();
 
 int getNumberBeforeUnderscore(std::string const& filename);
 
-// Stable, cross-peer compaction task identifier. Two peers that observe the
-// same compaction (same input file set + same destination level + same
-// in-last-level flag) produce identical strings. Used by the
-// [COMPACTION_NEEDED] / [COMPACTION_COMMITTED] log lines so a benchmark
-// harness can join "needed" and "committed" events across writer processes.
+// Stable compaction task identifier: the same input files, destination
+// level and in-last-level flag give the same string on every peer.
+// Used by the [COMPACTION_NEEDED] and [COMPACTION_COMMITTED] log lines.
 std::string formatTaskId(std::vector<std::string> const& input_files,
                          int dest_level, bool in_last_level);
 #endif

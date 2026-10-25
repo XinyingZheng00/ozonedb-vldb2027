@@ -1,12 +1,11 @@
 #ifndef OZONEDB_CORFU_CODEC_H
 #define OZONEDB_CORFU_CODEC_H
 #ifdef OZONEDB_ENABLE_CORFU
-// Byte-level codecs of the Corfu protocol that are NOT protobuf: UUIDs,
+// Byte-level codecs of the Corfu protocol that are not protobuf: UUIDs,
 // the stream id derivation, and the LogData entry format inside
-// LogDataMsg.entry. Every layout here is what the Java runtime writes
-// (LogData.java doSerializeInternal, CorfuProtocolCommon.serialize,
-// IMetadata.LogUnitMetadataType), so an entry the native client writes
-// is readable by the Java runtime and the reverse.
+// LogDataMsg.entry. Every layout matches what the Java runtime writes
+// (LogData.java, CorfuProtocolCommon, IMetadata.LogUnitMetadataType), so
+// the Java runtime and this client can read each other's entries.
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -32,9 +31,8 @@ struct Uuid {
   static bool parse(std::string_view text, Uuid& out);
 };
 
-// The stream id of a stream name: java.util.UUID.nameUUIDFromBytes, i.e.
-// MD5 of the name bytes with the version bits set to 3 and the variant
-// bits to 10 (CorfuRuntime.getStreamID).
+// The stream id of a stream name (CorfuRuntime.getStreamID): MD5 of the
+// name bytes with version 3 and variant 10, as java.util.UUID.nameUUIDFromBytes.
 Uuid streamIdOf(std::string_view name);
 // A random (version 4) UUID.
 Uuid randomUuid();
@@ -71,12 +69,12 @@ constexpr int32_t kCodecLz4 = 1;
 constexpr int32_t kCodecZstd = 2;
 
 // One decoded LogData. `payload` aliases the buffer given to
-// decodeLogData: the caller keeps that buffer alive while it reads.
+// decodeLogData; keep that buffer alive while reading payload.
 struct LogData {
   DataType type = DataType::kEmpty;
   // DATA only. corfu_payload is true when the serializer magic was 0x42
-  // (an SMR LogEntry, never written by OzoneDB); payload then holds the
-  // bytes after the magic, whatever they are.
+  // (an SMR LogEntry, which OzoneDB never writes); payload then holds
+  // the bytes after the magic.
   bool has_payload = false;
   bool corfu_payload = false;
   std::string_view payload;
@@ -104,15 +102,14 @@ struct LogData {
 // and dropped.
 bool decodeLogData(std::string_view bytes, LogData& out, std::string& err);
 
-// Encode a LogData the way Java does: type byte, then for DATA the
-// int32 length + 0x00 magic + payload (compression is never applied:
-// the writer sets codec NONE), then the metadata count and each present
-// field in id order.
+// Encode a LogData as Java does: type byte, then for DATA the int32
+// length + 0x00 magic + payload (codec NONE, never compressed), then
+// the metadata count and each present field in id order.
 std::string encodeLogData(LogData const& in);
 
-// A DATA entry as the native writer emits it: BACKPOINTER_MAP,
-// GLOBAL_ADDRESS, CLIENT_ID, EPOCH, PAYLOAD_CODEC = NONE. That is the
-// metadata set of a Java-runtime entry minus THREAD_ID.
+// A DATA entry as this client writes it: BACKPOINTER_MAP, GLOBAL_ADDRESS,
+// CLIENT_ID, EPOCH, PAYLOAD_CODEC = NONE. A Java-runtime entry also
+// carries THREAD_ID.
 std::string encodeDataEntry(std::string_view payload,
                             std::vector<std::pair<Uuid, int64_t>> const& backpointers,
                             int64_t global_address, int64_t epoch, Uuid const& client_id);

@@ -10,22 +10,19 @@ unsigned char* serializeMessage(google::protobuf::Message const& message, int& b
   google::protobuf::io::ArrayOutputStream array_output(buffer, buffer_length);
   google::protobuf::io::CodedOutputStream coded_output(&array_output);
 
-  // Serialize the message
+  // Length prefix, then the message
   coded_output.WriteVarint32(size);
   message.SerializeWithCachedSizesToArray(reinterpret_cast<google::protobuf::uint8*>(buffer) + coded_output.ByteCount());
   return buffer;
 }
 
-// Deserilize messages from storage
+// Parse length-prefixed messages from buffer. The caller owns the messages.
 Status deserializeMessages(unsigned char* buffer,
                            size_t bufferSize,
                            std::vector<google::protobuf::Message*>& messages,
                            std::function<google::protobuf::Message*()> const& messageFactory) {
-  // Guard against callers that pass a null buffer with a positive size —
-  // happens when a multi-writer race REMOVE's a log file between
-  // checkReadMoreLog and the actual read, leaving `buffer == nullptr`
-  // while the caller still believes the file has bytes. Without this
-  // check the very first ReadVarint32 dereferences nullptr.
+  // A null buffer with a positive size: a peer removed the file between
+  // the caller's size check and its read.
   if (buffer == nullptr) {
     return bufferSize == 0 ? Status::kSuccess : Status::kFailure;
   }
@@ -34,18 +31,15 @@ Status deserializeMessages(unsigned char* buffer,
   // Deserialize all messages
   while (static_cast<size_t>(coded_input.CurrentPosition()) < bufferSize) {
     uint32_t size = 0;
-    // Bail on a malformed varint instead of using uninitialized `size`
-    // (which would feed a garbage limit into the parser below).
+    // Reject a malformed length prefix.
     if (!coded_input.ReadVarint32(&size)) {
       std::cerr << getpid() << ":Failed to read varint prefix: bufferSize="
                 << bufferSize << " pos=" << coded_input.CurrentPosition()
                 << std::endl;
       return Status::kFailure;
     }
-    // A length-prefixed message must fit in what's left of the buffer.
-    // Without this, a corrupted prefix (e.g. from a partially-written
-    // log) makes PushLimit accept a giant size and MergeFromCodedStream
-    // can read past the buffer end before the parser notices.
+    // The message must fit in the rest of the buffer; a corrupt prefix
+    // must not push the parser past the end.
     size_t remaining =
         bufferSize - static_cast<size_t>(coded_input.CurrentPosition());
     if (size > remaining) {
@@ -59,7 +53,6 @@ Status deserializeMessages(unsigned char* buffer,
     google::protobuf::io::CodedInputStream::Limit limit = coded_input.PushLimit(size);
     google::protobuf::Message* message = messageFactory();
     if (!message->MergeFromCodedStream(&coded_input) || !coded_input.ConsumedEntireMessage()) {
-      // print the name of messageFactory
       std::cerr << getpid() << ":Failed to parse message: " << bufferSize << " " << message->GetDescriptor()->name() << std::endl;
       delete message;
       message = nullptr;

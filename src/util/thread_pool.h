@@ -10,7 +10,7 @@
 #include <thread>
 #include <vector>
 
-// Thread Pool class with task completion tracking
+// Fixed-size thread pool with two priority queues and completion tracking.
 class ThreadPool {
  public:
   enum class Priority { High, Low };
@@ -18,8 +18,8 @@ class ThreadPool {
   ThreadPool(size_t numThreads);
   ~ThreadPool();
   void enqueue(std::function<void()> task, Priority priority = Priority::Low);
-  void waitForCompletion();  // Wait for all tasks to complete
-  void stop();               // Graceful stop function
+  void waitForCompletion();  // Block until no task is running
+  void stop();               // Stop accepting tasks and join the workers
 
  private:
   std::vector<std::thread> workers;
@@ -34,7 +34,7 @@ class ThreadPool {
   std::atomic<size_t> activeTasks;
 };
 
-// Constructor: Create a pool of worker threads
+// Start numThreads workers. A worker takes high-priority tasks first.
 inline ThreadPool::ThreadPool(size_t numThreads) : stopFlag(false), activeTasks(0) {
   for (size_t i = 0; i < numThreads; ++i) {
     workers.emplace_back([this]() {
@@ -75,12 +75,11 @@ inline ThreadPool::ThreadPool(size_t numThreads) : stopFlag(false), activeTasks(
   }
 }
 
-// Destructor
 inline ThreadPool::~ThreadPool() {
   stop();
 }
 
-// Enqueue a task with optional priority
+// Queue a task. Throws after stop().
 inline void ThreadPool::enqueue(std::function<void()> task, Priority priority) {
   {
     std::unique_lock<std::mutex> lock(queueMutex);
@@ -95,13 +94,13 @@ inline void ThreadPool::enqueue(std::function<void()> task, Priority priority) {
   condition.notify_one();
 }
 
-// Wait for all tasks to complete
+// Block until no task is running. Queued tasks not yet started do not count.
 inline void ThreadPool::waitForCompletion() {
   std::unique_lock<std::mutex> lock(taskMutex);
   taskCondition.wait(lock, [this]() { return this->activeTasks == 0; });
 }
 
-// Graceful stop function
+// Set the stop flag and join the workers. Queued tasks still run first.
 inline void ThreadPool::stop() {
   {
     std::unique_lock<std::mutex> lock(queueMutex);

@@ -17,13 +17,13 @@ Status LogHandler::newTail() {
   View view;
   metadata_log->getLatestView(view);
   std::string current_tail = view.current_log_tail;
-  // find the number: current tail is in the format of prefix/number
+  // The tail name has the format prefix/number.
   int log_number;
   if (current_tail.empty()) {
     log_number = 0;
   } else {
     if (view.getFileSize(current_tail) < this->file_size_limit) {
-      // do not create new tail if the current tail is not sealed
+      // The current tail still has room: keep it.
       this->active_unit = current_tail;
       return Status::kSuccess;
     }
@@ -34,16 +34,10 @@ Status LogHandler::newTail() {
   record.set_op_type(OperationRecord::LOGCREATE);
   record.add_input_files(current_tail);
   record.add_output_file(name);
-  // Ship the sealed tail's size so peer rollforward can refresh its
-  // file_size map without calling storage->size(input_file) under
-  // view_mutex. This is the emitter's own UNFENCED view size, so it
-  // undercounts peer records appended just before the seal.
-  //
-  // That makes it usable ONLY as a heuristic (compaction
-  // sizing). It is not a read bound. Readers take the bound for a sealed
-  // log from a fenced storage->size() instead — see LRUCache::sealedLogSize.
-  // Using this number as the read bound is what made those peer records
-  // permanently invisible.
+  // Ship the sealed tail's size so a peer rollforward can fill file_size
+  // without a storage->size() call under view_mutex. This is the writer's
+  // unfenced view size: use it only for compaction sizing, never as a read
+  // bound. Readers use a fenced storage->size() (LRUCache::sealedLogSize).
   if (!current_tail.empty()) {
     record.set_sealed_input_bytes(
         static_cast<int64_t>(view.getFileSize(current_tail)));
@@ -64,26 +58,12 @@ Status LogHandler::addRecord(Record const& record) {
     newTail();
   }
 
-  // ONE append, ONE effect point.
-  //
-  // kSealed is the only retryable status, and it is retryable precisely
-  // because it means no bytes landed: CorfuDBStorage rejects an append
-  // whose global address is above that file's SEAL, and every process
-  // drops such bytes when the tailer applies them. So re-issuing the
-  // record on the new tail cannot duplicate it.
-  //
-  // The old loop rolled the log AFTER a successful append whenever a
-  // post-append view check found the tail full or moved, and then
-  // re-appended the same record. That gave one put two effect points,
-  // and the later copy shadowed a peer's newer write for the same key.
-  // The roll now happens BEFORE the append instead. A record that lands
-  // on a tail a peer seals concurrently stays readable, because a sealed
-  // log is read to its fenced size (LRUCache::checkReadMoreLog).
-  //
-  // Any status other than kSuccess must NOT be acked: the old code
-  // treated a kFailure from appendInBatch as success, cached it, indexed
-  // it, and returned kSuccess, and it also returned kSuccess after
-  // exhausting every retry.
+  // One append, one effect point. kSealed is the only retryable status:
+  // it means no bytes landed, so a retry on the new tail cannot duplicate
+  // the record. The roll happens before the append, never after a success.
+  // A record on a tail a peer seals stays readable, because a sealed log
+  // is read to its fenced size (LRUCache::checkReadMoreLog). Any status
+  // other than kSuccess is not acked.
   constexpr int kMaxRetries = 8;
   std::string final_target;
   std::string last_target;
@@ -91,10 +71,9 @@ Status LogHandler::addRecord(Record const& record) {
   Status status = Status::kFailure;
   for (int attempt = 0; attempt <= kMaxRetries; ++attempt) {
     ++attempts;
-    // Roll before appending when the tail is full or a peer moved it.
-    // newTail() re-checks under its own view and is a no-op when the
-    // current tail still has room. The snapshot is read lock-free —
-    // getLatestView() would deep-copy the whole View on every put.
+    // Roll before the append when the tail is full or a peer moved it.
+    // newTail() re-checks under its own view. Read the snapshot lock-free;
+    // do not deep-copy the View.
     if (this->active_unit.empty()) {
       newTail();
     } else {
@@ -113,14 +92,10 @@ Status LogHandler::addRecord(Record const& record) {
       final_target = target;
       break;
     }
-    if (status != Status::kSealed) break;  // hard failure — do not retry
+    if (status != Status::kSealed) break;  // Hard failure: do not retry.
 
-    // kSealed means a peer (or our own roll) closed this tail. Refresh the
-    // view from the log BEFORE picking the next one: newTail() decides
-    // from metadata_log's view, and on a stale view it re-adopts the very
-    // file we were just refused, so every retry draws the same kSealed and
-    // the put fails after exhausting the budget. Rolling forward makes
-    // current_log_tail the peer's new tail.
+    // kSealed: a peer or our own roll closed this tail. Roll the View
+    // forward before newTail(), or a stale View re-adopts the sealed file.
     metadata_log->rollForwardMetadataLog();
     newTail();
   }
@@ -128,9 +103,7 @@ Status LogHandler::addRecord(Record const& record) {
   delete[] buffer;
   buffer = nullptr;
 
-  // Never cache or index a record the log did not take. A reader that
-  // hit the index would otherwise see a write that no process can read
-  // back from the log.
+  // Never cache or index a record the log did not take.
   if (status != Status::kSuccess || final_target.empty()) {
     std::cerr << "[log] addRecord: append not taken (status="
               << static_cast<int>(status) << " target=" << last_target
@@ -138,17 +111,14 @@ Status LogHandler::addRecord(Record const& record) {
     return Status::kFailure;
   }
 
-  // Push the just-written record into the cache + index so subsequent
-  // readRecord calls short-circuit the fenced multi-file scan. Cache
-  // and index co-own via shared_ptr — readers that lift the pointer
-  // out of the index keep their copy alive even if compaction or a
-  // peer REMOVE invalidates the cache entry concurrently.
+  // Put the record in the cache and the index. Cache and index co-own it
+  // through shared_ptr, so a reader's copy outlives an invalidation.
   if (key_index_) {
     auto clone = std::make_shared<Record>(record);
     cache->putLogRecordSingle(final_target, clone);
-    // Rank by the global address the log just assigned this record, so
-    // a peer record the tailer delivers later cannot displace it unless
-    // it really is newer. Backends with no global order return -1.
+    // Rank by the global address the log assigned. A peer record the
+    // tailer delivers later displaces it only when it is newer. Backends
+    // with no global order return -1.
     LogKeyIndex::Rank rank{this->storage->lastAppendAddressForThread(), 0};
     key_index_->upsert(record.key(), std::move(clone), final_target, rank);
   }
@@ -164,28 +134,22 @@ bool LogHandler::tryIndexLookup(std::string const& key, std::shared_ptr<Record>&
 }
 
 Status LogHandler::readRecord(std::string const& key, std::shared_ptr<Record>& record, std::string const& offset, std::string& latest_offset) {
-  // Fast path: check the in-memory key index first. This skips the
-  // multi-file backward scan (and, on Corfu, the per-file fenced
-  // storage->size() call in checkReadMoreLog). On miss, fall through
-  // to the existing scan and backfill on success. Bypassed entirely in
-  // linearizable mode — see the linearizable_reads_ member comment.
+  // Fast path: probe the key index before the file scan. A miss falls
+  // through to the scan, which backfills the index on a hit. Strict mode
+  // skips the probe (see linearizable_reads_).
   if (key_index_ && !linearizable_reads_) {
     if (auto hit = key_index_->lookup(key)) {
       record = std::move(hit);
       return Status::kSuccess;
     }
-    // Trust-the-tailer mode: skip the synchronous multi-file log scan
-    // (and the fenced storage->size() call it triggers on Corfu). The
-    // index is kept fresh by local addRecord and the tailer's
-    // onRemoteAppend callback, so a miss here is a true log miss and
-    // the DB layer will fall through to SSTables.
+    // With trust_background_tail the index is authoritative: a miss is a
+    // log miss and the DB falls through to the SSTables.
     if (trust_background_tail_) {
       return Status::kFailure;
     }
   }
   auto const& files = this->latest_view->getWithPrefix(this->prefix);
   if (files.empty()) {
-    // std::cout << "No files found with prefix " << this->prefix << std::endl;
     return Status::kFailure;
   }
   std::shared_mutex record_mutex;
@@ -197,24 +161,15 @@ Status LogHandler::readRecord(std::string const& key, std::shared_ptr<Record>& r
   int count = 0;
   for (int i = files.size() - 1; i >= 0; i--) {
     std::string const& file_name = files[i];
-    // if (i == files.size() - 1 && !this->latest_view.current_log_tail.rrent_log_tail != file_name) {
-    //   if (offset == file_name) {
-    //     break;
-    //   }
-    //   continue;  // The latest file may not be created yet
-    // }
-    bool read_more = true;  // not found or the file is tail(not sealed)
+    bool read_more = true;  // Not cached, or the file is the unsealed tail.
     size_t cached_offset = 0;
     size_t size = 0;
     this->cache->checkReadMoreLog(file_name, read_more, cached_offset, size);
     if (read_more) {
       if (linearizable_reads_) {
-        // Strict mode reads inline on the caller thread: the fence
-        // token from DB::get's Storage::sync() is thread-local, so a
-        // pool thread would pay a fresh sequencer fence — and after
-        // the fence the read is a local-memory splice, so parallelism
-        // buys nothing. Sequential newest-first also lets a hit
-        // terminate the scan, like the cached branch below.
+        // Strict mode reads inline on the caller thread: the fence token
+        // is thread-local, and a pool thread would fence again. A hit ends
+        // the newest-first scan.
         this->cache->readDataLog(file_name, cached_offset, size);
         std::shared_ptr<Record> record_tmp;
         cache->getLog(file_name, key, record_tmp);
@@ -265,23 +220,19 @@ Status LogHandler::readRecord(std::string const& key, std::shared_ptr<Record>& r
     }
   }
 
-  // Wait for all threads to finish
+  // Wait for all pool threads.
   {
     std::unique_lock<std::mutex> lock(cv_mutex);
     cv.wait(lock, [&] { return finished_threads == count; });
   }
-  // Update the latest offset for the DB layer cache
+  // Report the newest file as latest_offset.
   if (*files.rbegin() != offset) {
     latest_offset = *files.rbegin();
   }
 
   if (record) {
-    // Backfill the index from the slow-path hit so the next lookup
-    // for this key is O(1). Cache and index co-own via shared_ptr.
-    //
-    // Unranked (addr = -1): a scan result carries no global address, so
-    // it fills an empty or unranked slot but never displaces an entry
-    // that came from a known log position.
+    // Backfill the index from the scan hit. Unranked (addr = -1): the hit
+    // fills an empty or unranked slot but never displaces a ranked entry.
     if (key_index_ && record_file >= 0 &&
         record_file < static_cast<int>(files.size())) {
       key_index_->upsert(key, record, files[record_file]);
@@ -304,8 +255,7 @@ Status LogHandler::warmKeyIndex() {
     }
     std::unordered_map<std::string, std::shared_ptr<Record>> snapshot;
     this->cache->snapshotLogFileRecords(file_name, snapshot);
-    // Iterating files oldest-to-newest means the last write wins, which
-    // matches readRecord's backward-scan semantics (newest file first).
+    // Files go oldest to newest, so the last write wins, as in readRecord.
     for (auto const& kv : snapshot) {
       key_index_->upsert(kv.first, kv.second, file_name);
     }
@@ -324,9 +274,7 @@ void LogHandler::onRemoteAppend(std::string const& file_name,
                                 unsigned char const* data, size_t len,
                                 RemoteOp op, long addr) {
   if (!key_index_) return;
-  // Reject anything outside our log prefix: SSTable writes, other
-  // handlers' log streams, metadata log entries. Cheap O(n) rejection
-  // before we pay to parse the payload.
+  // Ignore files outside the data log prefix before the parse.
   if (file_name.compare(0, prefix.size(), prefix) != 0) return;
 
   if (op == RemoteOp::kRemove) {
@@ -335,20 +283,18 @@ void LogHandler::onRemoteAppend(std::string const& file_name,
     return;
   }
 
-  // APPEND: payload is a sequence of varint-prefixed Record protos
-  // (same format produced by protobuf::serializeMessage in addRecord).
+  // APPEND payload: varint-prefixed Record protos, the format addRecord
+  // writes with protobuf::serializeMessage.
   std::vector<google::protobuf::Message*> messages;
   protobuf::deserializeMessages(const_cast<unsigned char*>(data), len, messages,
                                 []() -> google::protobuf::Message* {
                                   return new Record();
                                 });
-  // One entry can carry many records. They share the entry's global
-  // address, so the position WITHIN the payload breaks the tie: a later
-  // record in the byte stream is the newer one.
+  // Records in one entry share its global address. The position in the
+  // payload breaks the tie: a later record is newer.
   uint32_t sub = 0;
   for (auto* msg : messages) {
-    // Wrap in shared_ptr immediately so we don't have to hand-roll
-    // cleanup if either the cache put or the index upsert throws.
+    // The shared_ptr owns the record from here, also if a put throws.
     std::shared_ptr<Record> rec(static_cast<Record*>(msg));
     auto key = rec->key();
     cache->putLogRecordSingle(file_name, rec);

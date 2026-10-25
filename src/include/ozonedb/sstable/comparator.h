@@ -10,10 +10,8 @@
 
 namespace ozonedb {
 
-// A Comparator object provides a total order across slices that are
-// used as keys in an sstable or a database.  A Comparator implementation
-// must be thread-safe since leveldb may invoke its methods concurrently
-// from multiple threads.
+// A Comparator gives a total order over the strings used as keys.
+// Implementations must be thread-safe: methods run concurrently on many threads.
 class Comparator {
  public:
   virtual ~Comparator();
@@ -24,40 +22,25 @@ class Comparator {
   //   > 0 iff "a" > "b"
   virtual int compare(std::string const& a, std::string const& b) const = 0;
 
-  // The name of the comparator.  Used to check for comparator
-  // mismatches (i.e., a DB created with one comparator is
-  // accessed using a different comparator.
-  //
-  // The client of this package should switch to a new name whenever
-  // the comparator implementation changes in a way that will cause
-  // the relative ordering of any two keys to change.
-  //
-  // Names starting with "leveldb." are reserved and should not be used
-  // by any clients of this package.
+  // Name of the comparator; it detects a DB opened with a different one.
+  // Change the name when the key order changes.
+  // Names that start with "leveldb." are reserved.
   virtual char const* name() const = 0;
 
-  // Advanced functions: these are used to reduce the space requirements
-  // for internal data structures like index blocks.
+  // The next two methods shorten the keys stored in index blocks.
 
-  // If *start < limit, changes *start to a short string in [start,limit).
-  // Simple comparator implementations may return with *start unchanged,
-  // i.e., an implementation of this method that does nothing is correct.
+  // If *start < limit, change *start to a short string in [start, limit).
+  // Leaving *start unchanged is correct.
   virtual void findShortestSeparator(
       std::string* start,
       std::string const& limit) const = 0;
 
-  // Changes *key to a short string >= *key.
-  // Simple comparator implementations may return with *key unchanged,
-  // i.e., an implementation of this method that does nothing is correct.
+  // Change *key to a short string >= *key.
+  // Leaving *key unchanged is correct.
   virtual void findShortSuccessor(std::string* key) const = 0;
-
-  // // If unsure, return 0;
-  // virtual uint64_t KeyNum(const std::string& key) const;
 };
 
-// Return a builtin comparator that uses lexicographic byte-wise
-// ordering.  The result remains the property of this module and
-// must not be deleted.
+// Return a new comparator with lexicographic byte-wise order.
 extern Comparator* newBytewiseComparator();
 
 extern void deleteBytewiseComparator();

@@ -17,8 +17,7 @@ class FileMutexManager;
 class EventListener;
 enum class Mode;
 /**
- * @brief Represent a compaction task.
- *
+ * @brief One compaction task.
  */
 class Compaction {
  public:
@@ -26,19 +25,18 @@ class Compaction {
   TableBuilder* outputBuilder = nullptr;
   bool finished = false;
   // Set when doCompactionWork gives the task up: an injected abort
-  // (compaction_abort_rate) or an unreadable input or output. The heartbeat
-  // thread then exits WITHOUT appending TASK_COMPLETE, so the claim lapses
-  // after the threshold and the task is reclaimed, exactly as if the
-  // writer had died here.
+  // (compaction_abort_rate), an unreadable input, or a failed output write.
+  // The heartbeat thread then exits without TASK_COMPLETE, so the claim
+  // lapses after the threshold and a peer reclaims the task.
   std::atomic<bool> aborted{false};
-  int compaction_version = -1; // this is only used for the last layer compaction
+  int compaction_version = -1; // last-level compactions only
 };
 
 class CompactionWatcher {
  private:
   Metadata* metadata = nullptr;
-  Storage* storage = nullptr;          // log_storage — atomic-append backend
-  Storage* sstable_storage = nullptr;  // sstable_storage — regular object storage
+  Storage* storage = nullptr;          // log_storage: atomic-append backend
+  Storage* sstable_storage = nullptr;  // sstable_storage: object storage for SSTables
   LogHandler* task_handler = nullptr;
   LogHandler* log_handler = nullptr;
   SSTableHandler* sstable_handler = nullptr;
@@ -52,8 +50,7 @@ class CompactionWatcher {
   View latest_view;
   FileMutexManager* file_mutex_manager = nullptr;
   Mode mode;
-  // Draws for compaction_abort_rate. Seeded per process in the
-  // constructor so concurrent writers do not abort the same sequence.
+  // Draws for compaction_abort_rate. Seeded per process in the constructor.
   std::mt19937_64 abort_rng_;
 
   Status watchForCompaction(std::atomic<bool> const* active);
@@ -61,61 +58,37 @@ class CompactionWatcher {
 
  public:
   /**
-   * @brief Construct a new Compaction Watcher object
-   *
-   * @param metadata
-   * @param storage
-   * @param level_handlers
+   * @brief Construct a CompactionWatcher.
    */
   CompactionWatcher(Metadata* metadata, Storage* storage, LogHandler* log_handler, MetadataLogHandler* metadata_handler, SSTableHandler* sstable_handler, std::string fingerprint)
       : metadata(metadata), storage(storage), sstable_storage(storage), log_handler(log_handler), metadata_handler(metadata_handler), sstable_handler(sstable_handler), fingerprint(fingerprint) {
-    // sstable_storage defaults to the same backend as the log layer for
-    // backward compat. setSSTableStorage(...) overrides it after construction
-    // when the config splits SSTable storage off (paper §3.5).
+    // sstable_storage aliases storage until setSSTableStorage overrides it.
     std::seed_seq seed{std::random_device{}(), static_cast<unsigned>(std::hash<std::string>{}(fingerprint))};
     abort_rng_.seed(seed);
   }
   ~CompactionWatcher() {
-    // delete this->compaction_thread;
-    // this->compaction_thread = nullptr;
   }
-  // set event listener
   void setEventListener(EventListener* event_listener) { this->event_listener = event_listener; }
 
-  // set task log handler
   void setTaskLogHandler(TaskLogHandler* task_log_handler) { this->task_log_handler = task_log_handler; }
-  // set the SSTable-only storage backend (paper §3.5 split). When unset
-  // sstable_storage falls back to the same Storage* as the log layer.
+  // SSTable storage backend (paper §3.5). When unset, sstable_storage aliases storage.
   void setSSTableStorage(Storage* s) { this->sstable_storage = s; }
-  // Register the block cache for write-through on compaction output.
-  // When set, every data block written by compaction's TableBuilder is
-  // also inserted into the cache so readers skip the cold S3 GET on
-  // freshly-produced SSTables.
+  // Block cache for write-through of compaction output. The TableBuilder
+  // inserts every data block it writes, so readers skip the cold GET.
   void setLRUCache(LRUCache* cache) { this->lru_cache = cache; }
-  // set file mutex manager
   void setFileMutexManager(FileMutexManager* file_mutex_manager) { this->file_mutex_manager = file_mutex_manager; }
-  // set thread pool
   void setThreadPool(ThreadPool* thread_pool) { this->thread_pool = thread_pool; }
   void setMode(Mode mode) { this->mode = mode; }
 
   Status pickCompaction(Compaction*& compaction, TaskRecord*& task_record, bool& has_worked_on_compaction);
   Status startCompaction(Compaction* compaction, TaskRecord* task_record);
   /**
-   * @brief Start the compaction watcher
-   *
-   * New a thread to continuesly watch for compaction tasks while database is active
-   *
-   * @param active
-   * @return Status
+   * @brief Start a thread that watches for compaction tasks while the database is active.
    */
   Status startCompactionWatcher(std::atomic<bool> const* active);
 
   /**
-   * @brief stop the compaction watcher
-   *
-   * Join the thread that watches for compaction tasks
-   *
-   * @return Status
+   * @brief Join the compaction watcher thread.
    */
   Status stopCompactionWatcher();
 

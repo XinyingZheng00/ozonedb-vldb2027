@@ -25,56 +25,52 @@ namespace ozonedb {
 // A read-through tier for immutable SSTable objects on a local disk, in
 // front of the object store that holds them.
 //
-// Entries are whole files: "<dir>/<name>" is a complete local copy,
-// "<dir>/<name>.part" is a write-through in progress, "<dir>/<name>.fillpart"
-// is a background fill in progress. The fill never touches the write-through's
-// stream or its .part file (and vice versa) so the two populators can never
-// interleave bytes or race a discard/rename into a truncated "complete" file. Only names with `prefix` are
-// cached; everything else passes straight through to the backing store
-// (checkpoint/LATEST is mutable and must never be cached).
+// Only names with `prefix` are cached. Every other name passes through to
+// the backing store (checkpoint/LATEST is mutable and must never be cached).
 //
-// Population: the builder's write-through (append* + flush), a background
-// fill on the first ranged-read miss (chunked ranged reads of the backing),
-// and reconcile() at open. Eviction: LRU by file under capacity_bytes.
-// Invalidation: remove() (this process compacted) and invalidate() (a peer
-// compacted; wired to the COMPACT apply in MetadataLogHandler).
+// Chunk mode (default): one sparse local file per SSTable, one entry per
+// entry_bytes chunk, CLOCK eviction with hole punching. See the private
+// section.
 //
-// A fill that is already in flight may publish a file a peer's COMPACT has
-// just removed from the view. That is deliberate and harmless: SSTable
-// content is immutable and a name is never reused, so the copy is either
-// correct or dead, and a dead one is dropped by the LRU or by the next
-// reconcile() at open. Nothing reads a file the view no longer names.
+// File mode: entries are whole files. "<dir>/<name>" is a complete local
+// copy, "<dir>/<name>.part" a write-through in progress, and
+// "<dir>/<name>.fillpart" a background fill in progress. The fill and the
+// write-through never share a stream or a temp file. Population: the
+// builder's write-through (append* + flush), a background fill on the first
+// ranged-read miss, and reconcile() at open. Eviction: LRU by file under
+// capacity_bytes. Invalidation: remove() (this process compacted) and
+// invalidate() (a peer compacted, wired to the COMPACT apply in
+// MetadataLogHandler).
+//
+// A fill in flight may publish a file a peer's COMPACT has removed from the
+// View. SSTable content is immutable and a name is never reused, so the
+// copy is dead, not wrong. The LRU or the next reconcile() drops it.
 //
 // Lock order and what each mutex covers:
-//   * mtx_        - index_, lru_, current_bytes_ (the budget), and in chunk
-//                   mode chunks_, ring_, the CLOCK hand and present_chunks_.
-//                   Held across an unlink in eviction/erase, and in chunk mode
-//                   across punchHole() (one fallocate syscall, like that
-//                   unlink); never across pwriteLocal(), a backing-store call
-//                   or any other file I/O.
+//   * mtx_        - index_, lru_, current_bytes_ and, in chunk mode,
+//                   chunks_, ring_, the CLOCK hand and present_chunks_.
+//                   Held across an unlink in eviction and erase, and across
+//                   punchHole(); never across pwriteLocal(), a backing-store
+//                   call or other file I/O.
 //   * parts_mtx_  - parts_ (the write-through streams) and poisoned_parts_.
-//                   Deliberately held across the part's create_directories,
-//                   ofstream open, write, flush and remove, because those are
-//                   what serialise two threads on one .part; never held across
-//                   a backing-store call, and never while mtx_ is held (the
-//                   publish path drops it before calling publishPartFile).
-//   * fill_mtx_   - fill_queue_, queued_, the fill_* flags and fill_cv_. Never
-//                   held across the fill's I/O: fillOne() runs unlocked.
+//                   Held across the part's create, open, write, flush and
+//                   remove. Never across a backing-store call, and never
+//                   while mtx_ is held.
+//   * fill_mtx_   - fill_queue_, queued_, the fill_* flags and fill_cv_.
+//                   Never held across the fill's I/O: fillOne() runs
+//                   unlocked.
 //   * fill_lifecycle_mtx_ - serialises startFillWorker/stopFillWorker; held
-//                   across fill_thread_.join(), which is why it is the
-//                   outermost of the four.
+//                   across fill_thread_.join(). The outermost of the four.
 //   * sketch_mtx_ - sketch_ (the TinyLFU counters). A leaf: taken under mtx_
 //                   by mayTakeLocked(), and alone by recordAccess(). Never
-//                   held across any I/O.
-// Order: fill_lifecycle_mtx_ -> fill_mtx_ (start/stop take both, in that
-// order). parts_mtx_ and mtx_ are never nested, in either direction, and
-// neither is ever taken under fill_mtx_. mtx_ -> sketch_mtx_ (leaf).
-// Nothing here takes a cache or view mutex; the DB calls the tier only
+//                   held across I/O.
+// Order: fill_lifecycle_mtx_ -> fill_mtx_. parts_mtx_ and mtx_ are never
+// nested, and neither is taken under fill_mtx_. mtx_ -> sketch_mtx_.
+// Nothing here takes a cache or View mutex; the DB calls the tier only
 // outside view_mutex.
 //
 // The constructor throws std::runtime_error when `dir` cannot be created or
-// is not writable: a tier configured onto an unusable path would otherwise
-// degrade into a pure pass-through that still charges the SSD's cost.
+// is not writable.
 class DiskCacheStorage : public Storage {
  public:
   enum class Admission { kAlways, kFrequency };
@@ -87,8 +83,6 @@ class DiskCacheStorage : public Storage {
     size_t chunk_bytes = 64u << 20;  // file mode only: ranged-read size of the fill worker
     bool drop_pages = true;          // POSIX_FADV_DONTNEED after each tier read
     size_t max_queue = 256;          // fill queue bound; the oldest is dropped
-    // Chunk entries with frequency admission beat whole-file entries with
-    // evict-to-fit at every budget below the dataset size.
     Admission admission = Admission::kFrequency;  // kAlways: evict-to-fit
     uint64_t admit_window = 0;                    // sketch aging window in samples; 0 = 8 x the entries the budget holds
     Mode mode = Mode::kChunk;                     // kFile: whole-SSTable entries with a fill worker
@@ -111,7 +105,7 @@ class DiskCacheStorage : public Storage {
   ~DiskCacheStorage() override;
 
   // Storage. Every method forwards to the backing store; the cacheable ones
-  // also maintain the local copy as documented in the .cpp.
+  // also maintain the local copy.
   void createDirectory(std::string name) override;
   Status append(std::string const& fileName, unsigned char* const& data, int length) override;
   Status appendNoFlush(std::string const& fileName, unsigned char* const& data, int length) override;
@@ -134,9 +128,9 @@ class DiskCacheStorage : public Storage {
   bool cacheable(std::string const& name) const;
   // Drops the local copy (complete or in progress); the object stays.
   void invalidate(std::string const& name);
-  // Scans dir: deletes .part and .fillpart files and complete files for which
-  // live(name, bytes) is false, admits the rest oldest first. Returns the
-  // number deleted.
+  // Scans dir. Deletes .part and .fillpart files, and complete files for
+  // which live(name, bytes) is false. Admits the rest oldest first. Returns
+  // the number deleted.
   size_t reconcile(std::function<bool(std::string const&, size_t)> const& live);
   void startFillWorker();
   void stopFillWorker();
@@ -153,15 +147,14 @@ class DiskCacheStorage : public Storage {
   };
 
   // How a candidate takes budget that is not free.
-  //   kForce    evict until it fits. reconcile(), and every
-  //             path under Admission::kAlways.
-  //   kContest  only if the candidate's sketch frequency is strictly above the
-  //             victim's: fills under Admission::kFrequency.
+  //   kForce    evict until it fits: reconcile(), and every path under
+  //             Admission::kAlways.
+  //   kContest  only if the candidate's sketch frequency is strictly above
+  //             the victim's: fills under Admission::kFrequency.
   //   kFreeOnly never: write-throughs under Admission::kFrequency, because a
-  //             compaction output has no access history to contest with.
-  // Free budget is always taken without a contest. A refusal can be counted
-  // twice when the budget changes between a fill's check and its publish; that
-  // is accepted, not fixed.
+  //             compaction output has no access history.
+  // Free budget is always taken without a contest. A refusal may be counted
+  // twice when the budget changes between a fill's check and its publish.
   enum class AdmitMode { kForce, kContest, kFreeOnly };
   AdmitMode fillMode() const { return options_.admission == Admission::kFrequency ? AdmitMode::kContest : AdmitMode::kForce; }
   AdmitMode writeThroughMode() const { return options_.admission == Admission::kFrequency ? AdmitMode::kFreeOnly : AdmitMode::kForce; }
@@ -170,17 +163,17 @@ class DiskCacheStorage : public Storage {
   // Under mtx_. Decides whether `bytes` more for `key` is allowed under `how`,
   // given `victim` (empty = none). Counts a refusal in admit_rejected_.
   bool mayTakeLocked(std::string const& key, size_t bytes, std::string const& victim, AdmitMode how);
-  // backing_->size() memoised per cacheable name (objects are immutable);
-  // dropped by eraseLocked/invalidate. Used by the fill path only: the public
-  // size() reports the backing size for a file the builder is appending.
+  // backing_->size() memoised per cacheable name; objects are immutable.
+  // Dropped by eraseLocked and invalidate. Fill path only: the public size()
+  // reports the backing size for a file the builder is appending.
   size_t sizeOf(std::string const& name);
 
-  // Chunk mode. One sparse local file per
-  // SSTable under localPath(name); one state byte per chunk. A chunk is
-  // charged chunkBytes() of budget while kPresent or kPending. kPending is a
-  // reservation: the bytes are on their way to the file, so a reader must
-  // not treat the chunk as a hit (a hole reads as zeros), and the CLOCK hand
-  // must not evict it. Only the thread that set kPending clears it.
+  // Chunk mode. One sparse local file per SSTable under localPath(name);
+  // one state byte per chunk. A chunk is charged chunkBytes() of budget
+  // while kPresent or kPending. kPending is a reservation: the bytes are on
+  // their way. A reader must not treat the chunk as a hit (a hole reads as
+  // zeros). The CLOCK hand must not evict it. Only the thread that set
+  // kPending clears it.
   static constexpr uint8_t kPresent = 1, kReferenced = 2, kPending = 4;
   struct ChunkFile {
     size_t size = 0;             // object size
@@ -206,7 +199,7 @@ class DiskCacheStorage : public Storage {
   // also removes the local file.
   void dropChunkFileLocked(std::string const& name, bool unlink, bool count_as_invalidated);
   // Under mtx_, chunk mode. Indexes localPath(name) as a complete file of
-  // `bytes` (every chunk kPresent | kReferenced), taking budget under `how`
+  // `bytes` (every chunk kPresent | kReferenced). Takes budget under `how`
   // chunk by chunk through the CLOCK hand. False (nothing indexed) when refused.
   bool admitWholeFileLocked(std::string const& name, size_t bytes, AdmitMode how);
   bool pwriteLocal(std::string const& name, size_t off, unsigned char const* buf, size_t len);
@@ -214,31 +207,28 @@ class DiskCacheStorage : public Storage {
 
   std::string localPath(std::string const& name) const { return options_.dir + name; }
   std::string partPath(std::string const& name) const { return options_.dir + name + ".part"; }
-  // The fill's own temp file: never shared with parts_/writePart/discardPart,
-  // so a peer invalidate() or a concurrent write-through can't truncate or
-  // interleave into a fill in progress.
+  // The fill's own temp file, never shared with parts_, writePart or
+  // discardPart.
   std::string fillPartPath(std::string const& name) const { return options_.dir + name + ".fillpart"; }
   // Returns true and moves the entry to the LRU front when a complete copy exists.
   bool touch(std::string const& name);
   bool present(std::string const& name);
   // pread of [a, a+length) from the local copy into a new buffer; false on any short read.
   bool readLocal(std::string const& name, unsigned char*& data, size_t a, size_t length);
-  // Appends to the .part stream (opened on first use). A write failure poisons
-  // the name; a poisoned name is skipped, because reopening with trunc would
-  // leave the tail of the file looking like a whole one.
+  // Appends to the .part stream (opened on first use). A write failure
+  // poisons the name, and a poisoned name is skipped. A reopen with trunc
+  // would publish the tail of the file as a whole one.
   void writePart(std::string const& name, unsigned char const* data, size_t length);
-  // Closes the .part, renames it into place and admits it; discards it on any
-  // failure. On a poisoned name it removes the part, clears the poison and
-  // returns false: nothing is published for that name, and the tier is free to
-  // fill the file from the backing later.
+  // Closes the .part, renames it into place and admits it; discards it on
+  // any failure. On a poisoned name it removes the part, clears the poison
+  // and returns false: nothing is published for that name.
   bool publishPart(std::string const& name);
-  // Drops a write-through in progress and poisons the name, so the appends
-  // that follow this discard cannot be published as a complete copy.
+  // Drops a write-through in progress and poisons the name, so later
+  // appends cannot be published as a complete copy.
   void discardPart(std::string const& name);
-  // Shared publish tail for a finished file at `part_path`: verifies its size
-  // (against `expected_size` when nonzero), checks the budget, renames into
-  // place and admits it. False (and the part removed) on any failure,
-  // including the part having vanished or a size mismatch.
+  // Shared publish tail for a finished file at `part_path`. Checks its size
+  // against `expected_size` when nonzero, checks the budget, renames into
+  // place and admits it. False, with the part removed, on any failure.
   bool publishPartFile(std::string const& name, std::string const& part_path, size_t expected_size, AdmitMode how);
   // Under mtx_: evicts until `bytes` fits, then inserts. False when bytes > capacity.
   bool admit(std::string const& name, size_t bytes, AdmitMode how);
@@ -271,9 +261,8 @@ class DiskCacheStorage : public Storage {
   std::unordered_set<std::string> poisoned_parts_;
 
   std::mutex fill_mtx_;
-  // Serialises startFillWorker/stopFillWorker across the join: held for the
-  // whole body of each so two stops can't both pass the fill_started_ guard
-  // and both join() the same thread, and so a start can't race a stop's join.
+  // Serialises startFillWorker/stopFillWorker across the join. Two stops
+  // cannot both join the same thread, and a start cannot race a stop's join.
   std::mutex fill_lifecycle_mtx_;
   std::condition_variable fill_cv_;
   std::deque<std::string> fill_queue_;

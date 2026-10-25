@@ -17,11 +17,9 @@ void TaskLogHandler::appendToTaskLog(TaskRecord const& record) {
   }
   delete[] buffer;
   buffer = nullptr;
-  // [COMPACTION_NEEDED]: emitted only on the durable append of a brand-new
-  // task. Heartbeats use TASK_IN_PROGRESS, completions use TASK_COMPLETE,
-  // and dead-task takeovers use owner_generation > 0 — all excluded.
-  // Logged outside the task_log_mutex so std::cerr never extends the
-  // critical section that heartbeat threads contend on.
+  // [COMPACTION_NEEDED] is logged only for a new task: TASK_BEGIN at
+  // owner_generation 0. Heartbeats, completions and takeovers are excluded.
+  // The log line runs outside task_log_mutex, which heartbeat threads contend on.
   if (record.status() == TaskRecord::TASK_BEGIN &&
       record.owner_generation() == 0) {
     auto wall_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
@@ -40,16 +38,13 @@ void TaskLogHandler::appendToTaskLog(TaskRecord const& record) {
 
 // Reads the records appended since the last read.
 //
-// The fenced exist() and size() calls (on Corfu a sequencer round trip
-// each, then a wait for the tailer) run WITHOUT task_log_mutex.
-// appendToTaskLog takes that mutex for every heartbeat, and a read that
-// held it across a tailer stall silenced this writer's own heartbeats
-// until its peers declared its task dead and took it over. The offset is
-// snapshotted under the mutex, the I/O runs lock-free, and the offset is
-// committed under the mutex only if nobody advanced it meanwhile; a loser
-// drops its records and the caller catches up on its next read. The
-// offset moves only after a successful parse, so a read that fails is
-// retried from the same place instead of skipping records.
+// The fenced exist() and size() calls run without task_log_mutex.
+// appendToTaskLog takes that mutex for every heartbeat, so a stall there
+// would silence this writer's own heartbeats. The offset is snapshotted
+// under the mutex and the I/O runs lock-free. The offset is then committed
+// under the mutex, only if nobody advanced it meanwhile. A loser drops its
+// records; the caller catches up on its next read. The offset moves only
+// after a successful parse, so a failed read retries from the same place.
 Status TaskLogHandler::readTaskLog(std::vector<TaskRecord*>& result) {
   size_t local_offset;
   {
@@ -83,8 +78,8 @@ Status TaskLogHandler::readTaskLog(std::vector<TaskRecord*>& result) {
   {
     std::unique_lock<std::shared_mutex> lock(task_log_mutex);
     if (this->offset != local_offset) {
-      // Another reader advanced the offset while we were doing I/O; its
-      // batch covers ours.
+      // Another reader advanced the offset during the I/O. Its batch
+      // covers this one.
       for (auto* record : records) {
         delete record;
       }
@@ -120,7 +115,7 @@ void TaskLogHandler::rollforwardSingleTask(TaskRecord const& task_record) {
     dead_tasks.erase(task_record.task_id());
     lock.unlock();
   }
-  // update the heartbeat count if the owner is the same
+  // Same owner and generation: reset the tick count or record completion.
   if (task_map[task_record.task_id()].owner == task_record.owner() && task_map[task_record.task_id()].owner_generation == task_record.owner_generation()) {
     if (task_record.status() == TaskRecord::TASK_IN_PROGRESS) {
       task_map[task_record.task_id()].heartbeat = 0;
@@ -163,7 +158,6 @@ void TaskLogHandler::rollForwardTaskLog() {
   task_map_lock.unlock();
   last_rollforward_ = std::chrono::steady_clock::now();
 
-  // delete records
   for (auto* record : records) {
     delete record;
   }

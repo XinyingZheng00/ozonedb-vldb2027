@@ -67,9 +67,9 @@ Rpc::Rpc(CorfuClientOptions const& options, Uuid const& client_id)
   ctl_->open();
   Layout l = fetchLayout(*ctl_);
   applyLayout(l);
-  // In the supported layout the sequencer and the log unit are the node
-  // we connected to. Open the read connection to the log unit's own
-  // endpoint anyway, so a layout that names it differently still works.
+  // In the single-node layout the sequencer and the log unit are the
+  // node ctl connected to. Open the read connection to the log unit's
+  // own endpoint, so a layout that names it differently still works.
   tail_ = std::make_unique<Connection>(l.logUnit(), client_id, transportOptions(options), "tail");
   tail_->open();
   tail_->setEpoch(epoch_);

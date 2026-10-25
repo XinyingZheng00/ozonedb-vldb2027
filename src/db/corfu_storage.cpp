@@ -11,17 +11,12 @@ namespace ozonedb {
 
 namespace {
 constexpr int kPollTimeoutMs = 100;
-// Max entries per pollBatch client round-trip. Bigger amortizes the
-// per-call fixed overhead over more entries, smaller bounds the time we
-// spend out of the running_ check. 256 is a compromise: with a warm Corfu cache
-// (~1 ms/entry) one batch takes ~256 ms worst case; with a cold cache
-// (50-400 ms/entry) the client returns partial batches.
+// Max entries per pollBatch round-trip. Bounds the time the tailer spends
+// out of the running_ check.
 constexpr int kPollBatchSize = 256;
 // Batch size for the open-time replay (drainInitialEntries). Larger than
-// the tailer's: the replay is a bulk read of a log that already exists,
-// nothing waits on per-batch latency, and the per-batch cost is what made
-// the old one-entry-per-call drain take ~43 us per entry — 49 s for a
-// 1 M-entry loaded log.
+// the tailer's: the replay is a bulk read and nothing waits on per-batch
+// latency.
 constexpr int kDrainBatchSize = 4096;
 }  // namespace
 
@@ -39,23 +34,20 @@ CorfuDBStorage::CorfuDBStorage(CorfuClientOptions const& client_options,
   }
   client_ = makeCorfuClient(client_options);
   last_commited_time_ = std::chrono::system_clock::now();
-  // Synchronously bring local state up to the stream tail before returning
-  // so reads issued immediately after construction (e.g. by DB::openDB ->
-  // rollForwardMetadataLog) see prior state: newest checkpoint first when
-  // a store is given, then the entries above it.
+  // Bring local state up to the stream tail before returning, so reads
+  // issued right after construction see prior state: newest checkpoint
+  // first when a store is given, then the entries above it.
   bootstrap(checkpoint_store, checkpoint_dir);
   running_ = true;
   tailer_thread_ = std::thread(&CorfuDBStorage::tailerLoop, this);
-  // Dispatch thread must be running by the time the tailer starts
-  // enqueueing events. remote_listener_ is installed by LogHandler
-  // after this constructor returns, so the tailer won't generate any
-  // events until then — either start order is safe.
+  // remote_listener_ is installed after this constructor returns, so the
+  // tailer creates no events before the dispatch thread runs.
   dispatch_thread_ = std::thread(&CorfuDBStorage::dispatchLoop, this);
 }
 
 CorfuDBStorage::~CorfuDBStorage() {
-  // Flush any pending batches so data written via appendInBatch reaches
-  // Corfu before we close the client.
+  // Flush pending batches so appendInBatch data reaches Corfu before the
+  // client closes.
   {
     std::unique_lock<std::mutex> lock(mtx_);
     if (!cached_file_.empty()) {
@@ -82,9 +74,8 @@ CorfuDBStorage::~CorfuDBStorage() {
 
   running_ = false;
   if (tailer_thread_.joinable()) tailer_thread_.join();
-  // Tailer is stopped; no more events will be enqueued. Wake the
-  // dispatch thread so it can drain any remaining queued events and
-  // observe running_=false to exit.
+  // The tailer is stopped, so no more events arrive. Wake the dispatch
+  // thread so it drains the queue and exits on running_ = false.
   dispatch_cv_.notify_all();
   if (dispatch_thread_.joinable()) dispatch_thread_.join();
   {
@@ -141,10 +132,8 @@ CorfuDBStorage::CheckedAppend CorfuDBStorage::appendChecked(
 }
 
 // SEAL and REMOVE must reach the sequencer's conflict cache, or a peer's
-// fast path (submitBatchFast) is blind to them. The snapshot only has to
-// pass the sequencer's sanity checks (epoch, trim mark, bootstrap tail,
-// cache eviction mark); the tailer's position normally does, and the
-// global tail always does.
+// fast path (submitBatchFast) cannot see them. The snapshot only has to
+// pass the sequencer's checks; the global tail always does.
 long CorfuDBStorage::appendKeyed(std::string const& file_name, int op) {
   long snapshot = last_applied_addr_.load(std::memory_order_acquire);
   long last_abort = 0;
@@ -176,14 +165,10 @@ bool CorfuDBStorage::applyEntry(long addr, unsigned char const* data, size_t len
     return false;
   }
 
-  // Stage a remote-append event for the dispatch thread. We do NOT
-  // invoke the listener inline here — the listener takes
-  // LRUCache::mutex, and inlining that call on the tailer thread
-  // creates a deadlock cycle with any foreground op that holds
-  // LRUCache::mutex while fencing on this tailer via storage->size().
-  // The dispatch thread runs the listener off the tailer's critical
-  // path. Local APPENDs are applied but not dispatched: the writer path
-  // already updates any listener-visible index itself.
+  // Stage a remote event for the dispatch thread. The listener never
+  // runs on the tailer thread: it takes LRUCache::mutex, which a
+  // foreground op can hold while it fences on this tailer. Own APPENDs
+  // are applied but not dispatched.
   bool notify = false;
   RemoteOp notify_op = RemoteOp::kAppend;
   std::string notify_file;
@@ -194,24 +179,13 @@ bool CorfuDBStorage::applyEntry(long addr, unsigned char const* data, size_t len
     std::string const& fn = entry.file_name();
     switch (entry.op()) {
       case ::CorfuEntry_Op_APPEND: {
-        // The tailer is the ONLY writer of file_buffers_, for our own
-        // APPENDs as much as for peers'. Splicing own bytes from the writer
-        // thread would put the file buffer in ARRIVAL order rather than
-        // address order, and the two differ whenever a peer's earlier entry
-        // reaches the tailer after our later one. The seal rule below would
-        // then be applied to own entries against a sealed_at_addr_ that
-        // cannot yet contain a peer SEAL sequenced just before (the writer
-        // would ack bytes every peer drops), and the task-log election
-        // would read "first claim in the file" as "my claim" in every
-        // claimant at once (duplicate compactions, diverging Views).
-        // Applying own entries here, in address order, makes file_buffers_
-        // the same byte sequence in every process; submitBatch just waits
-        // for the tailer to pass its address and reads the outcome.
+        // The tailer is the only writer of file_buffers_, for own APPENDs
+        // as much as for peers'. Applying own entries here, in address
+        // order, keeps file_buffers_ the same byte sequence in every
+        // process; submitBatch waits for the tailer and reads the outcome.
         bool const own = entry.has_client_id() && entry.client_id() == client_id_;
-        // An APPEND sequenced ABOVE this file's SEAL arrived after the
-        // seal closed the file. It belongs to no file. Every process
-        // applies this same rule, so the bytes are unreadable everywhere
-        // and the writer's kSealed retry cannot duplicate the record.
+        // Seal rule: an APPEND sequenced above this file's SEAL belongs
+        // to no file. Every process applies the same rule.
         {
           auto sit = sealed_at_addr_.find(fn);
           if (sit != sealed_at_addr_.end() && sit->second < addr) {
@@ -221,14 +195,13 @@ bool CorfuDBStorage::applyEntry(long addr, unsigned char const* data, size_t len
           }
         }
         // A straggler behind a REMOVE must not resurrect the file. Names
-        // are never reused (log numbers grow, SSTable names carry a
-        // timestamp), so an APPEND after the REMOVE is always stale.
+        // are never reused, so such an APPEND is always stale.
         if (removed_files_.count(fn)) break;
         auto& buf = file_buffers_[fn];
         auto const& payload = entry.payload();
         buf.insert(buf.end(), payload.begin(), payload.end());
         // Own entries are not dispatched: the writer path already fed the
-        // key index and the record cache with the record it appended.
+        // key index and the record cache.
         if (remote_listener_ && !own) {
           notify = true;
           notify_op = RemoteOp::kAppend;
@@ -240,8 +213,8 @@ bool CorfuDBStorage::applyEntry(long addr, unsigned char const* data, size_t len
       }
       case ::CorfuEntry_Op_SEAL: {
         sealed_files_.insert(fn);
-        // Keep the LOWEST seal address seen: it is the point after which
-        // no append belongs to this file.
+        // Keep the LOWEST seal address: no append above it belongs to
+        // this file.
         auto sit = sealed_at_addr_.find(fn);
         if (sit == sealed_at_addr_.end() || addr < sit->second) {
           sealed_at_addr_[fn] = addr;
@@ -253,12 +226,9 @@ bool CorfuDBStorage::applyEntry(long addr, unsigned char const* data, size_t len
         sealed_files_.erase(fn);
         removed_files_.insert(fn);
         sealed_at_addr_.erase(fn);
-        // Settle every in-flight batch for this file instead of erasing
-        // the list under its writers. Each writer co-owns its Batch by
-        // shared_ptr and reads the outcome after its JNI call returns,
-        // so it learns the file is gone rather than acking a lost write.
-        // The old code erased pending_[fn] while a writer held a bare
-        // list iterator into it.
+        // Settle every in-flight batch for this file. Each writer co-owns
+        // its Batch by shared_ptr and reads the outcome. It learns the
+        // file is gone instead of acking a lost write.
         {
           auto pit = pending_.find(fn);
           if (pit != pending_.end()) {
@@ -287,8 +257,7 @@ bool CorfuDBStorage::applyEntry(long addr, unsigned char const* data, size_t len
         }
         break;
       case ::CorfuEntry_Op_TRIM: {
-        // Bookkeeping only: no file changes. Own entries included (the
-        // trimmer's own process must see its marker too), max is idempotent.
+        // Bookkeeping only. Own entries included; max is idempotent.
         long x = -1;
         try {
           x = std::stol(entry.payload());
@@ -300,16 +269,10 @@ bool CorfuDBStorage::applyEntry(long addr, unsigned char const* data, size_t len
       }
     }
     last_applied_addr_.store(addr, std::memory_order_release);
-    // Enqueue while still holding mtx_ so "listener check" and
-    // "event enqueue" are atomic with respect to
-    // setRemoteAppendListener. Without this, a concurrent clear
-    // could run between the check above and the push below — the
-    // listener would be cleared, then this enqueue would slip in
-    // with a snapshot of the stale listener and leak past the
-    // drainDispatchQueue() call in setRemoteAppendListener, causing
-    // a use-after-free at LogHandler teardown. dispatch_mtx_ is
-    // only ever taken here and in dispatchLoop/drainDispatchQueue,
-    // none of which ever take mtx_, so no cycle.
+    // Enqueue under mtx_ so the listener check and the enqueue are atomic
+    // with respect to setRemoteAppendListener. Otherwise a stale listener
+    // could slip past drainDispatchQueue(). dispatch_mtx_ is taken only
+    // here and in dispatchLoop/drainDispatchQueue, which never take mtx_.
     if (notify && listener_snapshot) {
       std::lock_guard<std::mutex> dlk(dispatch_mtx_);
       dispatch_queue_.push_back(RemoteEvent{
@@ -326,8 +289,7 @@ bool CorfuDBStorage::applyEntry(long addr, unsigned char const* data, size_t len
 
 CorfuDBStorage::DrainResult CorfuDBStorage::drainInitialEntries() {
   // Same batch path as the tailer (pollBatch + applyEntry). A zero
-  // timeout makes pollBatch report kIdle as soon as the stream has
-  // nothing ready and the batch is empty, i.e. at the current tail.
+  // timeout makes pollBatch report kIdle at the current tail.
   using clock = std::chrono::steady_clock;
   auto const t0 = clock::now();
   long drained = 0;
@@ -348,8 +310,8 @@ CorfuDBStorage::DrainResult CorfuDBStorage::drainInitialEntries() {
     CorfuClient::Poll r = client_->pollBatch(0, kDrainBatchSize, sink);
     total_us += std::chrono::duration_cast<std::chrono::microseconds>(clock::now() - tp).count();
     if (r == CorfuClient::Poll::kError) {
-      // A client failure other than a trimmed address (that one is the
-      // marker below). The state is partial; say so.
+      // A client failure other than a trimmed address. The state is
+      // partial.
       failed = true;
       break;
     }
@@ -365,8 +327,7 @@ CorfuDBStorage::DrainResult CorfuDBStorage::drainInitialEntries() {
   long long const poll_us = total_us - apply_us;  // the client's own share
   auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(clock::now() - t0).count();
   // Live fraction: what a checkpoint would carry. Top-level files (no '/'
-  // in the name: metadata.log, task.log) are listed by name because they
-  // grow across checkpoints and their size is the one to watch.
+  // in the name) are listed by name because they grow across checkpoints.
   size_t live_files = 0, live_bytes = 0;
   std::string top_level;
   {
@@ -431,25 +392,17 @@ bool CorfuDBStorage::seekPollView(long addr) {
 
 // Constructor-time replay.
 //
-// 1. Load the newest checkpoint C from the store, when there is one, and
-//    seek the poll view to C + 1. Without a store, or without a
-//    checkpoint, start at 0.
-// 2. Drain to the tail. A TRIMMED marker means the trim mark passed our
-//    start address while we were loading (two trim cycles ran); reload
-//    the newest checkpoint and try again, a bounded number of times.
-// 3. Two completeness checks, both per stream and both restart-proof:
-//    a. A checkpoint C must not be AHEAD of the log: the stream tail the
-//       sequencer reports must be >= C. Otherwise the log is an older
-//       copy than the bucket (or a fresh log), and new appends would land
-//       BELOW the poll view's position, invisible to this process forever.
+// 1. Load the newest checkpoint C from the store, when there is one.
+//    Seek the poll view to C + 1. Otherwise start at 0.
+// 2. Drain to the tail. kTrimmed means the trim mark passed the start
+//    address during the load; reload the newest checkpoint and retry, a
+//    bounded number of times.
+// 3. Two completeness checks, both per stream:
+//    a. The stream tail must be >= C. Otherwise the log is older than the
+//       bucket, and new appends would land below the poll view forever.
 //    b. The replay must not cross a TRIM entry with X >= start. The
-//       trimmer appends TRIM(X) to the stream right before prefixTrim(X),
-//       so a process that replays from S and meets X >= S has lost part
-//       of its history: no checkpoint store, a wiped bucket, or a bucket
-//       older than the log dir. The log unit's own trim mark is not used
-//       here: it is global, so a fresh stream on a server trimmed for
-//       another stream would be refused for nothing; and the sequencer's
-//       per-stream mark is in memory only.
+//       trimmer appends TRIM(X) right before prefixTrim(X). A replay
+//       from S that meets X >= S has lost part of its history.
 void CorfuDBStorage::bootstrap(Storage* checkpoint_store, std::string const& checkpoint_dir) {
   constexpr int kMaxAttempts = 3;
   for (int attempt = 0; attempt < kMaxAttempts; ++attempt) {
@@ -550,15 +503,14 @@ void CorfuDBStorage::failStop(char const* why) {
 
 checkpoint::State CorfuDBStorage::takeSnapshot() {
   checkpoint::State state;
-  // Exclusive gate: no local batch is between "sequenced" and "stamped"
-  // (see write_gate_). Writers queue behind us for the copy only.
+  // Exclusive gate: no local batch is between sequenced and stamped
+  // (see write_gate_).
   std::unique_lock<std::shared_mutex> gate(write_gate_);
   std::unique_lock<std::mutex> lock(mtx_);
   if (trimmed_out_.load()) return state;
-  // Every local write is already stamped and spliced; the tailer still
-  // has to pass them so last_applied_addr_ names a prefix that contains
-  // them. Local writes are all sequenced, so this wait is the tailer's
-  // lag only, not a wait for new traffic.
+  // Every local write is stamped and spliced. Wait for the tailer to
+  // pass them, so last_applied_addr_ covers them. This wait is the
+  // tailer's lag only.
   long target = last_written_addr_.load(std::memory_order_acquire);
   constexpr auto kWait = std::chrono::seconds(10);
   bool reached = tailer_cv_.wait_for(lock, kWait, [&] {
@@ -567,8 +519,8 @@ checkpoint::State CorfuDBStorage::takeSnapshot() {
   });
   if (!reached || trimmed_out_.load()) return state;
   // Every push into pending_ happens under the shared gate, and its
-  // thread settles the batch before it lets go. An unsettled batch here
-  // is impossible; refuse rather than guess.
+  // thread settles the batch before it releases the gate. An unsettled
+  // batch here is impossible; refuse rather than guess.
   for (auto const& kv : pending_) {
     for (auto const& batch : kv.second) {
       if (!batch->done) {
@@ -592,8 +544,8 @@ checkpoint::State CorfuDBStorage::takeSnapshot() {
 
 bool CorfuDBStorage::prefixTrim(long addr) {
   if (addr < 0) return false;
-  // The marker goes in BEFORE the trim, so no process can observe a
-  // trimmed stream without also being able to observe the marker.
+  // The marker goes in BEFORE the trim, so no process can see a trimmed
+  // stream without the marker.
   if (appendTrimMarker(addr) < 0) {
     std::cerr << "[corfu] prefixTrim(" << addr << "): TRIM marker append failed; not trimming\n";
     return false;
@@ -610,23 +562,12 @@ long CorfuDBStorage::streamTail() {
 }
 
 void CorfuDBStorage::tailerLoop() {
-  // Diagnostic counters — 1-second rolling window. rate = entries
-  // applied per second, gap = how many Corfu addresses behind our
-  // own last local write we are. A growing gap means production
-  // outpaces the tailer; a frozen `applied` for seconds means the
-  // tailer is blocked (likely inside pollView.next()). Leave in
-  // place during multi-writer diagnosis; remove once stable.
+  // Diagnostic counters, 1-second window. rate = entries applied per
+  // second; gap = Corfu addresses between our last write and the tailer.
   auto stat_window_start = std::chrono::steady_clock::now();
   uint64_t stat_entries = 0;
-  // Periodically prune the Corfu IStreamView's resolvedQueue/readQueue
-  // (TreeSet<Long>). Without this they grow one entry per address the
-  // tailer reads, indefinitely — heap dumps from long runs show ~85 MB
-  // of TreeMap$Entry attributable to this one stream view. gc() is
-  // two-phase (the first call sets the trim mark, the next call prunes
-  // below the previously-set mark), so fire it on a steady cadence.
-  // kGcTrimInterval chosen so each gc spans many thousands of entries
-  // of progress, keeping gc cost amortized and the resident queue size
-  // bounded by ~kGcTrimInterval * (applied rate / gc rate).
+  // Tell the client every kGcTrimInterval entries which addresses are
+  // applied, so it can drop its bookkeeping for them.
   uint64_t entries_since_gc = 0;
   constexpr uint64_t kGcTrimInterval = 50000;
   uint64_t applied = 0;  // entries applied by the current pollBatch
@@ -641,9 +582,8 @@ void CorfuDBStorage::tailerLoop() {
     auto poll_us = std::chrono::duration_cast<std::chrono::microseconds>(
                        poll_after - poll_before)
                        .count();
-    // Only log unusually-slow polls (>50 ms) so steady-state runs
-    // don't drown in output. An idle poll with poll_us ~ 100 ms is
-    // just the timeout; log "idle=1" so we can tell at a glance.
+    // Log only slow polls (>50 ms). An idle poll near 100 ms is the
+    // timeout; idle=1 marks it.
     if (poll_us > 50000) {
       std::cerr << "[corfu-tailer] slow pollBatch " << poll_us << "us idle="
                 << (r == CorfuClient::Poll::kIdle ? 1 : 0) << "\n";
@@ -653,9 +593,8 @@ void CorfuDBStorage::tailerLoop() {
     }
     if (r == CorfuClient::Poll::kTrimmed) {
       // The next address this tailer needs is gone. Skipping it would
-      // build a state that no other process has, so stop instead. The
-      // thread exits; the destructor's join still returns because
-      // running_ is left alone.
+      // build a state no other process has, so stop. running_ is left
+      // alone so the destructor's join returns.
       failStop("tailer hit the trim mark");
       break;
     }
@@ -670,12 +609,8 @@ void CorfuDBStorage::tailerLoop() {
     if (now - stat_window_start >= std::chrono::seconds(1)) {
       long applied_now = last_applied_addr_.load(std::memory_order_acquire);
       long written_now = last_written_addr_.load(std::memory_order_acquire);
-      // Sample C++-side memory residency. file_buffers_ is the main
-      // suspect when process RSS grows without bound — every byte
-      // written to every file by every writer lives here until the
-      // file is REMOVE'd. Sampling every second is cheap: we only
-      // traverse the map of ~hundreds-of-thousands entries at most,
-      // all under mtx_.
+      // Sample memory residency. file_buffers_ holds every byte of every
+      // file until the file is REMOVEd. The traversal runs under mtx_.
       size_t n_files = 0, fb_bytes = 0, pend_bytes = 0, cache_bytes = 0;
       size_t dispatch_len = 0;
       {
@@ -706,11 +641,9 @@ void CorfuDBStorage::tailerLoop() {
   }
 }
 
-// Drain remote-append events enqueued by applyEntry and
-// invoke the registered listener off the tailer thread. Exits when
-// running_ is false and the queue is fully drained — the destructor
-// joins the tailer first, so at that point no more events can be
-// enqueued and the drain is bounded.
+// Drain remote events enqueued by applyEntry and run the listener off
+// the tailer thread. Exits when running_ is false and the queue is empty.
+// The destructor joins the tailer first, so the drain is bounded.
 void CorfuDBStorage::dispatchLoop() {
   for (;;) {
     RemoteEvent ev;
@@ -724,10 +657,8 @@ void CorfuDBStorage::dispatchLoop() {
       dispatch_queue_.pop_front();
       dispatch_in_flight_ = true;
     }
-    // Invoke the listener outside dispatch_mtx_ so the tailer can
-    // continue enqueueing while the listener runs. A throwing
-    // listener must not kill the dispatcher — swallow and continue
-    // so subsequent events still get delivered.
+    // Run the listener outside dispatch_mtx_ so the tailer can keep
+    // enqueueing. A throwing listener must not kill the dispatcher.
     if (ev.listener) {
       try {
         ev.listener(ev.file_name, ev.payload.data(), ev.payload.size(),
@@ -739,10 +670,8 @@ void CorfuDBStorage::dispatchLoop() {
         std::cerr << "[corfu] remote-append listener threw unknown exception\n";
       }
     }
-    // Clear in-flight and notify drain_cv_ only when the queue has
-    // gone fully quiescent. A drainer (setRemoteAppendListener with
-    // an empty listener) is guaranteed to observe this state before
-    // returning.
+    // Clear in-flight and notify drain_cv_ only when the queue is empty,
+    // so a drainer observes a quiescent dispatcher.
     {
       std::lock_guard<std::mutex> lock(dispatch_mtx_);
       dispatch_in_flight_ = false;
@@ -751,12 +680,9 @@ void CorfuDBStorage::dispatchLoop() {
   }
 }
 
-// Block until no event is being processed and the queue is empty.
-// Called from setRemoteAppendListener when the listener is cleared
-// so the caller (typically ~LogHandler) can tear down safely —
-// every in-flight event has finished running the old listener and
-// no new events will be enqueued (the tailer checks remote_listener_
-// under mtx_, which we already cleared).
+// Block until no event is in flight and the queue is empty. Called when
+// the listener is cleared, so the caller can tear down. The tailer checks
+// remote_listener_ under mtx_, and it is already cleared.
 void CorfuDBStorage::drainDispatchQueue() {
   std::unique_lock<std::mutex> lock(dispatch_mtx_);
   drain_cv_.wait(lock, [this] {
@@ -765,26 +691,18 @@ void CorfuDBStorage::drainDispatchQueue() {
 }
 
 long CorfuDBStorage::globalFenceTarget() {
-  // For multi-writer reads: the fence target must include both our own
-  // writes (last_written_addr_) AND any remote writer's commits that
-  // have already been sequenced. CorfuClient::streamTail() returns the
-  // highest address currently in the stream. max() ensures we never
-  // regress the target if our own in-flight write hasn't been sequenced
-  // yet but a remote write has a higher address.
+  // The fence target covers our own writes (last_written_addr_) and
+  // every remote write already sequenced (the stream tail). max() so the
+  // target never regresses.
   long local = last_written_addr_.load(std::memory_order_acquire);
   long global = static_cast<long>(client_->streamTail());
   return std::max(local, global);
 }
 
-// Wait until the local tailer has applied everything up to `target`.
-//
-// BOUNDED, deliberately. The tailer advances only over its OWN stream,
-// so a target taken from a global address the stream will never contain
-// — another stream's entry, or a hole — is unreachable. An unbounded
-// wait here froze every fenced read in the process, permanently and
-// silently. A read that gives up returns stale-but-consistent local
-// state, which is the same guarantee the default (non-linearizable)
-// mode already offers.
+// Wait until the tailer has applied everything up to `target`. Bounded:
+// the tailer advances only over its own stream. A target outside the
+// stream (another stream's entry, or a hole) is unreachable. A read that
+// gives up serves stale but consistent local state.
 void CorfuDBStorage::waitForTailerLocked(std::unique_lock<std::mutex>& lock, long target) {
   constexpr auto kFenceTimeout = std::chrono::seconds(10);
   bool reached = waitForTailerLocked(lock, target, kFenceTimeout);
@@ -812,12 +730,9 @@ long CorfuDBStorage::fenceTargetForCaller() {
   return globalFenceTarget();
 }
 
-// The one fence of a strict get (see Storage::sync). Sequencer query +
-// tailer wait happen here once; subsequent fenced ops on this thread
-// reuse the recorded target, so their waitForTailerLocked is satisfied
-// immediately — everything sequenced before the fence is already in
-// the local buffers, and linearizability doesn't require observing
-// anything sequenced after it.
+// The one fence of a strict get (see Storage::sync). The sequencer query
+// and tailer wait happen here once. Later fenced ops on this thread reuse
+// the recorded target, so their tailer wait returns at once.
 void CorfuDBStorage::sync() {
   long target = globalFenceTarget();
   {
@@ -870,32 +785,20 @@ void CorfuDBStorage::finishBatchLocked(std::string const& fileName,
   }
 }
 
-// FAST PATH. The slow path below waits
-// for the tailer to pass the batch's address because that is the first
-// moment it knows whether a SEAL of fileName was sequenced BELOW the
-// address. The sequencer can answer that at token time: the token request
-// carries key(fileName) in its read set at snapshot S = last_applied_addr_,
-// and every SEAL / REMOVE carries the same key in its write set
-// (appendKeyed), recorded by the sequencer when their token is issued.
-// A granted token at addr therefore proves that no SEAL / REMOVE of
-// fileName was tokened in (S, addr]. The tailer applied every entry <= S
-// before S was published (applyEntry stores last_applied_addr_ last,
-// under mtx_), so sealed_at_addr_ / removed_files_ decide the rest
-// exactly. The bytes at addr belong to fileName in every process, and the
-// batch is acked before the tailer reaches addr: one token + one write,
-// the same cost as before the ack rule. The tailer still applies the
-// entry, in address order, as the only writer of file_buffers_; reads
-// fence on last_written_addr_, so read-my-writes is unchanged.
+// FAST PATH. The token request carries key(fileName) in its read set at
+// snapshot S = last_applied_addr_. Every SEAL / REMOVE carries the same
+// key in its write set (appendKeyed). A granted token at addr proves
+// that no SEAL / REMOVE of fileName was tokened in (S, addr]. The tailer
+// applied every entry <= S before it published S, so sealed_at_addr_ and
+// removed_files_ decide the rest. The batch is acked before the tailer
+// reaches addr. The tailer still applies the entry in address order as
+// the only writer of file_buffers_, and reads fence on last_written_addr_.
 //
 // A refused token has no address: nothing lands. TX_ABORT_CONFLICT names
-// the address T at which the key was last written. Waiting for the tailer
-// to reach T then shows either the SEAL / REMOVE (kSealed / kFailure, the
-// caller retries on the new tail) or nothing at all — the key's write
-// became a hole, its writer retried above T — in which case the append is
-// retried with a fresh snapshot. Any other refusal (a snapshot the
-// sequencer cannot vouch for: stale epoch, below the tail at sequencer
-// bootstrap, below the conflict cache's eviction mark or the trim mark)
-// sends the batch to the slow path, which is always correct.
+// the address T of the key's last write. Waiting for the tailer to reach
+// T shows either the SEAL / REMOVE (kSealed / kFailure) or nothing: the
+// key's write became a hole, and the append is retried with a fresh
+// snapshot. Any other refusal sends the batch to the slow path.
 bool CorfuDBStorage::submitBatchFast(std::string const& fileName,
                                      std::shared_ptr<Batch> const& batch) {
   constexpr int kAttempts = 3;
@@ -906,8 +809,8 @@ bool CorfuDBStorage::submitBatchFast(std::string const& fileName,
       std::lock_guard<std::mutex> lk(mtx_);
       if (batch->done) return true;  // a peer REMOVE settled it
       if (sealed_at_addr_.count(fileName)) {
-        // The seal is known (own or peer). An append would only land
-        // above it and be dropped everywhere: refuse it here.
+        // The seal is known. An append would land above it and be
+        // dropped everywhere.
         finishBatchLocked(fileName, batch, Status::kSealed);
         return true;
       }
@@ -976,14 +879,11 @@ bool CorfuDBStorage::submitBatchFast(std::string const& fileName,
 }
 
 // Client submit, then wait for the tailer to pass the new address and
-// read the outcome under mtx_. mtx_ must NOT be held on entry: the Corfu
-// round-trip runs unlocked so it does not block readers, the tailer, or
-// writers on other files. The fast path (submitBatchFast) runs first when
-// enabled; what follows it is the slow path.
+// read the outcome under mtx_. Call with mtx_ NOT held: the Corfu
+// round-trip runs unlocked. The fast path runs first when enabled.
 Status CorfuDBStorage::submitBatch(std::string const& fileName,
                                    std::shared_ptr<Batch> const& batch) {
-  // The caller holds write_gate_ shared (taken before the batch entered
-  // pending_); see the write_gate_ comment in the header.
+  // The caller holds write_gate_ shared (see the header).
   if (trimmed_out_.load()) {
     std::lock_guard<std::mutex> lk(mtx_);
     finishBatchLocked(fileName, batch, Status::kFailure);
@@ -996,9 +896,8 @@ Status CorfuDBStorage::submitBatch(std::string const& fileName,
   }
 
   // SLOW PATH: a plain token, then wait for the tailer to pass the new
-  // address and read the outcome. Taken when the fast path is off, or
-  // when the sequencer could not answer for the snapshot (right after a
-  // sequencer restart, a trim, or a conflict-cache eviction).
+  // address. Taken when the fast path is off or the sequencer could not
+  // answer for the snapshot.
   long addr = appendEntry(fileName, ::CorfuEntry_Op_APPEND,
                           batch->payload.data(),
                           static_cast<int>(batch->payload.size()));
@@ -1006,8 +905,8 @@ Status CorfuDBStorage::submitBatch(std::string const& fileName,
   {
     std::unique_lock<std::mutex> lock(mtx_);
     if (batch->done) {
-      // A peer REMOVE settled this batch while the client call was in
-      // flight. Do not resurrect it.
+      // A peer REMOVE settled this batch during the client call. Do not
+      // resurrect it.
     } else if (addr < 0) {
       finishBatchLocked(fileName, batch, Status::kFailure);
     } else {
@@ -1015,18 +914,10 @@ Status CorfuDBStorage::submitBatch(std::string const& fileName,
       // covers these bytes from here on.
       publishWrittenAddr(addr);
 
-      // ACK RULE. The tailer applies this entry like any peer's, in
-      // address order (applyEntryBytes): spliced into file_buffers_, or
-      // dropped when a SEAL of fileName was sequenced below addr. So the
-      // outcome is known exactly when the tailer has passed addr, and
-      // not before — a peer SEAL at S < addr that the tailer has not
-      // reached yet is invisible here. The old code spliced and acked
-      // right after the client returned on that partial knowledge; every
-      // other process, applying S first, dropped the bytes, and the next
-      // compaction of fileName by a peer removed the record for good —
-      // 7,407 acked-then-dropped records in a 1M-record 8-writer load,
-      // the ~0.6 % read miss. The wait is the tailer's lag, the same
-      // wait every fenced read already pays.
+      // ACK RULE. The tailer applies this entry in address order, like a
+      // peer's: spliced into file_buffers_, or dropped when a SEAL of
+      // fileName sits below addr. The outcome is known only once the
+      // tailer passed addr. The wait is the tailer's lag.
       bool const seal_known_before = sealedBelowLocked(fileName, addr);
       auto const wait_start = std::chrono::steady_clock::now();
       waitForTailerLocked(lock, addr);
@@ -1046,11 +937,10 @@ Status CorfuDBStorage::submitBatch(std::string const& fileName,
       if (batch->done) {
         // A peer REMOVE settled this batch during the wait.
       } else if (sealedBelowLocked(fileName, addr)) {
-        // Sequenced after the file's SEAL. These bytes belong to no
-        // file, and no process will ever read them. Report kSealed so
-        // the caller retries on the new tail — a retry cannot duplicate,
-        // because this copy is unreadable everywhere. A known seal is
-        // decisive whether or not the tailer reached addr.
+        // Sequenced after the file's SEAL: these bytes belong to no file.
+        // Report kSealed so the caller retries on the new tail; the retry
+        // cannot duplicate. A known seal is decisive whether or not the
+        // tailer reached addr.
         if (!seal_known_before) {
           sealed_after_wait_.fetch_add(1, std::memory_order_relaxed);
           std::cerr << "[corfu] submitBatch: SEAL of " << fileName << " at "
@@ -1060,10 +950,8 @@ Status CorfuDBStorage::submitBatch(std::string const& fileName,
         }
         finishBatchLocked(fileName, batch, Status::kSealed);
       } else if (trimmed_out_.load() || !reached) {
-        // Without the tailer at addr the outcome is unknown, and an ack
-        // that may be wrong is worse than a failed put: the caller sees
-        // kFailure and does not retry, so nothing is duplicated even if
-        // the bytes do become visible later.
+        // Without the tailer at addr the outcome is unknown. Report
+        // kFailure: the caller does not retry, so nothing is duplicated.
         std::cerr << "[corfu] submitBatch: tailer did not reach addr " << addr
                   << " for " << fileName << " (applied "
                   << last_applied_addr_.load(std::memory_order_acquire)
@@ -1072,9 +960,8 @@ Status CorfuDBStorage::submitBatch(std::string const& fileName,
       } else if (removed_files_.count(fileName)) {
         finishBatchLocked(fileName, batch, Status::kFailure);
       } else {
-        // The tailer spliced the bytes at addr: readable through
-        // file_buffers_ in this process and, in the same order, in every
-        // other one.
+        // The tailer spliced the bytes at addr, in the same order in
+        // every process.
         batch->addr = addr;
         finishBatchLocked(fileName, batch, Status::kSuccess);
       }
@@ -1094,9 +981,8 @@ Status CorfuDBStorage::awaitBatch(std::shared_ptr<Batch> const& batch) {
   return batch->result;
 }
 
-// Push every not-yet-sequenced byte of one file onto the shared log and
-// wait for the splice. read()/size() call this so they can serve
-// file_buffers_ alone — see the read() comment for why that matters.
+// Push every not-yet-sequenced byte of one file onto the log and wait
+// for the splice. read()/size() then serve file_buffers_ alone.
 void CorfuDBStorage::drainForRead(std::string const& fileName) {
   std::shared_lock<std::shared_mutex> gate(write_gate_);  // before any push
   constexpr int kMaxRounds = 64;
@@ -1122,9 +1008,8 @@ void CorfuDBStorage::drainForRead(std::string const& fileName) {
 }
 
 Status CorfuDBStorage::append(std::string const& fileName, unsigned char* const& data, int length) {
-  // Synchronous single-payload append: one batch, submitted immediately.
-  // submitBatch returns only after the bytes are sequenced AND spliced
-  // into file_buffers_, so an append that returns kSuccess is readable.
+  // Synchronous single-payload append. submitBatch returns only after
+  // the bytes are sequenced and spliced, so a kSuccess append is readable.
   std::shared_lock<std::shared_mutex> gate(write_gate_);  // before the push
   auto batch = std::make_shared<Batch>();
   {
@@ -1148,12 +1033,8 @@ Status CorfuDBStorage::appendNoFlush(std::string const& fileName, unsigned char*
 }
 
 Status CorfuDBStorage::appendInBatch(std::string const& fileName, unsigned char* const& data, int length) {
-  // `mine` is the batch that carries THIS call's bytes. Whatever else
-  // happens — another thread drains us, a peer seals the file, the client
-  // submit fails — the status we return is `mine`'s own outcome. The old
-  // code returned kSuccess whenever its cached_file_ entry had vanished,
-  // which acked bytes that the draining thread could still fail to
-  // sequence.
+  // `mine` is the batch that carries this call's bytes. The status we
+  // return is always `mine`'s own outcome, whichever thread drains it.
   std::shared_ptr<Batch> mine;
   std::shared_ptr<Batch> to_submit;
   std::shared_lock<std::shared_mutex> gate(write_gate_);  // before the push
@@ -1181,9 +1062,8 @@ Status CorfuDBStorage::appendInBatch(std::string const& fileName, unsigned char*
     }
 
     // Batched mode with the timer unexpired. The bytes stay in
-    // cached_file_ and are NOT durable yet, which is what this mode
-    // trades away. The shipped configs run commit_interval_ = 0 with
-    // sync_mode_ = true, so this path is not on the durable route.
+    // cached_file_ and are not durable yet. The shipped configs run
+    // commit_interval_ = 0 with sync_mode_ = true.
     if (!should_flush) return Status::kSuccess;
 
     to_submit = takeCachedBatchLocked(fileName);
@@ -1192,12 +1072,12 @@ Status CorfuDBStorage::appendInBatch(std::string const& fileName, unsigned char*
       last_commited_time_ = std::chrono::system_clock::now();
     }
   }
-  // mtx_ released — the client runs without blocking readers or the tailer.
+  // mtx_ released: the client runs without blocking readers or the tailer.
 
   if (to_submit) submitBatch(fileName, to_submit);
-  // takeCachedBatchLocked can hand back a LATER batch than ours if a
-  // peer thread drained us during the wait above. Always report the
-  // batch holding our own bytes.
+  // takeCachedBatchLocked can hand back a LATER batch than ours when
+  // another thread drained us during the wait. Always report the batch
+  // that holds our bytes.
   if (to_submit == mine) return mine->result;
   return awaitBatch(mine);
 }
@@ -1215,26 +1095,17 @@ Status CorfuDBStorage::flush(std::string const& fileName) {
   return submitBatch(fileName, to_submit);
 }
 
-// Reads serve file_buffers_ ALONE — never pending_ or cached_file_.
+// Reads serve file_buffers_ ALONE, never pending_ or cached_file_.
 //
-// Offsets into a file must be append-stable: the bytes at [a, a+len) must
-// stay the same bytes forever, because MetadataLogHandler::readMetadataLog
-// reads a range and then advances a persistent offset past it. The old
-// code spliced file_buffers_ + pending_ + cached_file_, with file_buffers_
-// first. The tailer appends REMOTE bytes to file_buffers_ at any moment,
-// which shifted every local unsequenced byte to a higher offset — the same
-// offset then named different bytes, the protobuf parse failed, and the
-// metadata reader was wedged for the life of the process.
+// Offsets into a file must be append-stable: MetadataLogHandler reads a
+// range and then advances a persistent offset past it. file_buffers_
+// grows only by whole sequenced entries, so serving it alone keeps
+// offsets stable. drainForRead() keeps read-my-writes: it pushes this
+// process's buffered bytes onto the log and waits for the splice first.
 //
-// file_buffers_ only ever grows by whole sequenced entries, so serving it
-// alone makes offsets stable. drainForRead() preserves read-my-writes by
-// pushing this process's own buffered bytes onto the log and waiting for
-// the splice before we sample. append/appendInBatch/flush likewise return
-// only after their bytes are spliced, so anything already acked is here.
-//
-// Caveat: in batched mode (commit_interval_ > 0) appendInBatch can ack
-// bytes that are still in cached_file_. drainForRead flushes those, so a
-// read still sees them — it just pays a client round-trip to do it.
+// In batched mode (commit_interval_ > 0) appendInBatch can ack bytes
+// still in cached_file_. drainForRead flushes those at the cost of a
+// round-trip.
 Status CorfuDBStorage::read(std::string const& fileName, unsigned char*& data, size_t& size) {
   if (trimmed_out_.load()) return Status::kNotFound;
   drainForRead(fileName);
@@ -1280,20 +1151,14 @@ size_t CorfuDBStorage::size(std::string fileName) {
 }
 
 void CorfuDBStorage::seal(std::string fileName) {
-  // One shared hold of the gate for the pre-seal flush AND the SEAL entry
-  // (write_gate_: taken before anything enters pending_).
+  // One shared hold of the gate for the pre-seal flush and the SEAL
+  // entry.
   std::shared_lock<std::shared_mutex> gate(write_gate_);
   if (trimmed_out_.load()) return;
-  // Pre-seal flush: drain every batched byte BEFORE the SEAL marker, and
-  // wait for it to sequence, so the seal lands at a HIGHER global address
-  // than our own bytes. submitBatch enforces the address rule, so a
-  // pre-seal payload that raced past our own SEAL would be dropped —
-  // draining first is what stops us from sealing over ourselves.
-  //
-  // Bytes another thread adds to this file after this point are still
-  // accepted by appendInBatch (sealed_files_ is not set yet) and are
-  // rejected with kSealed once their address lands above the seal. That
-  // is the correct answer: the caller retries on the new tail.
+  // Pre-seal flush: drain every batched byte before the SEAL and wait
+  // for it to sequence. The seal then lands above our own bytes. Bytes
+  // another thread adds after this point land above the seal and get
+  // kSealed; the caller retries on the new tail.
   std::shared_ptr<Batch> to_submit;
   {
     std::lock_guard<std::mutex> lk(mtx_);
@@ -1307,18 +1172,17 @@ void CorfuDBStorage::seal(std::string fileName) {
     std::cerr << "[corfu] seal: pre-seal flush failed for " << fileName << "\n";
   }
 
-  // Keyed: the sequencer records key(fileName) at this address, which is
-  // what lets every writer's fast path (submitBatchFast) see the seal at
-  // token time. A SEAL without the key would be invisible to it.
+  // Keyed: the sequencer records key(fileName) at this address, so every
+  // peer's fast path sees the seal at token time. Never append a SEAL
+  // without the key.
   long addr = appendKeyed(fileName, ::CorfuEntry_Op_SEAL);
   if (addr < 0) return;
   {
     std::lock_guard<std::mutex> lk(mtx_);
     publishWrittenAddr(addr);
     sealed_files_.insert(fileName);
-    // Record the seal address right away, before the tailer reaches this
-    // SEAL: own appends still in flight are judged against it as soon as
-    // the tailer passes their address.
+    // Record the seal address now, before the tailer reaches this SEAL.
+    // Own appends still in flight are judged against it.
     auto sit = sealed_at_addr_.find(fileName);
     if (sit == sealed_at_addr_.end() || addr < sit->second) {
       sealed_at_addr_[fileName] = addr;
@@ -1338,8 +1202,8 @@ bool CorfuDBStorage::isSealed(std::string fileName) {
 void CorfuDBStorage::remove(std::string fileName) {
   std::shared_lock<std::shared_mutex> gate(write_gate_);
   if (trimmed_out_.load()) return;
-  // Keyed for the same reason as the SEAL in seal(): a peer's fast path
-  // must see the REMOVE at token time.
+  // Keyed, like the SEAL in seal(): a peer's fast path must see the
+  // REMOVE at token time.
   long addr = appendKeyed(fileName, ::CorfuEntry_Op_REMOVE);
   if (addr < 0) return;
   publishWrittenAddr(addr);

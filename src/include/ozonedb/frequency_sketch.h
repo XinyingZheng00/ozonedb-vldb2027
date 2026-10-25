@@ -10,9 +10,9 @@ namespace ozonedb {
 // TinyLFU frequency sketch (Einziger, Friedman and Manes, "TinyLFU: A Highly
 // Efficient Cache Admission Policy", 2017): a count-min sketch of four rows
 // of 8-bit counters. Every `window` records halve all counters, so an
-// estimate is a recent frequency, not an all-time count. A count-min
-// estimate is never below the true recent count. The class takes no lock:
-// the owner serialises calls (DiskCacheStorage: sketch_mtx_).
+// estimate is a recent frequency, not an all-time count. An estimate is
+// never below the true recent count. The class takes no lock: the owner
+// serialises calls (DiskCacheStorage: sketch_mtx_).
 class FrequencySketch {
  public:
   // counters_per_row is rounded up to a power of two, minimum 16.

@@ -1,10 +1,9 @@
 #ifndef OZONEDB_CORFU_LAYOUT_H
 #define OZONEDB_CORFU_LAYOUT_H
 #ifdef OZONEDB_ENABLE_CORFU
-// The Corfu layout: fetched as Gson JSON (LayoutMsg.layout_json) and
-// parsed with protobuf's json_util into a google.protobuf.Struct, so no
-// JSON library is added. Only the single-node shape the bench uses is
-// accepted.
+// The Corfu layout, fetched as Gson JSON (LayoutMsg.layout_json) and
+// parsed with protobuf's json_util into a google.protobuf.Struct. Only
+// the single-node shape is accepted.
 #include "corfu/corfu_codec.h"
 #include <cstdint>
 #include <string>

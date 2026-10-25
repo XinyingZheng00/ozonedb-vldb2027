@@ -90,24 +90,22 @@ void BlockIter::seek(std::string const& target) {
     shared = entry.shared_bytes();
     non_shared = entry.unshared_bytes();
     char const* key_ptr = entry.key_delta().data();
-    if (key_ptr == NULL || (shared != 0)) {  // restart point key must have shared
+    if (key_ptr == NULL || (shared != 0)) {  // a restart key has shared == 0
       corruptionError();
       return;
     }
     std::string mid_key(key_ptr, non_shared);
     if (comparator_->compare(mid_key, target) < 0) {
-      // Key at "mid" is smaller than "target".  Therefore all
-      // blocks before "mid" are uninteresting.
+      // Key at mid < target: skip every region before mid.
       left = mid;
     } else {
-      // Key at "mid" is >= "target".  Therefore all blocks at or
-      // after "mid" are uninteresting.
-      // if key at mid is equal to target, the linear search will find it.
+      // Key at mid >= target: skip every region at or after mid.
+      // An equal key at mid is found by the linear search.
       right = mid - 1;
     }
   }
 
-  // linear search from left point
+  // Linear search from restart point left
   seekToRestartPoint(left);
   while (true) {
     if (!parseCurrentKey()) {
@@ -136,7 +134,6 @@ void BlockIter::corruptionError() {
   current_entry_index = -1;
   restart_index_ = -1;
   status_ = Status::kFailure;
-  // std::cout << "Corruption Error" << std::endl;
   key_.clear();
   value_ptr_ = nullptr;
 }

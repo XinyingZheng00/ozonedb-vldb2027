@@ -14,28 +14,23 @@
 namespace ozonedb {
 
 /**
- * @brief Storage backend backed by an S3-compatible object store.
+ * @brief Storage backend on an S3-compatible object store.
  *
- * Designed to talk to any service that speaks the S3 API — real AWS S3,
- * MinIO, Cloudflare R2, Wasabi, Backblaze B2, SeaweedFS — by configuring
- * the endpoint override and path-style addressing. The paper's §3.5
- * regular-storage tier for SSTables is the intended use case: SSTables
- * are immutable once written, read by random byte range, and too bulky
- * for the atomic-append log layer.
+ * Works with any service that speaks the S3 API (AWS S3, MinIO, R2,
+ * Wasabi, B2, SeaweedFS) through the endpoint override and path-style
+ * addressing. It is the regular-storage tier for SSTables (paper §3.5):
+ * SSTables are immutable, read by byte range, and never appended to.
  *
- * Write path: `appendInBatch` / `appendNoFlush` accumulate bytes into an
- * in-memory buffer keyed by filename. `flush` does one `PutObject` with
- * the entire buffered blob. `append` is backed by the same buffer +
- * immediate flush path (kept for API compatibility). S3 has no native
- * append primitive, which is fine — callers that need atomic append
- * (log / metadata / task logs) should use a different backend.
+ * Write path: `appendInBatch` / `appendNoFlush` buffer bytes per file
+ * name in memory. `flush` does one `PutObject` of the whole buffer.
+ * `append` buffers and flushes at once. S3 has no append primitive, so
+ * files that need atomic append (the three logs) must use another backend.
  *
- * Read path: `read(name, data, size)` is a full `GetObject`. The
- * ranged variant `read(name, data, offset, length)` uses `GetObject`
- * with a `Range` header. `size(name)` is `HeadObject` → Content-Length.
+ * Read path: `read(name, data, size)` is a full `GetObject`. The ranged
+ * variant uses a `Range` header. `size(name)` is `HeadObject` Content-Length.
  *
- * `seal` / `isSealed` track state locally (S3 objects are immutable by
- * construction once PUT, so there is no server-side "seal" marker).
+ * `seal` / `isSealed` are tracked locally. S3 objects are immutable once
+ * PUT, so there is no server-side seal marker.
  */
 class S3Storage : public Storage {
  public:
@@ -65,8 +60,8 @@ class S3Storage : public Storage {
   // Form the full S3 key (storage_path is the db-path prefix inside the bucket).
   std::string keyFor(std::string const& fileName) const;
 
-  // Flush the buffered bytes for this file as one PutObject. Caller must
-  // not hold mtx_ — this function takes it.
+  // Flush the buffered bytes for this file as one PutObject. Takes mtx_;
+  // the caller must not hold it.
   Status flushLocked(std::string const& fileName);
 
   std::unique_ptr<Aws::S3::S3Client> client_;
@@ -77,9 +72,8 @@ class S3Storage : public Storage {
   std::mutex mtx_;
   // Per-file write buffer for appendInBatch.
   std::unordered_map<std::string, std::vector<unsigned char>> cached_file_;
-  // Sealed-locally set. S3 objects are immutable once PUT, so this is
-  // really "we have called seal() on this name locally" and is used to
-  // return kSealed from future append attempts per the Storage contract.
+  // Names seal() was called on locally. Later appends to them return
+  // kSealed, per the Storage contract.
   std::unordered_set<std::string> sealed_files_;
 };
 

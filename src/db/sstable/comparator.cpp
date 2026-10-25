@@ -66,10 +66,6 @@ class BytewiseComparatorImpl : public Comparator {
 
 static Comparator* bytewise = nullptr;
 
-// static void InitModule() {
-//   bytewise = new BytewiseComparatorImpl;
-// }
-
 Comparator* newBytewiseComparator() {
   return new BytewiseComparatorImpl;
 }

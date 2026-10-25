@@ -6,8 +6,8 @@
 //   not_ready / not_bootstrapped -> sleep 1 s, retry, up to 20 times
 //   no reply / dead socket  -> reconnect, refetch the layout, retry once
 //   everything else         -> ServerError to the caller
-// `ctl` carries tokens, writes and trims; `tail` carries the reader's
-// bulk reads, so a 1000-entry read never delays a token request.
+// `ctl` carries tokens, writes and trims. `tail` carries the reader's
+// bulk reads, so a large read never delays a token request.
 #include "corfu/corfu_codec.h"
 #include "corfu/corfu_layout.h"
 #include "corfu/corfu_transport.h"
@@ -111,8 +111,8 @@ class Rpc {
   bool closed_ = false;
 
   void applyLayout(Layout const& l);
-  // Reopen a dead connection under reconnect_mtx_ (once per failure, not
-  // once per failed caller) and refresh the layout.
+  // Reopen a dead connection under reconnect_mtx_, once per failure and
+  // not once per failed caller, then refresh the layout.
   void ensureOpen(Connection& c);
   org::corfudb::runtime::ResponsePayloadMsg call(Connection& c,
                                                  org::corfudb::runtime::RequestPayloadMsg const& payload,

@@ -13,16 +13,15 @@ namespace checkpoint {
  * @brief The exact live state of the shared log at one global address.
  *
  * A State at covered_addr holds what a process has after it applied every
- * log entry with address <= covered_addr and nothing above it: the bytes of
- * every file that was not removed, the sealed files with their SEAL
- * address, and the names of removed files. A joiner that restores this
- * State and then applies entries covered_addr+1.. ends in the same state as
- * a joiner that replayed the log from address 0. That equality is the
- * invariant every writer and reader of a checkpoint relies on.
+ * log entry with address <= covered_addr and nothing above: the bytes of
+ * every file not removed, the sealed files with their SEAL address, and
+ * the names of removed files. A joiner that restores this State and then
+ * applies entries from covered_addr+1 ends in the same state as a joiner
+ * that replayed from address 0. Every writer and reader of a checkpoint
+ * relies on that equality.
  *
- * The bytes of removed files are not here on purpose. Compaction moved
- * them into SSTables on the object store before it removed the file, so
- * the checkpoint loses nothing, and dropping them is what bounds a join.
+ * Removed files keep no bytes here. Compaction moved them into SSTables
+ * before the remove, and dropping them bounds a join.
  */
 struct State {
   long covered_addr = -1;

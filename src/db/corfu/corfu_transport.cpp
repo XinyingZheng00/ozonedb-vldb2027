@@ -234,9 +234,8 @@ void Connection::sendFrame(std::string const& frame) {
   if (!alive()) throw TransportError("connection " + name_ + " to " + endpoint_ + " is not open");
   size_t off = 0;
   while (off < frame.size()) {
-    // MSG_NOSIGNAL: a peer that closed the socket (a Corfu restart) must
-    // surface as EPIPE here, not kill a process that installs no SIGPIPE
-    // handler (every smoke binary and runUnitTests).
+    // MSG_NOSIGNAL: a peer that closed the socket must surface as EPIPE
+    // here, not as SIGPIPE in a process with no SIGPIPE handler.
     ssize_t n = ::send(fd_, frame.data() + off, frame.size() - off, MSG_NOSIGNAL);
     if (n < 0) {
       if (errno == EINTR) continue;
@@ -272,9 +271,9 @@ Connection::ResponsePtr Connection::roundTrip(RequestPayloadMsg const& payload, 
       std::lock_guard<std::mutex> lk(pending_mtx_);
       pending_.erase(id);
     }
-    // The server drops requests it cannot route in silence (an
-    // unregistered payload type, or one sent before the handshake), so a
-    // timeout is the only signal. The caller reconnects.
+    // The server drops in silence a request it cannot route (an unknown
+    // payload type, or one sent before the handshake). A timeout is the
+    // only signal. The caller reconnects.
     throw TransportError("connection " + name_ + " to " + endpoint_ + ": no reply to request " +
                          std::to_string(id) + " (payload case " + std::to_string(payload.payload_case()) +
                          ") within " + std::to_string(timeout_ms) + " ms");
@@ -358,7 +357,7 @@ void Connection::keepaliveLoop() {
       break;
     }
     if (now - last_write_ms_.load() >= options_.keepalive_idle_ms) {
-      // Fire-and-forget ping: no waiter, the reply only refreshes
+      // Fire-and-forget ping: no waiter; the reply only refreshes
       // last_read_ms_. Both ignore flags, as NettyClientRouter.keepAlive.
       RequestPayloadMsg payload;
       payload.mutable_ping_request();

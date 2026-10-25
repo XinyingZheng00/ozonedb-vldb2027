@@ -23,10 +23,7 @@ DiskCacheStorage::DiskCacheStorage(std::unique_ptr<Storage> backing, Options opt
   if (!options_.dir.empty() && options_.dir.back() != '/') options_.dir += '/';
   storage_path = options_.dir;
   options_.max_queue = std::max<size_t>(1, options_.max_queue);
-  // An unusable tier directory is a configuration error, not something to
-  // limp on: the tier would silently become a pure pass-through while the
-  // run still claims to measure an SSD. Fail the open instead, the way
-  // Metadata fails an inconsistent config.
+  // An unusable tier directory is a configuration error: fail the open.
   std::error_code ec;
   fs::create_directories(options_.dir, ec);
   if (ec && !fs::is_directory(options_.dir)) {
@@ -35,8 +32,8 @@ DiskCacheStorage::DiskCacheStorage(std::unique_ptr<Storage> backing, Options opt
   if (!fs::is_directory(options_.dir)) {
     throw std::runtime_error("[disk_cache] not a directory: " + options_.dir);
   }
-  // create_directories succeeds on a read-only parent that already holds the
-  // directory, so probe the write we actually need.
+  // create_directories succeeds on a read-only parent that already holds
+  // the directory, so probe a write.
   std::string const probe = options_.dir + ".ozonedb_disk_cache_probe";
   {
     std::ofstream out(probe, std::ios::binary | std::ios::trunc);
@@ -46,8 +43,8 @@ DiskCacheStorage::DiskCacheStorage(std::unique_ptr<Storage> backing, Options opt
   }
   fs::remove(probe, ec);
   if (options_.admission == Admission::kFrequency) {
-    // Sized from the entries the budget holds: one chunk in chunk mode, and
-    // in file mode about one SSTable, taken as 64 MiB.
+    // Sized from the entries the budget holds: one chunk in chunk mode,
+    // about one 64 MiB SSTable in file mode.
     uint64_t const unit = options_.mode == Mode::kChunk ? options_.entry_bytes : (64u << 20);
     uint64_t const expected = std::max<uint64_t>(16, options_.capacity_bytes / unit);
     uint64_t const window = options_.admit_window ? options_.admit_window : 8 * expected;
@@ -298,7 +295,7 @@ bool DiskCacheStorage::publishPart(std::string const& name) {
 bool DiskCacheStorage::publishPartFile(std::string const& name, std::string const& part_path, size_t expected_size, AdmitMode how) {
   std::error_code ec;
   auto bytes = fs::file_size(part_path, ec);
-  if (ec) return false;  // the part vanished from under us (raced a discard/invalidate/rename)
+  if (ec) return false;  // the part vanished: a discard, invalidate or rename won the race
   if (expected_size != 0 && static_cast<size_t>(bytes) != expected_size) {
     fs::remove(part_path, ec);
     return false;
@@ -330,15 +327,13 @@ bool DiskCacheStorage::publishPartFile(std::string const& name, std::string cons
 void DiskCacheStorage::discardPart(std::string const& name) {
   std::lock_guard<std::mutex> lk(parts_mtx_);
   std::error_code ec;
-  // Poison rather than forget, whenever a write-through was actually in
-  // flight. The builder may still be appending: without the poison the next
-  // writePart would reopen the .part with `trunc` and the following flush
-  // would publish the tail of the file as a complete copy. publishPart clears the poison and publishes
-  // nothing, so the set only ever holds the write-throughs that were
-  // interrupted and is emptied by their own flush. Discarding a name with no
-  // part in flight -- which is what invalidate() does on every peer COMPACT
-  // input -- leaves nothing behind: a write-through that starts after this
-  // point writes the whole file from byte 0 and is safe to publish.
+  // Poison the name when a write-through was in flight. The builder may
+  // still be appending. Without the poison the next writePart would reopen
+  // the .part with trunc. The next flush would then publish the tail as a
+  // complete copy. publishPart clears the poison and publishes nothing.
+  // A name with no part in flight (invalidate() on every peer COMPACT
+  // input) is left alone. A write-through that starts later writes the
+  // whole file from byte 0.
   bool const had_stream = parts_.erase(name) != 0;
   bool const had_file = fs::remove(partPath(name), ec);  // true only if it was there
   if (had_stream || had_file) poisoned_parts_.insert(name);
@@ -417,15 +412,13 @@ void DiskCacheStorage::eraseLocked(std::string const& name, bool count_as_invali
 }
 
 void DiskCacheStorage::invalidate(std::string const& name) {
-  // The peer path (a COMPACT apply) hands us every input of the compaction,
-  // which includes datalog* names the tier never cached. Poisoning one of
-  // those would be harmless but pointless bookkeeping that never gets
-  // cleared, since publishPart only runs for cacheable names.
+  // A COMPACT apply passes every input, including datalog* names the tier
+  // never caches. A poison on those would never clear.
   if (!cacheable(name)) return;
   discardPart(name);
   std::lock_guard<std::mutex> lk(mtx_);
   if (options_.mode == Mode::kChunk) {
-    // dropChunkFileLocked subtracts only the present chunks: the writer of
+    // dropChunkFileLocked subtracts only the present chunks. The writer of
     // each pending chunk subtracts its own bytes when it finds no entry.
     dropChunkFileLocked(name, /*unlink=*/true, /*count_as_invalidated=*/true);
     return;
@@ -522,10 +515,9 @@ void DiskCacheStorage::fillOne(std::string const& name) {
     std::lock_guard<std::mutex> lk(mtx_);
     if (!mayTakeLocked(name, total, lru_.empty() ? std::string() : lru_.back(), fillMode())) return;  // refused before a byte moves
   }
-  // The fill owns this stream outright: it never touches parts_/writePart/
-  // discardPart, so a concurrent write-through or a peer invalidate() (which
-  // only ever acts on partPath(name)) can neither truncate nor interleave
-  // into it.
+  // The fill owns this stream. It never touches parts_, writePart or
+  // discardPart, so a concurrent write-through or invalidate() cannot
+  // truncate or interleave into it.
   std::string const tmp = fillPartPath(name);
   std::error_code ec;
   fs::create_directories(fs::path(tmp).parent_path(), ec);
@@ -557,9 +549,8 @@ void DiskCacheStorage::fillOne(std::string const& name) {
     fill_failed_.fetch_add(1);
     return;
   }
-  // Verify the part's byte count against the backing's before publishing: a
-  // mismatch (or the part having vanished) fails closed instead of admitting
-  // a truncated file as complete.
+  // Check the part's byte count against the backing's before publishing.
+  // A mismatch or a vanished part fails closed.
   if (publishPartFile(name, tmp, total, fillMode())) {
     fills_.fetch_add(1);
     fill_bytes_.fetch_add(total);
@@ -573,8 +564,8 @@ size_t DiskCacheStorage::reconcile(std::function<bool(std::string const&, size_t
   std::error_code ec;
   if (!fs::exists(options_.dir, ec)) return 0;
   if (options_.mode == Mode::kChunk) {
-    // Which chunks of a leftover sparse file hold data is not recorded, so a
-    // warm restart is not possible: start cold and drop every local file.
+    // Which chunks of a leftover sparse file hold data is not recorded:
+    // start cold and drop every local file.
     {
       std::lock_guard<std::mutex> lk(mtx_);
       chunks_.clear();
@@ -604,9 +595,8 @@ size_t DiskCacheStorage::reconcile(std::function<bool(std::string const&, size_t
     if (!it->is_regular_file(ec)) continue;
     std::string const rel = fs::relative(it->path(), options_.dir, ec).generic_string();
     if (ec) continue;
-    // Both the write-through's ".part" and the fill's own ".fillpart" are
-    // in-progress leftovers from before the last close and are dropped
-    // unconditionally, without asking `live`.
+    // ".part" and ".fillpart" leftovers from before the last close are
+    // dropped without asking `live`.
     bool const is_part = ends_with(rel, ".part") || ends_with(rel, ".fillpart");
     size_t const bytes = static_cast<size_t>(it->file_size(ec));
     if (is_part || !cacheable(rel) || !live(rel, bytes)) {
@@ -868,8 +858,8 @@ void DiskCacheStorage::dropChunkFileLocked(std::string const& name, bool unlink,
     if (cf.state[c] & kPresent) current_bytes_ -= chunkBytes(cf.size, c);
   }
   present_chunks_ -= cf.present;
-  // Swap-remove the ring slot. The hand tolerates it: at worst the moved
-  // file gets one extra second chance.
+  // Swap-remove the ring slot. The moved file gets at most one extra
+  // second chance.
   size_t const slot = cf.ring;
   size_t const last = ring_.size() - 1;
   if (slot != last) {

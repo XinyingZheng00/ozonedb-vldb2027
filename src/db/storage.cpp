@@ -6,7 +6,7 @@ namespace ozonedb {
 std::ifstream* FileStorage::getReadStream(std::string const& name) {
   std::unique_lock<std::shared_mutex> lock(read_mtx);
   if (this->read_streams.find(name) == this->read_streams.end()) {
-    // File streams are associated with files either on construction, or by calling member open.
+    // The stream opens the file on construction.
     this->read_streams[name] = std::make_unique<std::ifstream>(this->storage_path + name, std::ios::binary);
   }
   return this->read_streams[name].get();
@@ -32,19 +32,18 @@ void FileStorage::createDirectory(std::string name) {
       std::filesystem::create_directories(directory_path);
     } catch (std::exception const& e) {
       if (std::filesystem::exists(directory_path)) {
-        // Directory exists, likely a race condition
+        // A concurrent process created it.
         std::cout << "Failed to create directory due to race condition, it's normal." << std::endl;
       } else {
-        // Actual error occurred
+        // Real error.
         std::cerr << "Failed to create directory for unknown reason." << std::endl;
       }
     }
   }
 }
 
-// One mutex per file name, created on first use and never erased (the
-// write stream it guards is never erased either). append_map_mtx_ guards
-// only the map lookup, so two writers on different files never contend.
+// One mutex per file name, created on first use and never erased.
+// append_map_mtx_ guards only the map lookup.
 std::mutex& FileStorage::appendMutexFor(std::string const& name) {
   std::lock_guard<std::mutex> lk(append_map_mtx_);
   auto it = append_mtx_.find(name);
@@ -66,14 +65,12 @@ std::mutex& FileStorage::readMutexFor(std::string const& name) {
 Status FileStorage::append(std::string const& fileName, unsigned char* const& data, int length) {
   std::ofstream* output_file = getWriteStream(fileName);
   if (isSealed(fileName)) {
-    // std::cerr << getpid() << ":The file is sealed: " << fileName << std::endl;
     return Status::kSealed;
   } else if (!output_file->is_open()) {
     std::cerr << "Failed to open output file: " << fileName << std::endl;
     return Status::kFailure;
   }
-  // Hold the per-file lock across write + flush + fsync. Without it two
-  // threads interleave bytes inside one ofstream and the file is corrupt.
+  // Hold the per-file lock across write + flush + fsync.
   std::lock_guard<std::mutex> lk(appendMutexFor(fileName));
   output_file->write(reinterpret_cast<char const*>(data), length);
   output_file->flush();
@@ -87,7 +84,6 @@ Status FileStorage::append(std::string const& fileName, unsigned char* const& da
 Status FileStorage::appendNoFlush(std::string const& fileName, unsigned char* const& data, int length) {
   std::ofstream* output_file = getWriteStream(fileName);
   if (isSealed(fileName)) {
-    // std::cerr << getpid() << ":The file is sealed: " << fileName << std::endl;
     return Status::kSealed;
   } else if (!output_file->is_open()) {
     std::cerr << "Failed to open output file: " << fileName << std::endl;
@@ -95,7 +91,6 @@ Status FileStorage::appendNoFlush(std::string const& fileName, unsigned char* co
   }
   std::lock_guard<std::mutex> lk(appendMutexFor(fileName));
   output_file->write(reinterpret_cast<char const*>(data), length);
-  // outputFile.flush();
   if (output_file->good()) {
     return Status::kSuccess;
   } else
@@ -117,8 +112,8 @@ Status FileStorage::flush(std::string const& fileName) {
 }
 
 Status FileStorage::read(std::string const& fileName, unsigned char*& data, size_t& size) {
-  // Hold the per-file lock across seek + read: the ifstream is shared by
-  // every thread that reads this file (see readMutexFor).
+  // Hold the per-file lock across seek + read: every thread that reads
+  // this file shares the ifstream.
   std::lock_guard<std::mutex> lk(readMutexFor(fileName));
   std::ifstream* input_file = getReadStream(fileName);
   if (!input_file->is_open()) {
@@ -138,7 +133,7 @@ Status FileStorage::read(std::string const& fileName, unsigned char*& data, size
 }
 
 Status FileStorage::read(std::string const& fileName, unsigned char*& data, size_t a, size_t length) {
-  // read data from a, read b bytes in total, similar as previous read method
+  // Read length bytes from position a. Same lock rule as read() above.
   std::lock_guard<std::mutex> lk(readMutexFor(fileName));
   std::ifstream* input_file = getReadStream(fileName);
   if (!input_file->is_open()) {
@@ -151,13 +146,10 @@ Status FileStorage::read(std::string const& fileName, unsigned char*& data, size
     return Status::kFailure;
   }
   seek(*input_file, a);
-  // Read the specified number of bytes
   data = new unsigned char[length];
   input_file->read(reinterpret_cast<char*>(data), length);
-  // `input_file` is a pointer: `!input_file` tested it for null and never
-  // the stream, so a short read (file truncated or removed under the
-  // reader) returned kSuccess with an uninitialised tail. Test the stream
-  // and the byte count, and hand back no buffer on failure.
+  // Test the stream and the byte count. A short read (file truncated or
+  // removed under the reader) returns kFailure and no buffer.
   if (!*input_file || static_cast<size_t>(input_file->gcount()) != length) {
     if (input_file->eof()) {
       std::cerr << "End of file reached prematurely while reading from: " << fileName << std::endl;
@@ -175,17 +167,16 @@ Status FileStorage::read(std::string const& fileName, unsigned char*& data, size
 
 size_t FileStorage::size(std::string fileName) {
   std::filesystem::path full_path = this->storage_path + fileName;
-  std::error_code ec;  // To avoid throwing exceptions
+  std::error_code ec;  // No exceptions.
   auto file_size = std::filesystem::file_size(full_path, ec);
   if (ec) {
-    // std::cout <<"File does not exist or some other error occurred"<<std::endl;
     return 0;
   }
   return file_size;
 }
 
 void FileStorage::seal(std::string fileName) {
-  // make the file readonly
+  // Sealed means read-only.
   std::filesystem::permissions(
       this->storage_path + fileName,
       std::filesystem::perms::owner_read | std::filesystem::perms::others_read);
@@ -193,11 +184,10 @@ void FileStorage::seal(std::string fileName) {
 
 bool FileStorage::isSealed(std::string fileName) {
   std::filesystem::path full_path = this->storage_path + fileName;
-  std::error_code ec;  // To avoid throwing exceptions
+  std::error_code ec;  // No exceptions.
   auto sealed = std::filesystem::status(this->storage_path + fileName, ec).permissions() ==
                 (std::filesystem::perms::owner_read | std::filesystem::perms::others_read);
   if (ec) {
-    // std::cout <<"File does not exist or some other error occurred"<<std::endl;
     return false;
   }
   return sealed;
@@ -205,10 +195,8 @@ bool FileStorage::isSealed(std::string fileName) {
 
 void FileStorage::remove(std::string fileName) {
   try {
-    // Attempt to remove the file
     std::filesystem::remove(this->storage_path + fileName);
   } catch (const std::filesystem::filesystem_error &e) {
-    // Output the error message and error code
     std::cerr << "Error deleting file: " << e.what() << '\n';
     std::cerr << "Error code: " << e.code().message() << '\n';
   }
@@ -219,7 +207,7 @@ bool FileStorage::exist(std::string fileName) {
 }
 
 void FileStorage::seek(std::ifstream& file, int position) {
-  // seek to the position in the file
+  // Clear a failed state before the seek.
   if (file.tellg() == -1) {
     file.clear();
   }
