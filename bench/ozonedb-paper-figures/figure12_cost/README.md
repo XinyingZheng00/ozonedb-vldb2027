@@ -38,11 +38,7 @@ same file.
 
 ## Regenerate the data (cluster)
 
-Run the chains. See `scripts/campaign-cost2-chains/README.md`. The chains take days of
+Set `OZONEDB_HOME`, `${NODE_A}`, `${NODE_B}`, `${NODE_C}` and `${NODE_*_HOST}`, then run the
+chains. See `scripts/campaign-cost2-chains/README.md`. The chains take days of
 wall-clock time. Then run `scripts/campaign-cost2/extract_all.sh`
 to rebuild the TSVs. It writes them as `bench/results-cost2-*.tsv`. Move them into `data/`.
-
-The chains hard-code a laptop worktree in `OZONEDB_HOME` and a log dir. In the artifact,
-`${NODE_A}`, `${NODE_B}`, `${NODE_C}` and `${NODE_*_HOST}` replace the CloudLab login and
-the three node hostnames. The TSV was extracted from the raw result directories
-(`bench/results/local/cost2-20260828-*`). Those directories were not kept.

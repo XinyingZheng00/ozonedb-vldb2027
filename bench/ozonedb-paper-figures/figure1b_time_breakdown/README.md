@@ -38,5 +38,3 @@ the two `perf record` commands at the bottom of `rocksdb_workflow.sh`. These are
 run and the baseline run, with `--threads=4`, 100 s. Apply
 `analyse_time_share_inclusive.patch` to `analyse_time_share.py`. Run the script next to the
 two `perf_updaterandom_*.data` files. Write the two shares per bar into `time_breakdown.csv`.
-
-The perf profiles behind the shipped CSV were not kept. The CSV is shipped as is.

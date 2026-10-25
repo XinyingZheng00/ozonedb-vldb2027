@@ -6,7 +6,7 @@ one facet each for 2, 4, 8 and 16 writers. The curves are OzoneKV linearizable,
 CR-SQLite-sync and CR-SQLite-async at three sync intervals.
 
 | File | What it is |
-|---|---|
+| --- | --- |
 | `paper_figure.pdf` | the figure as it appears in the paper |
 | `data/crsqlite/visibility-xnode-20260821-170053` … `-170548` | 16 runs. At each of 2, 4, 8 and 16 writers: CR-SQLite-sync (`cr-sqlite-syncread`, read barrier) and CR-SQLite-async at sync intervals of 10, 50 and 200 ms |
 | `data/ozonedb/visibility-xnode-20260821-{170608,170635,170703,174650}` | OzoneKV linearizable at 2, 4, 8 and 16 writers |
@@ -16,11 +16,10 @@ CR-SQLite-sync and CR-SQLite-async at three sync intervals.
 | `scripts/crsqlite/local/run_visibility_cross_node.sh` | `--read-barrier` (sync) or `--interval-ms M` (async), with `--num-writers N`. Drives `bench.py visibility-reader` and `visibility-writer` |
 | `scripts/crsqlite/bench.py`, `bench_lib/`, `sync_daemon.py`, `generate_workload.py`, `ycsb_config.py` | the CR-SQLite side, from the crsqlite repo |
 
-Each run directory holds three kinds of files:
+Each run directory holds two files:
 
 - `summary.json`: the parameters and the percentiles.
 - `visibility.csv`: one row per insert. The plot reads this file.
-- the per-writer CSVs and logs.
 
 All 20 runs are cross-node. The writers run on one client. The reader runs alone on another
 client. The writer sends the ack over TCP. The latency is measured from the time the reader
@@ -41,7 +40,7 @@ default layout is the paper's layout: a 2×2 grid with the legend at the bottom.
 
 ## Regenerate the data (cluster)
 
-Use three nodes. The writers run on one client. The reader runs on a second client. Corfu
+Use three nodes. The writers run on one node. The reader runs on a second node. Corfu
 and MinIO run on the third node. For each writer count, run two scripts:
 
 - `scripts/ozonekv/local/run_visibility_cross_node.sh --linearizable --writers N`
@@ -49,15 +48,3 @@ and MinIO run on the third node. For each writer count, run two scripts:
   `--read-barrier` and once for each of `--interval-ms 10|50|200`.
 
 All runs take about 1 h.
-
-Notes:
-
-- `plot_consistency.py` is crsqlite's working-tree copy with the `visibility-scaling`
-  subcommand. `bench/scripts/plot/plot_consistency.py` is the same file.
-- The paper's text gives OzoneKV a median of 1 ms. These runs give 3.71, 4.05, 3.22 and
-  3.54 ms at 2, 4, 8 and 16 writers (`summary.json`, `visibility_ms_p50`). The claim
-  "16× lower at 16 writers" does match: 56.3 / 3.54. The paper's CR-SQLite-sync medians
-  (4.5 ms at 2 writers, 56.3 ms at 16) match this set exactly. This match is how we
-  identified these 20 directories among the same-day runs.
-- The data is 37 MB. Most of it is the per-writer CSVs of the CR-SQLite runs. The plot
-  does not read those CSVs.

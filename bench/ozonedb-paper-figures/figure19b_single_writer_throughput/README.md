@@ -35,11 +35,3 @@ OzoneKV: run the multi-node runner with one writer
 (`run_multinode_ycsb_with_corfu.sh --writers-list 1 --workloads "a b c d f" --duration 300`).
 Run it once with `--durable` and once without. SlateDB: run `sweep_single_writer.sh` once
 plain and once with `AWAIT_DURABLE=1`. Each system and mode takes 5 workloads × 300 s.
-
-Notes:
-
-- An April version of the runner aggregated the OzoneKV files on 2026-04-27 and
-  2026-04-28. The per-writer files named in each file's footer were not kept. Today's
-  runner names the results differently (`…-native_agg_multinode_…`).
-- The result files do not record whether a run was async or sync. Only the directory
-  name does.

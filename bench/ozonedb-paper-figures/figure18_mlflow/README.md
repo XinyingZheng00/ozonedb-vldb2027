@@ -22,12 +22,7 @@ python3 plot_combined.py --out ../../../paper_figure.pdf
 ```
 
 The script needs matplotlib. It reads all three `data/*/trials.csv` files. Its
-output matches `paper_figure.pdf`. We rendered both at 2000 px wide: no pixel
-differs, and every label is within 0.1 pt of its position in the paper.
-
-The original script that combined the panels was lost. So we rebuilt
-`plot_combined.py` on 2026-10-20 from the PDF of the paper. It keeps the
-details of the paper:
+output matches `paper_figure.pdf`. The script keeps the details of the paper:
 - The script draws only OzoneDB, SQLite and Postgres. It leaves out the `postgres_serialized` control.
 - Some lines are offset, so they do not overlap ("Lines perturbed slightly for clarity" in the caption). In the error-rate panel, OzoneDB is offset by +0.0015 and Postgres by +0.003. Their real values are 0. In the RSS panel, SQLite is offset by +0.8 MB. Its real value is 0.
 - The RSS panel uses a symlog y-axis fixed to −2 … 2722 MB. The compute-time panel uses a linear y-axis.
