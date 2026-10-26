@@ -1,0 +1,101 @@
+---
+# Push the local working tree to every CloudLab client host at once.
+#
+# The incremental push for a node that bootstrap.yml has set up: it skips
+# .git/ and moves only changed files.
+#
+#   cd $OZONEDB_HOME/bench/ansible
+#   ansible-playbook sync.yml                        # push to every host
+#   ansible-playbook sync.yml -e build=true          # push, then build.sh on each host
+#   ansible-playbook sync.yml --check --diff         # dry run (rsync -n)
+#   ansible-playbook sync.yml --limit <host>
+#   ansible-playbook sync.yml -e delete=true         # mirror: prune remote-only files
+#
+# Sibling repos ride along:
+#   ansible-playbook sync.yml \
+#     -e '{"extra_repos":[{"src":"../../../slatedb/","dest":"slatedb"}]}'
+# A relative src resolves against this directory, a relative dest against
+# the remote user's home.
+#
+# For a node that has never been set up, use bootstrap.yml.
+
+- name: Sync the OzoneDB working tree to the CloudLab clients
+  hosts: "{{ target | default('clients') }}"
+  gather_facts: false
+  # free: a slow host does not hold up the others.
+  strategy: free
+
+  vars:
+    repo_src: "{{ playbook_dir }}/../../"
+    extra_repos: []
+    build: false
+    delete: false
+
+  tasks:
+    - name: Resolve the destination path
+      ansible.builtin.include_tasks: tasks/resolve_dest.yml
+      tags: [sync, build]
+
+    - name: Ensure the destination directory exists
+      ansible.builtin.file:
+        path: "{{ repo_dest }}"
+        state: directory
+        mode: "0755"
+      tags: [sync]
+
+    - name: Sync ozonedb
+      ansible.posix.synchronize:
+        src: "{{ repo_src }}"
+        dest: "{{ repo_dest }}/"
+        # No -o/-g: a non-root rsync cannot set them, and they report spurious changes.
+        owner: false
+        group: false
+        compress: true
+        delete: "{{ delete | bool }}"
+        # Reuse the ControlPersist connection from ansible.cfg.
+        use_ssh_args: true
+        rsync_opts: "{{ rsync_excludes_incremental }}"
+      register: sync_result
+      tags: [sync]
+
+    # rsync -a keeps the source mtime. A source older than the node's last
+    # build (different clocks, or a rebase that restores an older file) makes
+    # make skip it and link stale objects. Touch the sources after a transfer
+    # so make compares against node time; this forces a full rebuild.
+    - name: Refresh source mtimes so make rebuilds what changed
+      ansible.builtin.raw: >-
+        bash -lc 'cd {{ repo_dest | quote }} &&
+        find src tests CMakeLists.txt -type f -exec touch {} + 2>/dev/null; true'
+      when: sync_result is changed
+      changed_when: false
+      tags: [sync]
+
+    - name: Sync extra repos
+      ansible.posix.synchronize:
+        src: "{{ (item.src if item.src.startswith('/') else playbook_dir ~ '/' ~ item.src) }}"
+        dest: "{{ item.dest }}/"
+        owner: false
+        group: false
+        compress: true
+        delete: "{{ item.delete | default(delete) | bool }}"
+        use_ssh_args: true
+        rsync_opts: "{{ item.rsync_opts | default(rsync_excludes_incremental) }}"
+      loop: "{{ extra_repos }}"
+      loop_control:
+        label: "{{ item.src }} -> {{ item.dest }}"
+      tags: [sync]
+
+    - name: Rebuild OzoneDB + JNI shim + YCSB binding
+      ansible.builtin.shell: bash -lc 'cd {{ repo_dest | quote }} && bash bench/scripts/build.sh'
+      register: build_result
+      changed_when: true
+      when: build | bool
+      async: 3600
+      poll: 15
+      tags: [build]
+
+    - name: Show the tail of each build
+      ansible.builtin.debug:
+        msg: "{{ build_result.stdout_lines[-15:] | default([]) }}"
+      when: build | bool
+      tags: [build]

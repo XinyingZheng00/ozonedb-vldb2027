@@ -1,0 +1,469 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Run one Corfu server on a remote node and sweep YCSB workloads and
+# writers-per-host on the client nodes through run_multinode_ycsb.py.
+#
+# Unlike run_ycsb_with_corfu.sh, YCSB does not run on this machine. It runs on
+# $CLIENT_HOSTS; each host starts writers_per_host processes through
+# run_local_ycsb_multiproc.py. All writers share the one Corfu instance on
+# $CORFU_BIND_HOST and one stream.
+#
+# Loop order: trials -> workloads -> writers_per_host. Per iteration: stop
+# corfu, start it on a clean /mnt/corfu/run_batch copied from /mnt/corfu/load,
+# wait for the port, run run_multinode_ycsb.py --workloads <wl>
+# --writers_per_host <n> --trial <k> [--max_exec_time <s>] [--linearizable],
+# stop corfu. After the sweep, corfu is started once more and left running.
+# All iterations share one OZONEDB_RUN_TAG (--run-tag, default: timestamp).
+#
+# A driver calls this once per cell: --trial N --duration S --run-tag TAG.
+# The read mode is a flag, never a ycsb.yaml edit: --linearizable is forwarded
+# to every client and labels the result files ozonedb-corfu-linearizable.
+#
+# PRECONDITIONS
+#   - Each client host's ycsb.yaml resolves corfu.endpoint to
+#     $CORFU_BIND_HOST:$CORFU_PORT.
+#   - cloudlab.hosts in ycsb.yaml lists the client hosts (or pass --client-hosts).
+#   - cloudlab.ssh_user / cloudlab.ssh_private_key_path resolve for the client
+#     hosts (or pass --client-user / --client-ssh-key).
+#   - For non-corfu db_names (rocksdb, ozonedb local, sqlite) the loader must
+#     have produced the per-writer cached_data dirs on each client host.
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+: "${OZONEDB_HOME:=$(cd "$SCRIPT_DIR/../../.." && pwd)}"
+export OZONEDB_HOME
+
+CONFIG="${OZONEDB_HOME}/bench/scripts/config/ycsb.yaml"
+
+# All empty: resolved from ycsb.yaml after argument parsing, so the cluster's
+# addressing has one copy.
+CORFU_BIND_HOST=""
+CORFU_SSH_HOST=""
+CORFU_USER="${SSH_USER:-}"
+CORFU_SSH_KEY=""
+CORFU_DIR="~/CorfuDB"
+CORFU_PORT=""
+CORFU_LOG="/tmp/corfu_server.log"
+
+CLIENT_HOSTS=""
+CLIENT_USER=""
+CLIENT_SSH_KEY=""
+
+WORKLOADS="a b c d f"
+WRITERS_LIST="1 2 4 8"
+TRIALS=1
+TRIALS_SET=0
+TRIAL=""          # --trial N: exactly this trial (one cell per invocation)
+DURATION=""       # --duration S: forwarded to every client as --max_exec_time
+LINEARIZABLE=0    # --linearizable: strict reads, label ozonedb-corfu-linearizable
+WRITE_MODE=""     # --write-mode sync|async: async acks from the buffer, label -async
+COMMIT_INTERVAL_MS=""  # --commit-interval-ms N: submit period of async writes
+LOG_TRIM=0        # --log-trim: writer 0 checkpoints + trims the Corfu stream
+LRU_CACHE_BYTES=""  # --lru-cache-bytes N: per-process block cache, label -lru64m
+CACHE_WARM=0      # --cache-warm: warm compaction outputs into the block cache, label -warm
+CACHE_WARM_MAX_LEVEL=""     # --cache-warm-max-level N (engine default 1), label -wlN
+CACHE_WARM_MAX_FRACTION=""  # --cache-warm-max-fraction F (engine default 0.25), label -wf<pct>
+DISK_CACHE_BYTES=""      # --disk-cache-bytes N: disk-cache tier capacity per writer, label -dc<size>
+DISK_CACHE_DIR=""        # --disk-cache-dir DIR: root of the per-writer tier dirs (default /tank/cache)
+DISK_CACHE_KEEP_PAGES=0  # --disk-cache-keep-pages: keep the page cache after tier reads, label -kp
+DISK_CACHE_MODE=""         # --disk-cache-mode file|chunk: tier entry unit, label -ch<entry>
+DISK_CACHE_ENTRY_BYTES=""  # --disk-cache-entry-bytes N: chunk size in chunk mode
+DISK_CACHE_ADMISSION=""    # --disk-cache-admission always|frequency: label -adm
+RECORD_CNT=""     # --record-cnt N: dataset size, forwarded as --record_cnt
+RUN_TAG=""        # --run-tag: bench/results/local/<tag> on every host and here
+DRY_RUN=0
+
+usage() {
+  cat <<EOF
+Usage: $(basename "$0") [options]
+
+  --config PATH             ycsb.yaml (default: $CONFIG)
+
+  Corfu server (one node):
+  --corfu-host HOST         sets both addresses below at once
+  --corfu-bind-host ADDR    corfu_server -a, and what clients dial
+                            (default: nodes.log.lan from ycsb.yaml)
+  --corfu-ssh-host HOST     how this script reaches the node
+                            (default: nodes.log.ssh, else nodes.log.lan)
+  --corfu-user USER         (default: nodes.ssh_user from ycsb.yaml)
+  --corfu-ssh-key PATH      (default: nodes.ssh_private_key_path)
+  --corfu-dir PATH          corfu repo on remote (default: $CORFU_DIR)
+  --corfu-port PORT         (default: corfu.port from ycsb.yaml)
+
+  YCSB client nodes (orchestrated via run_multinode_ycsb.py):
+  --client-hosts "h1,h2"    comma-separated. Default: read cloudlab.hosts
+                            from ycsb.yaml.
+  --client-user USER        default: read cloudlab.ssh_user from ycsb.yaml.
+  --client-ssh-key PATH     default: read cloudlab.ssh_private_key_path
+                            from ycsb.yaml.
+
+  Sweep:
+  --workloads "a b c"       space-separated workload letters
+                            (default: "$WORKLOADS")
+  --writers-list "1 2"      space-separated writers_per_host values
+                            (default: "$WRITERS_LIST")
+  --trials N                run trials 1..N per (workload, writers_per_host)
+                            (default: $TRIALS)
+  --trial N                 run exactly trial N -- one cell per invocation,
+                            as a campaign driver does. Excludes --trials.
+  --duration SECONDS        cap every YCSB run at this many seconds
+                            (forwarded to each client as --max_exec_time;
+                            default: each client's local.run.max_exec_time)
+  --linearizable            strict reads: every writer's generated
+                            shared_config gets linearizable_reads=true +
+                            trust_background_tail=false, and result files
+                            are labelled ozonedb-corfu-linearizable instead
+                            of ozonedb-corfu. Use this, never a ycsb.yaml edit.
+  --write-mode MODE         sync (default): a put is acked once it is
+                            sequenced in the shared log. async: a put is
+                            acked from the writer's buffer, which is
+                            submitted every --commit-interval-ms; result
+                            files get the -async token
+                            (ozonedb-corfu-async-native). The paper's
+                            OzoneKV-sync / OzoneKV-async series. Forwarded
+                            to each client as --write-mode.
+  --commit-interval-ms N    with --write-mode async: submit period in
+                            milliseconds (default 10)
+  --log-trim                log trimming: global writer 0 checkpoints the
+                            Corfu stream to the bucket and trims behind the
+                            checkpoint; every writer opens from the newest
+                            checkpoint. Forwarded to each
+                            client as --log-trim.
+  --lru-cache-bytes N       per-process SSTable block cache in bytes, written
+                            into every writer's generated shared_config and
+                            appended to the result label (-lru64m).
+  --cache-warm              compaction-aware block cache: every writer warms
+                            the outputs of an applied COMPACT into its cache
+                            (cache_warm_enabled=true in each generated
+                            shared_config).
+                            Result label gets -warm. Forwarded to each
+                            client as --cache-warm.
+  --cache-warm-max-level N  with --cache-warm: warm outputs of levels up to
+                            N (engine default 1); label -wlN.
+  --cache-warm-max-fraction F
+                            with --cache-warm: warm an output only if its
+                            bytes are at most F x lru_cache_bytes (engine
+                            default 0.25); label -wf<percent>.
+  --disk-cache-bytes N     Disk-cache tier capacity per writer (bytes); label token -dc<size>
+  --disk-cache-dir DIR     Root of the per-writer tier dirs (default /tank/cache)
+  --disk-cache-keep-pages  Keep the page cache after tier reads (label -kp)
+  --disk-cache-mode M      Tier entry unit: file (default) or chunk; label -ch<entry>
+  --disk-cache-entry-bytes N
+                            Chunk size in chunk mode (power of two >= 4096, default 65536)
+  --disk-cache-admission A always (default) or frequency (TinyLFU); label -adm
+  --record-cnt N            dataset size in records, forwarded to every
+                            client as --record_cnt (must match the load).
+  --run-tag TAG             results dir bench/results/local/TAG on every host
+                            and locally (default: timestamp). Reusing a tag
+                            across invocations is safe -- trial, workload
+                            and writer count are all in the filenames.
+  --dry-run                 print the iteration plan and the exact
+                            run_multinode_ycsb.py command per iteration;
+                            no ssh, no corfu restart.
+
+  -h | --help
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+  --config)         CONFIG="$2"; shift 2 ;;
+  --corfu-host)      CORFU_BIND_HOST="$2"; CORFU_SSH_HOST="$2"; shift 2 ;;
+  --corfu-bind-host) CORFU_BIND_HOST="$2"; shift 2 ;;
+  --corfu-ssh-host)  CORFU_SSH_HOST="$2"; shift 2 ;;
+  --corfu-user)     CORFU_USER="$2"; shift 2 ;;
+  --corfu-ssh-key)  CORFU_SSH_KEY="$2"; shift 2 ;;
+  --corfu-dir)      CORFU_DIR="$2"; shift 2 ;;
+  --corfu-port)     CORFU_PORT="$2"; shift 2 ;;
+  --client-hosts)   CLIENT_HOSTS="$2"; shift 2 ;;
+  --client-user)    CLIENT_USER="$2"; shift 2 ;;
+  --client-ssh-key) CLIENT_SSH_KEY="$2"; shift 2 ;;
+  --workloads)      WORKLOADS="$2"; shift 2 ;;
+  --writers-list)   WRITERS_LIST="$2"; shift 2 ;;
+  --trials)         TRIALS="$2"; TRIALS_SET=1; shift 2 ;;
+  --trial)          TRIAL="$2"; shift 2 ;;
+  --duration)       DURATION="$2"; shift 2 ;;
+  --linearizable)   LINEARIZABLE=1; shift ;;
+  --write-mode)     WRITE_MODE="$2"; shift 2 ;;
+  --commit-interval-ms) COMMIT_INTERVAL_MS="$2"; shift 2 ;;
+  --log-trim)       LOG_TRIM=1; shift ;;
+  --lru-cache-bytes) LRU_CACHE_BYTES="$2"; shift 2 ;;
+  --cache-warm)     CACHE_WARM=1; shift ;;
+  --cache-warm-max-level)    CACHE_WARM_MAX_LEVEL="$2"; shift 2 ;;
+  --cache-warm-max-fraction) CACHE_WARM_MAX_FRACTION="$2"; shift 2 ;;
+  --disk-cache-bytes) DISK_CACHE_BYTES="$2"; shift 2 ;;
+  --disk-cache-dir) DISK_CACHE_DIR="$2"; shift 2 ;;
+  --disk-cache-keep-pages) DISK_CACHE_KEEP_PAGES=1; shift ;;
+  --disk-cache-mode) DISK_CACHE_MODE="$2"; shift 2 ;;
+  --disk-cache-entry-bytes) DISK_CACHE_ENTRY_BYTES="$2"; shift 2 ;;
+  --disk-cache-admission) DISK_CACHE_ADMISSION="$2"; shift 2 ;;
+  --record-cnt)     RECORD_CNT="$2"; shift 2 ;;
+  --run-tag)        RUN_TAG="$2"; shift 2 ;;
+  --dry-run)        DRY_RUN=1; shift ;;
+  -h | --help)      usage; exit 0 ;;
+  *)
+    echo "Unknown option: $1" >&2
+    usage
+    exit 1
+    ;;
+  esac
+done
+
+read -r -a WORKLOADS_ARR <<<"$WORKLOADS"
+read -r -a WRITERS_ARR <<<"$WRITERS_LIST"
+if [[ ${#WORKLOADS_ARR[@]} -eq 0 || ${#WRITERS_ARR[@]} -eq 0 ]]; then
+  echo "workloads and writers-list must each contain at least one value" >&2
+  exit 1
+fi
+if ! [[ "$TRIALS" =~ ^[1-9][0-9]*$ ]]; then
+  echo "--trials must be a positive integer (got: $TRIALS)" >&2
+  exit 1
+fi
+if [[ -n "$TRIAL" ]]; then
+  if [[ "$TRIALS_SET" -eq 1 ]]; then
+    echo "--trial and --trials are mutually exclusive" >&2
+    exit 1
+  fi
+  if ! [[ "$TRIAL" =~ ^[1-9][0-9]*$ ]]; then
+    echo "--trial must be a positive integer (got: $TRIAL)" >&2
+    exit 1
+  fi
+  TRIAL_SEQ=("$TRIAL")
+else
+  # read -r -a, not mapfile: bash 3.2 on macOS has no mapfile.
+  read -r -a TRIAL_SEQ <<<"$(seq 1 "$TRIALS" | tr '\n' ' ')"
+fi
+if [[ -n "$DURATION" ]] && ! [[ "$DURATION" =~ ^[1-9][0-9]*$ ]]; then
+  echo "--duration must be a positive integer (got: $DURATION)" >&2
+  exit 1
+fi
+if [[ -n "$RUN_TAG" ]] && ! [[ "$RUN_TAG" =~ ^[A-Za-z0-9._-]+$ ]]; then
+  echo "--run-tag is a directory name and must match [A-Za-z0-9._-]+ (got: $RUN_TAG)" >&2
+  exit 1
+fi
+if [[ -n "$WRITE_MODE" && "$WRITE_MODE" != sync && "$WRITE_MODE" != async ]]; then
+  echo "--write-mode must be sync or async (got: $WRITE_MODE)" >&2; exit 2
+fi
+if [[ -n "$COMMIT_INTERVAL_MS" ]] && ! [[ "$COMMIT_INTERVAL_MS" =~ ^[1-9][0-9]*$ ]]; then
+  echo "--commit-interval-ms must be a positive integer (got: $COMMIT_INTERVAL_MS)" >&2; exit 2
+fi
+if [[ "$WRITE_MODE" == async && "$LINEARIZABLE" -eq 1 ]]; then
+  echo "--write-mode async cannot be combined with --linearizable" >&2; exit 2
+fi
+if [[ -n "$LRU_CACHE_BYTES" ]] && ! [[ "$LRU_CACHE_BYTES" =~ ^[1-9][0-9]*$ ]]; then
+  echo "--lru-cache-bytes must be a positive integer (got: $LRU_CACHE_BYTES)" >&2
+  exit 1
+fi
+if [[ -n "$DISK_CACHE_MODE" && "$DISK_CACHE_MODE" != file && "$DISK_CACHE_MODE" != chunk ]]; then
+  echo "--disk-cache-mode must be file or chunk (got: $DISK_CACHE_MODE)" >&2; exit 2
+fi
+if [[ -n "$DISK_CACHE_ADMISSION" && "$DISK_CACHE_ADMISSION" != always && "$DISK_CACHE_ADMISSION" != frequency ]]; then
+  echo "--disk-cache-admission must be always or frequency (got: $DISK_CACHE_ADMISSION)" >&2; exit 2
+fi
+if [[ -n "$DISK_CACHE_ENTRY_BYTES" ]] && ! [[ "$DISK_CACHE_ENTRY_BYTES" =~ ^[1-9][0-9]*$ ]]; then
+  echo "--disk-cache-entry-bytes must be a positive integer (got: $DISK_CACHE_ENTRY_BYTES)" >&2; exit 2
+fi
+if [[ -n "$DISK_CACHE_BYTES" ]] && ! [[ "$DISK_CACHE_BYTES" =~ ^[1-9][0-9]*$ ]]; then
+  echo "--disk-cache-bytes must be a positive integer (got: $DISK_CACHE_BYTES)" >&2
+  exit 1
+fi
+if [[ -n "$RECORD_CNT" ]] && ! [[ "$RECORD_CNT" =~ ^[1-9][0-9]*$ ]]; then
+  echo "--record-cnt must be a positive integer (got: $RECORD_CNT)" >&2
+  exit 1
+fi
+
+# ---------------------------------------------------------------------------
+# The corfu node comes from ycsb.yaml's `nodes:` block, never a hardcoded
+# constant. The two addresses are separate:
+#   BIND  nodes.log.lan: what corfu_server -a binds, and what clients dial
+#   SSH   nodes.log.ssh: how this script reaches the box (falls back to lan)
+# Flags override both; --corfu-host sets both.
+# ---------------------------------------------------------------------------
+cfg() { python3 "$OZONEDB_HOME/bench/scripts/ycsb_config.py" --config "$CONFIG" "$@"; }
+[[ -n "$CORFU_BIND_HOST" ]] || CORFU_BIND_HOST="$(cfg --node log --field lan)" || exit 1
+[[ -n "$CORFU_SSH_HOST"  ]] || CORFU_SSH_HOST="$(cfg --node log --field ssh)"  || exit 1
+[[ -n "$CORFU_USER"      ]] || CORFU_USER="$(cfg --get nodes.ssh_user)"        || exit 1
+[[ -n "$CORFU_SSH_KEY"   ]] || CORFU_SSH_KEY="$(cfg --get nodes.ssh_private_key_path)" || exit 1
+[[ -n "$CORFU_PORT"      ]] || CORFU_PORT="$(cfg --get corfu.port)"            || exit 1
+echo "[corfu] node: ssh=$CORFU_SSH_HOST bind=$CORFU_BIND_HOST port=$CORFU_PORT (from $CONFIG)"
+
+CORFU_SSH_OPTS=(-o BatchMode=yes -o ServerAliveInterval=30 -o StrictHostKeyChecking=accept-new)
+[[ -n "$CORFU_SSH_KEY" ]] && CORFU_SSH_OPTS+=(-i "$CORFU_SSH_KEY")
+CORFU_TARGET="${CORFU_USER}@${CORFU_SSH_HOST}"
+
+corfu_sh() {
+  ssh "${CORFU_SSH_OPTS[@]}" "$CORFU_TARGET" "$1"
+}
+
+# Probed on the corfu node against its own bind address. A local /dev/tcp
+# check fails when the bind address is a CloudLab-internal 10.10.1.x.
+port_open() {
+  corfu_sh "bash -c '(exec 3<>/dev/tcp/$1/$2) >/dev/null 2>&1'" >/dev/null 2>&1
+}
+
+# The SSTable bucket is restored together with the log: the log names SSTables,
+# and with --log-trim the checkpoint in the bucket must match the trim mark in
+# the log dir. A cell's compactions and checkpoints change the bucket.
+# load_corfu_dataset.sh writes the bucket snapshot to /mnt/corfu/load-bucket.
+# When it is absent the bucket is left as is, which is only safe without
+# --log-trim.
+S3_BUCKET="$(cfg --get s3.bucket 2>/dev/null || echo ozonedb-ycsb)"
+MC_ALIAS="${MC_ALIAS:-ozonedb-local}"
+
+start_corfu() {
+  echo "[corfu] starting on $CORFU_TARGET ($CORFU_BIND_HOST:$CORFU_PORT)"
+  # `mc mirror --overwrite` copies an object only when the source is newer or
+  # the size differs. A cell's trimmer rewrites checkpoint/LATEST with a newer
+  # mtime and the same 8 bytes, so the mirror would keep the cell's LATEST
+  # while --remove deletes the checkpoint it names. So copy every LATEST of
+  # the snapshot after the mirror; mc cp always overwrites. Manifests and
+  # SSTables have unique names.
+  corfu_sh "if [ -d /mnt/corfu/load-bucket ]; then mc mirror --overwrite --remove --quiet /mnt/corfu/load-bucket $MC_ALIAS/$S3_BUCKET >/dev/null && cd /mnt/corfu/load-bucket && find . -type f -name LATEST | while read -r f; do mc cp --quiet \"\$f\" \"$MC_ALIAS/$S3_BUCKET/\${f#./}\" >/dev/null || exit 1; done && echo '[corfu] bucket restored from /mnt/corfu/load-bucket (LATEST forced)'; else echo '[corfu] WARNING: no /mnt/corfu/load-bucket snapshot; bucket left as is'; fi"
+  # The trailing & must apply only to nohup, not to the whole chain. Otherwise
+  # ssh holds stdout open on a foregrounded subshell and hangs.
+  corfu_sh "cd $CORFU_DIR && rm -rf /mnt/corfu/run_batch/ && cp -r /mnt/corfu/load/ /mnt/corfu/run_batch/ && ( setsid nohup env CORFUDB_HEAP=122880 ./bin/corfu_server -l /mnt/corfu/run_batch -s -a $CORFU_BIND_HOST $CORFU_PORT </dev/null >$CORFU_LOG 2>&1 & )"
+  sleep 10
+  corfu_sh "pgrep -af 'org.corfudb.infrastructure.CorfuServer' | head -n1 || echo '[corfu] WARNING: no CorfuServer process found after start'"
+}
+
+stop_corfu() {
+  echo "[corfu] stopping on $CORFU_TARGET"
+  # bin/corfu_server execs java, so the live cmdline holds the main class, not
+  # the wrapper name. SIGKILL directly: the next start wipes /mnt/corfu/run_batch.
+  # [C]orfuServer / [-]a: the patterns must not match the remote shell that
+  # runs these pkills, or ssh exits 255 before the rest of the line runs.
+  corfu_sh "pkill -KILL -f 'org.corfudb.infrastructure.[C]orfuServer' 2>/dev/null || true; pkill -KILL -f '[-]a $CORFU_BIND_HOST $CORFU_PORT' 2>/dev/null || true; command -v fuser >/dev/null && fuser -k -9 ${CORFU_PORT}/tcp 2>/dev/null || true"
+  for _ in $(seq 1 30); do
+    if ! port_open "$CORFU_BIND_HOST" "$CORFU_PORT"; then
+      echo "[corfu] down"
+      return 0
+    fi
+    sleep 1
+  done
+  echo "[corfu] ERROR: $CORFU_BIND_HOST:$CORFU_PORT still reachable after SIGKILL" >&2
+  corfu_sh "pgrep -af CorfuServer 2>/dev/null || true; ss -ltnp 2>/dev/null | grep :${CORFU_PORT} || netstat -ltnp 2>/dev/null | grep :${CORFU_PORT} || true"
+  return 1
+}
+
+wait_for_corfu() {
+  echo "[corfu] waiting for $CORFU_BIND_HOST:$CORFU_PORT"
+  for _ in $(seq 1 120); do
+    if port_open "$CORFU_BIND_HOST" "$CORFU_PORT"; then
+      echo "[corfu] up"
+      sleep 10
+      return 0
+    fi
+    sleep 1
+  done
+  echo "[corfu] ERROR: never became reachable (tail $CORFU_LOG on $CORFU_BIND_HOST)" >&2
+  return 1
+}
+
+FINAL_STATE_LEFT_RUNNING=0
+cleanup() {
+  local rc=$?
+  trap - EXIT INT TERM
+  if [[ "$FINAL_STATE_LEFT_RUNNING" -eq 0 ]]; then
+    echo "[orchestrator] cleanup (rc=$rc) -- stopping remote corfu"
+    stop_corfu || true
+  fi
+  exit "$rc"
+}
+trap cleanup EXIT INT TERM
+
+BENCH_SCRIPT="$OZONEDB_HOME/bench/scripts/local/run_multinode_ycsb.py"
+RESULTS=()
+
+# All iterations land under this one tag. run_multinode_ycsb.py passes it to
+# every client host. --run-tag lets a driver put many invocations in one dir.
+export OZONEDB_RUN_TAG="${RUN_TAG:-$(date +%Y%m%d-%H%M%S)}"
+READ_MODE=default
+[[ "$LINEARIZABLE" -eq 1 ]] && READ_MODE=linearizable
+
+# Common args to every run_multinode_ycsb.py invocation.
+COMMON_ARGS=(--config "$CONFIG" --run_tag "$OZONEDB_RUN_TAG")
+[[ -n "$CLIENT_HOSTS"   ]] && COMMON_ARGS+=(--hosts "$CLIENT_HOSTS")
+[[ -n "$CLIENT_USER"    ]] && COMMON_ARGS+=(--ssh_user "$CLIENT_USER")
+[[ -n "$CLIENT_SSH_KEY" ]] && COMMON_ARGS+=(--ssh_key "$CLIENT_SSH_KEY")
+[[ -n "$DURATION"       ]] && COMMON_ARGS+=(--max_exec_time "$DURATION")
+[[ "$LINEARIZABLE" -eq 1 ]] && COMMON_ARGS+=(--linearizable)
+[[ -n "$WRITE_MODE" ]] && COMMON_ARGS+=(--write-mode "$WRITE_MODE")
+[[ "$WRITE_MODE" == async && -n "$COMMIT_INTERVAL_MS" ]] && COMMON_ARGS+=(--commit-interval-ms "$COMMIT_INTERVAL_MS")
+[[ "$LOG_TRIM" -eq 1 ]] && COMMON_ARGS+=(--log-trim)
+[[ -n "$LRU_CACHE_BYTES" ]] && COMMON_ARGS+=(--lru-cache-bytes "$LRU_CACHE_BYTES")
+[[ "$CACHE_WARM" -eq 1 ]] && COMMON_ARGS+=(--cache-warm)
+[[ "$CACHE_WARM" -eq 1 && -n "$CACHE_WARM_MAX_LEVEL" ]] && COMMON_ARGS+=(--cache-warm-max-level "$CACHE_WARM_MAX_LEVEL")
+[[ "$CACHE_WARM" -eq 1 && -n "$CACHE_WARM_MAX_FRACTION" ]] && COMMON_ARGS+=(--cache-warm-max-fraction "$CACHE_WARM_MAX_FRACTION")
+[[ -n "$DISK_CACHE_BYTES" ]] && COMMON_ARGS+=(--disk-cache-bytes "$DISK_CACHE_BYTES")
+[[ -n "$DISK_CACHE_BYTES" && -n "$DISK_CACHE_DIR" ]] && COMMON_ARGS+=(--disk-cache-dir "$DISK_CACHE_DIR")
+[[ -n "$DISK_CACHE_BYTES" && "$DISK_CACHE_KEEP_PAGES" -eq 1 ]] && COMMON_ARGS+=(--disk-cache-keep-pages)
+[[ -n "$DISK_CACHE_BYTES" && -n "$DISK_CACHE_MODE" ]] && COMMON_ARGS+=(--disk-cache-mode "$DISK_CACHE_MODE")
+[[ -n "$DISK_CACHE_BYTES" && -n "$DISK_CACHE_ENTRY_BYTES" ]] && COMMON_ARGS+=(--disk-cache-entry-bytes "$DISK_CACHE_ENTRY_BYTES")
+[[ -n "$DISK_CACHE_BYTES" && -n "$DISK_CACHE_ADMISSION" ]] && COMMON_ARGS+=(--disk-cache-admission "$DISK_CACHE_ADMISSION")
+[[ -n "$RECORD_CNT"      ]] && COMMON_ARGS+=(--record_cnt "$RECORD_CNT")
+
+echo "=== sweep: workloads=(${WORKLOADS_ARR[*]}) writers_per_host=(${WRITERS_ARR[*]}) trials=(${TRIAL_SEQ[*]}) read_mode=$READ_MODE log_trim=$LOG_TRIM lru_cache_bytes=${LRU_CACHE_BYTES:-base} cache_warm=$CACHE_WARM disk_cache_bytes=${DISK_CACHE_BYTES:-off} disk_cache_mode=${DISK_CACHE_MODE:-chunk} disk_cache_admission=${DISK_CACHE_ADMISSION:-frequency} record_cnt=${RECORD_CNT:-yaml} duration=${DURATION:-yaml} run_tag=$OZONEDB_RUN_TAG ==="
+echo "=== corfu server: $CORFU_TARGET:$CORFU_PORT ==="
+if [[ -n "$CLIENT_HOSTS" ]]; then
+  echo "=== client hosts (override): $CLIENT_HOSTS ==="
+else
+  echo "=== client hosts: from cloudlab.hosts in $CONFIG ==="
+fi
+
+if [[ "$DRY_RUN" -eq 1 ]]; then
+  for TRIAL in "${TRIAL_SEQ[@]}"; do
+    for WL in "${WORKLOADS_ARR[@]}"; do
+      for NW in "${WRITERS_ARR[@]}"; do
+        echo "[dry-run] trial=$TRIAL workload=$WL writers_per_host=$NW: restart corfu on $CORFU_TARGET, then"
+        echo "[dry-run]   python3 $BENCH_SCRIPT ${COMMON_ARGS[*]} --workloads $WL --writers_per_host $NW --trial $TRIAL"
+      done
+    done
+  done
+  FINAL_STATE_LEFT_RUNNING=1 # nothing was touched; cleanup must not stop corfu
+  exit 0
+fi
+
+for TRIAL in "${TRIAL_SEQ[@]}"; do
+  for WL in "${WORKLOADS_ARR[@]}"; do
+    for NW in "${WRITERS_ARR[@]}"; do
+      echo ""
+      echo "### iteration: trial=$TRIAL (of: ${TRIAL_SEQ[*]}) workload=$WL writers_per_host=$NW ###"
+
+      stop_corfu || true
+      start_corfu
+      wait_for_corfu
+
+      echo "[bench] python3 $BENCH_SCRIPT ${COMMON_ARGS[*]} --workloads $WL --writers_per_host $NW --trial $TRIAL"
+      set +e
+      python3 "$BENCH_SCRIPT" "${COMMON_ARGS[@]}" \
+        --workloads "$WL" \
+        --writers_per_host "$NW" \
+        --trial "$TRIAL"
+      rc=$?
+      set -e
+      RESULTS+=("trial=$TRIAL workload=$WL writers_per_host=$NW rc=$rc")
+      echo "[bench] trial=$TRIAL workload=$WL writers_per_host=$NW rc=$rc"
+
+      stop_corfu || echo "[orchestrator] warning: stop_corfu failed; continuing sweep"
+    done
+  done
+done
+
+echo ""
+echo "=== final restart: corfu on $CORFU_BIND_HOST:$CORFU_PORT ==="
+start_corfu
+wait_for_corfu
+FINAL_STATE_LEFT_RUNNING=1
+
+echo ""
+echo "=== sweep summary ==="
+for line in "${RESULTS[@]}"; do
+  echo "  $line"
+done
+
+for line in "${RESULTS[@]}"; do
+  if [[ "$line" != *"rc=0"* ]]; then
+    exit 1
+  fi
+done
+exit 0

@@ -1,0 +1,94 @@
+syntax = "proto2";
+
+enum ValueType {
+  kTypeDeletion = 0;
+  kTypeValue = 1;
+}
+
+message Record {
+  required bytes key = 1;
+  optional bytes value = 2;
+  required ValueType type = 3;
+}
+
+message OperationRecord {
+  enum OperationType {
+    LOGCREATE = 0;
+    COMPACT = 1;
+  }
+  required OperationType op_type = 1;
+  optional bool compact_in_last_level = 2;
+  repeated string output_file = 3;
+  repeated string key_start = 4;
+  repeated string key_end = 5;
+  repeated string input_files = 6;  // COMPACT: the input files. LOGCREATE: the current log tail.
+  // Byte length of each output_file entry, parallel to output_file. Lets a
+  // peer roll forward without a fenced storage->size() under view_mutex.
+  // 0 when absent; only size heuristics use it.
+  repeated int64 output_bytes = 7;
+  // LOGCREATE: byte length of the sealed log file input_files[0]. Lets a
+  // peer roll forward without a fenced storage->size() under view_mutex.
+  // Unset for the first LOGCREATE. 0 when absent; only size heuristics use it.
+  optional int64 sealed_input_bytes = 8;
+}
+
+message CorfuEntry {
+  enum Op {
+    APPEND = 0;
+    SEAL = 1;
+    REMOVE = 2;
+    // LogTrimmer appends it right before prefixTrim(X). payload is the
+    // decimal text of X; file_name is ".trim". Every entry of the stream
+    // at or below X is gone. A replay from address S that meets a TRIM
+    // with X >= S refuses to open (CorfuDBStorage::bootstrap). The mark
+    // survives a server restart and is per stream.
+    TRIM = 3;
+  }
+  required string file_name = 1;
+  required Op op = 2;
+  optional bytes payload = 3;
+  // Random 64-bit id of the CorfuDBStorage instance that wrote the entry.
+  // The tailer uses it to skip entries the local writer already applied
+  // to file_buffers_. An entry without it is applied unconditionally.
+  optional uint64 client_id = 4;
+}
+
+// A checkpoint of the shared log: the live state after every entry with
+// global address <= covered_addr. LogTrimmer writes it to the object store.
+// CorfuDBStorage::bootstrap reads it and replays only entries above covered_addr.
+message CheckpointManifest {
+  required int64 covered_addr = 1;       // every entry <= this address is applied
+  required int64 prev_covered_addr = 2;  // covered_addr of the previous checkpoint, -1 if none
+  message File {
+    required string name = 1;
+    required int64 size = 2;             // bytes in the file object; 0 => no object written
+    optional bool sealed = 3;
+    optional int64 sealed_at_addr = 4;   // global address of the SEAL, -1 when unknown
+    // True when the file had a buffer in file_buffers_ (an APPEND was seen).
+    // A SEAL alone creates no buffer, so a sealed name can have has_buffer=false.
+    optional bool has_buffer = 5;
+  }
+  repeated File files = 3;
+  repeated string removed = 4;
+  optional string creator = 5;           // writer fingerprint
+  optional int64 created_unix_ms = 6;
+  // Fields 20-29 are reserved.
+}
+
+message TaskRecord {
+  message TaskIdentifier {
+    repeated string input_files = 1;
+    required bool compactIntoNextLevel = 2;
+    required uint32 destinationLevel = 3;
+  }
+  required TaskIdentifier task_id = 1;
+  required string owner = 2;
+  enum TaskStatus {
+    TASK_BEGIN = 0;
+    TASK_IN_PROGRESS = 1;
+    TASK_COMPLETE = 2;
+    TASK_DEAD = 3;
+  }
+  required TaskStatus status = 3;  // TASK_BEGIN claims, TASK_IN_PROGRESS is a heartbeat, TASK_COMPLETE releases
+  required uint32 owner_generation = 4;
+}

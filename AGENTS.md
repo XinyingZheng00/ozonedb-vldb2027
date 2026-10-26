@@ -1,0 +1,463 @@
+# AGENTS.md
+
+Guidance for coding agents (Claude Code, Codex, Cursor and the like) and for people working in
+this repository. The README covers setup and first use; this file is the architecture document
+and the list of invariants that are easy to break.
+
+## What this is
+
+OzoneKV (the code, library and result labels still say `ozonedb` / `libOzoneDB.so`) is a research
+LSM-tree key-value store whose entire durable state lives behind an append-only "shared log"
+storage abstraction. Multiple independent writer *processes* (possibly on different machines)
+coordinate through the log itself — there is no server. It is built as a shared library, driven
+through a JNI binding from a YCSB benchmark client.
+
+## Environment
+
+`OZONEDB_HOME` must be exported and point at the repo root — every bench script reads it, and
+`jni.OzoneDBJNI` uses it to locate `libozonedb.so`. CMake does not need it. The build targets
+Ubuntu bench nodes (apt packages, a writable `/tank`) — it is not set up to build on macOS.
+
+Setup is one idempotent, role-based script. Re-running never duplicates shell config or
+reinstalls what is present:
+
+```bash
+bash bench/scripts/setup.sh --role client         # apt deps, JDK, python, /tank,
+                                                  # vcpkg clone + bootstrap, then build.sh
+bash bench/scripts/setup.sh --role corfu-server   # CorfuDB + /mnt/corfu/{load,run_batch}
+bash bench/scripts/setup.sh --role minio          # minio + bucket (sstable_backend defaults to s3)
+bash bench/scripts/setup_zfs.sh --device /dev/sdXN
+bash bench/scripts/setup_disk_cache.sh --device /dev/sdb   # ext4 label ozcache at /tank/cache (disk-cache tier)
+```
+
+- It writes `~/.ozonedb.env` and wires a marker-guarded include into `~/.profile` **and**
+  `~/.bashrc`, rewriting the block rather than appending. Sourcing the script is not needed.
+  Note `~/.bashrc` alone is not enough: Ubuntu's default returns early for non-interactive shells,
+  which is why `run_multinode_ycsb.py` uses `bash -lc`.
+- **vcpkg is not vendored.** `vcpkg.json` pins a `builtin-baseline`; the client role clones vcpkg
+  at that commit into `$OZONEDB_HOME/vcpkg` (gitignored) and bootstraps it. CMake finds it there,
+  or through `$VCPKG_ROOT`, or through an explicit `CMAKE_TOOLCHAIN_FILE`, and fails loudly when
+  none exists. The first build compiles the dependencies (`aws-sdk-cpp` is the slow one).
+- **JDK policy.** The client needs a JDK only for YCSB (`<source>1.8</source>` in `ycsb/pom.xml`)
+  and the JNI shim. The engine talks to CorfuDB with its own C++ client. `--jdk` (default 25) sets
+  the node's persistent `JAVA_HOME`; `--corfu-jdk` (default 25) is used only by the corfu-server
+  role to build CorfuDB.
+- Python dependencies are declared in `bench/scripts/requirements.txt`.
+- `bench/scripts/config/ycsb.yaml` is gitignored and per cluster. Copy `ycsb.example.yaml` and
+  fill in the `nodes:` block; every runner refuses to start without it.
+
+## Build
+
+```bash
+cmake -B build                           && cmake --build build -j$(nproc)  # local FS + S3
+cmake -B build -DOZONEDB_ENABLE_CORFU=ON && cmake --build build -j$(nproc)  # adds CorfuDB
+nix-shell --run 'cmake -B build -G Ninja -DOZONEDB_USE_VCPKG=OFF -DOZONEDB_ENABLE_CORFU=ON && cmake --build build'  # NixOS / nix
+```
+
+`CMakePresets.json` defines `default` / `corfu` / `profiling` (toolchain from `$VCPKG_ROOT`), but
+presets need CMake ≥ 3.21 and the Ubuntu 20.04 bench image ships 3.16 — hence the plain commands
+above as the primary path. `CMakeUserPresets.json` is per-user and gitignored.
+
+- `OZONEDB_USE_VCPKG` defaults **ON**: CMake takes the toolchain from an explicit
+  `CMAKE_TOOLCHAIN_FILE`, else `$VCPKG_ROOT`, else `vcpkg/` inside the repo, and fails loudly when
+  none exists. `OFF` takes every dependency from the system; `shell.nix` provides them all (plus a
+  JDK 17 and Maven for the JNI shim and the YCSB binding) and exports `OZONEDB_HOME`.
+  `corfu-server.nix` and `minio.nix` are the server-side counterparts of the `setup.sh` roles.
+- CI (`.github/workflows/ci.yml`) builds on `ubuntu-22.04` with `OZONEDB_ENABLE_CORFU=ON` through
+  vcpkg (binary cache keyed on the baseline and `vcpkg.json`; a cold cache compiles `aws-sdk-cpp`
+  and `protobuf` from source, the better part of an hour) and runs `ctest` with `OZONEDB_TEST_ROOT`
+  under the runner's temp dir. The server-backed suites self-skip there.
+- `OZONEDB_ENABLE_S3` defaults **ON** (needs `aws-sdk-cpp` from vcpkg); `OZONEDB_ENABLE_CORFU`
+  defaults **OFF**. Both set a `-D` compile definition that guards the corresponding
+  `src/db/*_storage.cpp` and its header — new backend code must be inside those guards.
+- `-DOZONEDB_PROFILING=ON` keeps `-O3` but adds frame pointers + line tables for perf/flamegraph.
+- `-DOZONEDB_PROFILE_READS=ON` compiles the read-path counters of `read_profile.h` into `DB::get`
+  (view, log and SSTable time per get, per-level and per-table probe outcomes); `DB::closeDB` prints
+  them as `[OZONEDB-*-PROFILE]` lines. Off by default; every probe is a macro that expands to nothing.
+- `OZONEDB_BUILD_JNI` (default ON) builds `libozonedb.so`, the shim the YCSB binding loads. It is
+  the only target that needs a JDK; without `jni.h` it is skipped with a message.
+- Protobuf headers are generated into `build/generated/protobuf/` at configure time from
+  `record.proto` / `sstable.proto`. Sources include them as `"protobuf/record.pb.h"`, and
+  `build/generated` is deliberately **first** on the include path so a stale in-tree copy from a
+  pre-move build can't shadow them (configure also deletes that directory if it finds it).
+- Header/link deps come from `target_include_directories(OzoneDB PUBLIC …)`, so anything linking
+  `OzoneDB` inherits them. Don't reintroduce global `include_directories()` or `link_directories()`.
+- `vcpkg.json` carries only what is actually linked: `boost-uuid`, `gtest`, `openssl`, `protobuf`,
+  `aws-sdk-cpp[s3]`.
+
+**After any C++ change that a YCSB run must see, rebuild the whole chain:**
+
+```bash
+bash bench/scripts/build.sh
+```
+
+That builds every CMake target (`OzoneDB`, `ozonedb_jni`, `runUnitTests`, and with Corfu on the
+`corfu_smoke`, `corfu_multiwriter_smoke`, `corfu_stream_stats` and `corfu_native_probe` binaries),
+then the YCSB `ozonedb-binding`. Nothing is installed outside the repo — no `sudo`, no
+`/usr/lib` — because `libozonedb.so` has an `$ORIGIN` rpath to reach `libOzoneDB.so` beside it in
+`build/`. Skipping it means YCSB keeps running the previously built library.
+
+## Tests
+
+```bash
+cd build && ctest --output-on-failure                     # all (ctest registers the one gtest binary)
+./runUnitTests --gtest_filter=DBTest.single_put_get      # one test
+./runUnitTests --gtest_filter='StorageTest.*'            # one suite
+```
+
+- **Run from `build/`** — tests reference configs by relative path (`../src/config/...`).
+- The tests write under `OZONEDB_TEST_ROOT` (`tests/test_env.h`, default `/tank/test/`); set it to
+  any writable directory. `DBTest` rewrites `test_db.json` with a `db_path` under that root.
+- `CorfuStorageTest.*` self-skip unless `CORFU_TEST_ENDPOINT` is set, and need a **fresh** server
+  (they fail-stop on a trimmed log). `bench/scripts/corfu_local.sh {build|start|stop|test}` is the
+  local, sudo-free path: `build` clones CorfuDB at `setup.sh`'s `CORFU_COMMIT` into `~/CorfuDB`,
+  `start` wipes the log dir and starts a single-node server on `127.0.0.1:9090`, and `test` wraps
+  start → `runUnitTests --gtest_filter=CorfuStorageTest.*` → stop (`GTEST_FILTER='*'` for the whole
+  suite). On NixOS run it under `nix-shell corfu-server.nix`. CorfuDB's Maven build executes
+  downloaded `protoc`/`protoc-gen-grpc-java` binaries that NixOS's stub loader refuses, so the JDK
+  25 and Maven live in a `buildFHSEnv` (`corfu-fhs`) and the script re-execs itself inside it.
+  `bin/corfu_server` forks java rather than exec'ing it, so `stop` signals the process group.
+- `S3StorageTest.*` / `S3DBTest.*` (`tests/test_s3_storage.cpp`, built with `OZONEDB_ENABLE_S3`)
+  self-skip unless `S3_TEST_ENDPOINT` is set (`S3_TEST_BUCKET`, default `ozonedb-sstables`, must
+  exist). `bench/scripts/minio_local.sh {start|stop|test}` runs a fresh MinIO on `127.0.0.1:9000`
+  (minioadmin/minioadmin, the shipped configs' values) and creates the bucket; on NixOS run it
+  under `nix-shell minio.nix`, which has to permit MinIO explicitly (nixpkgs flags it as abandoned
+  with open CVEs). Set `AWS_EC2_METADATA_DISABLED=true` off EC2: otherwise every `S3Client` the SDK
+  builds probes the instance-metadata endpoint first, about 6 s per `S3Storage`. `S3DBTest` puts
+  in rounds because the data log rolls on a tail size the view refreshes every 100 ms, so a burst
+  of puts never leaves two log files to compact. With both servers up,
+  `S3_TEST_ENDPOINT=http://127.0.0.1:9000 GTEST_FILTER='*' corfu_local.sh test` runs everything.
+- Corfu end-to-end smoke binaries (only built with `OZONEDB_ENABLE_CORFU=ON`) are the practical way
+  to exercise the shared-log path:
+  ```bash
+  ./corfu_smoke <shared-config.json> [num_keys]
+  ./corfu_multiwriter_smoke <shared-config.json> [keys_per_writer] [--kill-one]
+  ```
+  `--kill-one` is the dead-writer demo: writer 1 is `SIGKILL`ed half-way through its range, writer 0
+  stays open past `task_heartbeat_threshold_ticks` and reclaims the dead claim, and the parent checks
+  every key writer 0 wrote plus every key writer 1 had acked. It fails without at least one takeover.
+  `corfu_stream_stats` summarises an existing stream; `corfu_native_probe` checks the one-stream
+  assumption of the reader (see the CorfuDB backend section).
+- `TaskLogTest` (dead-task detection and takeover), `MetadataLogTest` (replay order of last-level
+  COMPACT records) and the `DBTest` cases for `compaction_abort_rate`, `compaction_enabled` and the
+  last level run on the local backend with no server. The other suites (`StorageTest`, `LRUCacheTest`,
+  `DiskCacheStorageTest`, `FrequencySketchTest`, `CheckpointTest`, `SSTableTest`, `FilterBlockTest`,
+  `CorfuCodecTest`, `ProtoBufTest`) need no server either.
+
+## Benchmarks
+
+Everything is driven by `bench/scripts/config/ycsb.yaml`, loaded through
+`bench/scripts/ycsb_config.py` — never `yaml.safe_load` directly. The `nodes:` block names each
+machine once with **two non-interchangeable addresses**: `ssh` (public, how the orchestrator
+reaches it) and `lan` (internal 10.10.1.x, how other nodes reach it). `corfu_server -a` binds the
+*lan* one, so clients can only connect if that is what `corfu.endpoint` resolves to. The loader
+derives `corfu.endpoint`, `s3.endpoint` and `cloudlab.{hosts,ssh_user,ssh_private_key_path}` from
+`nodes:` and materialises them under the keys consumers already read, and **rejects** any of those
+set by hand. `python3 bench/scripts/ycsb_config.py --check` prints the resolved plan; the shell
+wrappers read the corfu node through its `--node`/`--get` CLI rather than a hardcoded constant.
+
+```bash
+python3 bench/scripts/local/load_local_ycsb_multiproc.py   # load phase, N parallel writer procs
+python3 bench/scripts/local/run_local_ycsb_multiproc.py    # run phase
+bash    bench/scripts/local/run_ycsb_with_corfu.sh --workloads "a c" --writers-list "1 2 4"
+python3 bench/scripts/local/run_multinode_ycsb.py          # fan out across CloudLab hosts via scp/ssh
+python3 bench/scripts/local/run_corfu_compaction_contention.py
+```
+
+The single-node comparison of the paper (Fig 2a, 9, 15, 19a, Table 4) has its own drivers:
+
+```bash
+python3 bench/scripts/local/singlenode/run_fig2_load.py --systems ozonedb        # cached dataset, Fig 19a load
+python3 bench/scripts/local/singlenode/run_fig2_sweep.py --systems ozonedb       # threads sweep, Fig 2a / 19a
+python3 bench/scripts/local/singlenode/run_phase1_shared_db_sweep.py --systems ozonedb  # N processes on one shared DB, Fig 9
+python3 bench/scripts/local/singlenode/run_phase1_multiproc_sweep.py --systems ozonedb  # N processes, each on its own DB; also the helper module the other two import
+python3 bench/scripts/local/churn_experiment/churn_runner.py --vary abort        # churn, Table 4 / Fig 15
+```
+
+The consistency and visibility measurements (Fig 11) go through `bench/scripts/consistency.py`
+(the real JNI path; it also owns `linearizable_corfu_settings`), driven from this machine by
+`run_consistency_with_corfu.sh` and `run_visibility_cross_node.sh`, with `visibility_analysis.py`
+reducing a run to `summary.json`. `load_corfu_dataset.sh` loads the YCSB dataset into the shared
+log and snapshots it to `/mnt/corfu/load`, the snapshot every cluster trial restores from.
+`bench/scripts/README.md` maps every script to the figure it feeds.
+
+They read `src/config/local/shared_config_singlenode.json` (the base config with a 128 MB cache, to
+match the RocksDB and SQLite caches in `bench/scripts/config/`), take the data root from
+`OZONEDB_DATA_ROOT` (default `/tank/ycsb_data`), and need `YCSB_CPP_DIR` and `ROCKSDB_PREFIX` only
+for the SQLite and RocksDB series. `run_local_ycsb_multiproc.py` stays the driver for the OzoneKV,
+Corfu and Cassandra series. The churn runner loads with `compaction_enabled = false`, snapshots, and
+runs every trial from that snapshot with `compaction_abort_rate` set; it parses `task.log` through
+`task_log_parser.py`, which generates `record_pb2.py` with `protoc` on first use.
+
+- `run_ycsb_with_corfu.sh` restarts the remote Corfu server between every (trial, workload, writers)
+  iteration and tags all results with one `OZONEDB_RUN_TAG`.
+- `run_multinode_ycsb_with_corfu.sh` is the cluster path (`run_multinode_ycsb.py` →
+  `run_local_ycsb_multiproc.py` on every client). Campaign-driver flags: `--linearizable`,
+  `--duration S`, `--trial N` (one trial; `--trials N` runs 1..N), `--run-tag TAG`, `--dry-run`.
+  `--linearizable` forces `linearizable_reads=true` + `trust_background_tail=false` into every
+  generated per-writer config (`linearizable_corfu_settings`, shared with `consistency.py`) and
+  suffixes the result-file engine token — `ozonedb-corfu-linearizable_w0of8_…` — while `db_name`
+  itself never changes (the runner branches on it). Select the read mode with the flag, not by
+  editing `ycsb.yaml`: the label is derived from the effective settings either way, but a YAML
+  toggle has to be synced to every client. `local.run.repeated` must be 1 — the run phase refuses
+  anything else because repeats overwrite the `_trial{N}` files; use trials.
+- Every `ozonedb-corfu` result file carries a `-native` token (`ozonedb-corfu-native_…`). It dates
+  from the A/B against the retired embedded-JVM Corfu client; the plot and extract scripts key on
+  it, so it stays.
+- **Cassandra baseline** (server-based comparison for the consistency/throughput frontier).
+  `ycsb/cassandra/` is upstream YCSB's CQL binding plus a `cassandra.lwt` switch (every write an
+  `IF [NOT] EXISTS` Paxos round) — see its README. `setup.sh --role cassandra` installs the Apache
+  tarball on every `nodes.cassandra` entry (default: the log node, so both systems get the same
+  server box; **never run Corfu and Cassandra benchmarks at once**) with its own JDK 17 under
+  `cassandra.install_dir/env.sh`. `bench/scripts/cassandra_ctl.sh` runs on the server
+  (`start|stop|wipe|schema|save-load|restore-load`); `save-load`/`restore-load` are the
+  `/mnt/corfu/{load,run_batch}` pattern so every trial starts from the drained load snapshot.
+  `load_multinode_cassandra.sh` wipes, creates the schema, loads from one client and snapshots;
+  `run_multinode_ycsb_with_cassandra.sh --consistency one|quorum|serial` is the sweep, passing
+  `--db_name cassandra --cassandra_consistency MODE` to every client (a flag, never a `ycsb.yaml`
+  edit) and labelling results `cassandra-<mode>`. `serial` = SERIAL reads + LWT writes, the
+  linearizable point; `one` == `quorum` at RF=1.
+- Each writer process gets its **own generated config**: `_make_local_config_per_writer` /
+  `_make_corfu_config_per_writer` template `src/config/{local,corfu}/shared_config_base.json` into
+  `shared_config_w{i}.json`. Never point multiple writers at a single config file.
+- Results go to `bench/results/local` (gitignored); plotting scripts live in `bench/scripts/plot/`.
+  `bench/scripts/README.md` maps every script to the paper figure it feeds; the folders under
+  `bench/ozonedb-paper-figures/` hold the data and a frozen as-run copy of the scripts, and the
+  live versions stay here.
+  The cost-model input TSVs that `plot_cost_model.py` reads live with the paper figure in
+  `bench/ozonedb-paper-figures/figure12_cost/data/`.
+- `bench/ansible/` fans out to every `cloudlab.hosts` entry in parallel. `bootstrap.yml` pushes the
+  tree (without `vcpkg/` and `build/`) and then runs `setup.sh`, which clones vcpkg and builds on
+  the node — no GitHub credentials on the node. `sync.yml` is the incremental follow-up and
+  excludes `.git/`. Exclude lists are shared in `bench/ansible/group_vars/all.yml`; `inventory.py`
+  is a dynamic inventory reading `cloudlab.{hosts,ssh_user,ssh_private_key_path}` straight out of
+  `ycsb.yaml`, so the host list is never duplicated. `disk_cache.yml` runs `setup_disk_cache.sh`
+  on every client. The result pull stays on `scp` inside `run_multinode_ycsb.py`.
+
+## Architecture
+
+### Storage abstraction
+
+`Storage` (`src/include/ozonedb/storage.h`) is the seam: named "files" supporting
+`append`/`appendInBatch`/`read`/`size`/`seal`/`remove`. Implementations: `FileStorage` (local FS),
+`S3Storage` (also MinIO/R2/Wasabi), `CorfuDBStorage` (shared log), and the `DiskCacheStorage`
+decorator.
+
+A DB holds **two** `Storage*`: `log_storage` (needs atomic append — the shared log) and
+`sstable_storage` (SSTables are immutable and fit a plain object store better; paper §3.5). Set via
+the `sstable_backend` config key. When unset the two pointers **alias**, and `DB::~DB` guards the
+double-free. Anything touching either pointer must respect that aliasing.
+
+### The three logs (all on `log_storage`)
+
+| Log | Handler | Contents |
+|---|---|---|
+| data log (`datalog*`) | `LogHandler` | `Record` {key, value, type} — the memtable equivalent; sealed at `log_file_size_limit` |
+| metadata log (`metadata.log`) | `MetadataLogHandler` | `OperationRecord` {LOGCREATE, COMPACT} |
+| task log (`task.log`) | `TaskLogHandler` | `TaskRecord` — distributed compaction claims |
+
+Every process rolls the metadata log forward into a **`View`**: storage layout per level, per-file
+key ranges, file sizes, current log tail. The View is the shared source of truth about which files
+exist where; it is published as an immutable `shared_ptr<View const>` snapshot and read lock-free
+(readers must not deep-copy it — that was a hot-path regression that has already been removed once).
+
+The task log is how concurrent writers avoid duplicating compaction: a writer claims a task by
+appending a `TaskRecord` (owner fingerprint + `owner_generation`), heartbeats it every 100 ms, and
+dead owners' tasks get reclaimed. Every `pickCompaction` starts by replaying the task log
+(`rollForwardTaskLogIfDue`, at most once per third of `task_heartbeat_threshold_ticks`): replaying a
+task's heartbeats resets its tick count, and a task whose count reaches the threshold (default 30,
+3 s) is dead. Dead tasks are claimed first, at `owner_generation + 1`, before any new work is
+picked; under a continuous write workload the new-work pickers always find something, so a check
+after them never ran. On Corfu the replay is two fenced calls, which is why it is paced and why
+`readTaskLog` holds no lock across them (a stall there would silence this writer's own heartbeats);
+the Corfu configs set the threshold to 200 ticks because a hole left by a dead peer stalls the
+tailer, and with it every peer's heartbeat replay, for `corfu_hole_fill_timeout_ms`.
+
+Last-level compactions merge two version-k files into one version-(k+1) file
+(`initInputUnitInlastLayer`; `doCompactionWork` derives the version from the task's first input
+again, because a task reclaimed from a dead peer arrives in a fresh `Compaction`), so the level
+converges to `last_file_number_limit` files; every other level cuts its output at
+`level_file_size_limit`. A compaction that finds an input removed under it (a peer ran a task that
+shares it) completes its claim with no record: nothing published, nothing deleted. Last-level `COMPACT` records are replayed in a
+canonical order (a record applies only when its first input heads its version region, otherwise it
+waits in `MetadataLogHandler::buffer`), so every process ends with the same deque; a record whose
+inputs are gone is parked and never applied.
+
+### Read / write paths
+
+`DB::put` appends a `Record` to the data log. A background `CompactionWatcher` thread picks up
+compaction (the only live `compaction_policy`, value 0; the config parser rejects anything else).
+
+`DB::get`:
+1. optional `LogKeyIndex` fast path (only when `trust_background_tail` is set) — skips the View load
+   and the storage fence entirely;
+2. atomic View snapshot, handed down to the child handlers as a raw pointer that aliases into it;
+3. `LogHandler::readRecord` across log files;
+4. `SSTableHandler::readRecordFromAllLevel`.
+
+`linearizable_reads` (mutually exclusive with `trust_background_tail` — `Metadata` throws on both)
+makes every get strict, at the cost of exactly **one fence per get**: `DB::get` opens a
+`Storage::SyncScope` (one sequencer round-trip + tailer wait — the linearization point), which
+records a thread-local fence token that every later storage call in the get reuses instead of
+re-fencing; `MetadataLogHandler::syncView()` then rolls the view forward from local state, the
+unfenced key-index probe in `readRecord` is bypassed, the log scan runs inline on the caller thread
+(the token is thread-local, and post-fence reads are local-memory splices), and a post-scan size
+check on `metadata.log` retries the get if a LOGCREATE/COMPACT was applied mid-scan (otherwise a
+peer compaction's REMOVE can make a key transiently invisible; retries reuse the original fence).
+`DB::sync()`/`clearSync()` (JNI: `OzoneDBJNI.sync`/`clearSync`) expose the fence as a batch API:
+one fence on the calling thread, reused by every get until cleared — each read then linearizes at
+the sync() point (`DB::get` skips its own fence when the thread already holds a token). The
+end-to-end guarantee assumes sync writes, the default (`corfu_sync_writes = true`,
+`corfu_commit_interval_ms = 0`): `appendInBatch` returns once the bytes are sequenced. The paper's
+OzoneKV-async series sets `corfu_sync_writes = false` + `corfu_commit_interval_ms = N`: a put is
+acked from the writer's buffer, which is submitted every N ms, so an ack precedes durability by up to
+one interval. `Metadata` rejects async together with `linearizable_reads`. The bench path is
+`--write-mode async [--commit-interval-ms N]` on all three runner layers, label token `-async`
+(`ozonedb-corfu-async-native`) — a flag, never a `ycsb.yaml` edit.
+
+The returned `value` **aliases bytes inside the `guard` `shared_ptr<Record>`** — callers must keep
+the guard alive while dereferencing.
+
+### Caching
+
+`LRUCache` (`cache.h`) holds parsed log records *and* SSTable blocks/tables, bounded by
+`lru_cache_bytes`. Records are `shared_ptr`-owned so eviction/compaction can't free bytes under a
+concurrent reader; cold block and table loads are single-flighted.
+
+`DiskCacheStorage` (`src/db/disk_cache_storage.cpp`) is a second tier *below* the LRU: a `Storage`
+decorator that `DB::DB` wraps around `sstable_storage`, keeping SSTable data as local files under
+`disk_cache_dir` (a client's own SSD, `/tank/cache` on the bench nodes). Only names with the
+`sstable` prefix are cacheable; everything else passes through. Config keys (`Metadata`):
+`disk_cache_dir` (empty = off, and it throws without `sstable_backend`), `disk_cache_bytes`
+(required with the dir), `disk_cache_drop_pages` (default true — `posix_fadvise(DONTNEED)` after a
+tier read, so the measurement is the SSD and not the page cache).
+
+Two modes. `disk_cache_mode = chunk` (**default**): the entry is a `disk_cache_entry_bytes` piece
+of an SSTable (65536, a power of two ≥ 4096) — one sparse local file per SSTable plus one state
+byte per chunk, a miss fetches the chunk-aligned covering range in **one** GET on the caller's
+thread (the fill *is* the demand read), and eviction is per chunk through a CLOCK hand and
+`fallocate(PUNCH_HOLE|KEEP_SIZE)`. `disk_cache_mode = file` keeps whole SSTables with a background
+fill worker (`disk_cache_chunk_bytes` ranged reads, `disk_cache_fill_queue`) and file-level LRU; it
+lost the measured A/B at every budget below the dataset size and is kept only for that comparison.
+`disk_cache_admission` (**default `frequency`**): TinyLFU (`frequency_sketch.h`, count-min, four
+rows of 8-bit counters halved every `disk_cache_admit_window` samples — 0 = 8× the entries the
+budget holds) — budget that is *not free* is taken only when the candidate's estimated frequency
+beats the victim's; free budget is never contested, and a write-through has no read history so it
+takes free budget only. `always` is evict-to-fit. Reconcile in `chunk` mode starts cold, and a
+whole-file read is served locally only when every chunk is present. `DB::closeDB` prints a
+`[disk_cache] hits=… misses=… fills=… fill_gets=… evictions=… invalidated=… files=… capacity=…`
+line after `[lru_cache]`. An unusable `disk_cache_dir` is fatal, not degraded: the constructor
+throws `std::runtime_error` when the directory cannot be created or fails a write probe, and
+`DB::DB` propagates it. The bench path is `--disk-cache-bytes` / `--disk-cache-dir` /
+`--disk-cache-keep-pages` / `--disk-cache-mode` / `--disk-cache-entry-bytes` /
+`--disk-cache-admission` on all three runner layers, per writer, label token
+`-dc<size>[-ch<entry>][-adm][-kp]` — a flag, never a `ycsb.yaml` edit. The runner refuses a tier
+root that is on the root filesystem *or* is not itself a mount point (`OZONEDB_DISK_CACHE_ANY_FS=1`
+overrides), because `/tank` is its own filesystem and an unmounted SSD would otherwise land the
+tier there.
+
+### CorfuDB backend
+
+All files are packed into one Corfu stream; each entry is a `CorfuEntry` protobuf
+{`file_name`, `op` (APPEND/SEAL/REMOVE/TRIM), `payload`, `client_id`}. A background tailer
+reconstructs per-file buffers and is the **only** writer of those buffers, own entries included,
+so every process holds each file in address order, which is what makes the task-log election
+("first claim in `task.log`") the same in every process. An append is acked only once its
+outcome is **proven**, never assumed: the seal rule (an APPEND sequenced above its file's SEAL
+belongs to no file) is decided either by the sequencer at token time or by the tailer.
+`submitBatchFast` sends the file name as a Corfu conflict key in the token request's read set
+at snapshot `last_applied_addr_`; every `SEAL`/`REMOVE` carries the same key in its write set,
+so a granted token proves no seal sits between the snapshot and the new address and the put
+returns without waiting for the tailer. A refused token has no address. When the sequencer
+cannot vouch for the snapshot (right after a sequencer restart or a trim) the slow path takes a
+plain token and waits for the tailer to pass it (`waitForTailerLocked`). Acking on the writer's
+partial knowledge lost ~0.7 % of an 8-writer load and let several writers execute the same
+compaction. **Never append a `SEAL` or `REMOVE` without the key**, and never mix builds that
+predate the key in one cell: a keyless seal is invisible to every peer's fast path.
+`corfu_fast_ack = false` selects the slow path for every append (A/B only). `client_id` only
+decides whether the remote-append listener fires (own records are indexed by the writer path).
+Reads fence on the writer's last-known address for read-my-writes. **The tailer never invokes
+the remote-append listener synchronously** — a dedicated dispatch thread does, so the per-entry
+parse and cache put stay off the tailer's critical path, which every fenced reader waits on.
+Preserve that separation when touching `corfu_storage.cpp`.
+
+**The Corfu client.** `CorfuDBStorage` drives the stream through the `CorfuClient` seam
+(`src/include/ozonedb/corfu_client.h`), implemented once by the C++ client in `src/db/corfu/`
+that speaks the Corfu protobuf protocol over TCP (protos vendored under `src/corfu_proto/`, kept
+byte-identical to upstream so they can be diffed). No JVM is involved. It writes codec-NONE
+entries with the stream in `BACKPOINTER_MAP` and raw file-name conflict keys, the same bytes the
+Java runtime writes, so a Java writer on the same stream interoperates; a dataset holding ZSTD
+entries from an older Java writer is refused. The reader scans the **global** address space in
+order and assumes every entry belongs to the one OzoneDB stream (`corfu_native_probe` checks
+that). Tuning keys: `corfu_read_batch`, `corfu_idle_poll_ms`, `corfu_hole_fill_timeout_ms`,
+`corfu_request_timeout_ms`.
+
+**Checkpoints and trimming.** A process with `log_trim_enabled = true` runs a `LogTrimmer`
+(`src/db/log_trimmer.cpp`): every `log_trim_interval_ms` it takes an exact snapshot of the live
+log state at one address `C` (`CorfuDBStorage::takeSnapshot`, which holds `write_gate_`
+exclusively — every local submit path holds it shared, never twice on one thread), writes it to
+`sstable_storage` under `<sstable_dir>/checkpoint/<C>/` with `LATEST` written last
+(`src/db/checkpoint.cpp`), appends a `TRIM` entry, then `prefixTrim`s behind the *previous*
+checkpoint. Every process, trimmer or not, loads `LATEST` at open and seeks the stream to `C+1`
+(`bootstrap`), so the replay is bounded by one trim interval. `bootstrap` throws when the
+checkpoint is ahead of the log or when the replay crosses a `TRIM` entry it did not cover: the
+Corfu log dir and the bucket are one unit and must be snapshotted and restored together.
+`DB::DB` builds `sstable_storage` before `log_storage` for this reason. A member whose tailer
+falls below the trim mark fail-stops (`trimmed_out_`).
+
+### Config
+
+One flat JSON file per DB instance, parsed by `Metadata` (`metadata.h`) via `parseJSON`, which
+returns `map<string,string>` — so *every* value is read as a string and arrays are literal strings
+like `"[268435456, 2684354560]"`. Adding a config key means adding the parse in `Metadata`'s
+constructor. Base configs live in `src/config/{local,corfu}/`.
+
+Compaction-protocol keys: `task_heartbeat_threshold_ticks` (default 30; ticks of 100 ms without a
+heartbeat before a claim is dead and may be taken over), `compaction_enabled` (default true; false
+starts no watcher, for loads that must leave a backlog).
+
+Shape and tuning keys beyond the README's table: `base_file_number_limit` (required by the
+parser but read nowhere in the engine today; `last_file_number_limit`, the last level's target, is
+a `Metadata` field with no config key, default 4), `compaction_read_bytes` (largest ranged read a
+compaction issues per SSTable input), `cache_warm_enabled` / `cache_warm_max_level` /
+`cache_warm_max_fraction` / `cache_warm_min_input_blocks` (read a COMPACT's outputs into the block
+cache when it is applied; off by default, skips counted on the `[lru_cache] levels` line), and for
+trimming `log_trim_min_entries`, `log_trim_keep_checkpoints` (clamped to at least 2) and
+`checkpoint_dir` (default `checkpoint`, under `sstable_dir`).
+
+### Fault injection
+
+`compaction_abort_rate` (default 0) is the fault model of the churn experiment, not a tuning knob:
+with that probability `doCompactionWork` gives a claimed task up before any work, sets
+`Compaction::aborted`, and the heartbeat thread exits without a `TASK_COMPLETE`, exactly as if the
+writer had died holding the claim. The task is reclaimed after the threshold. The draw is a
+per-process `mt19937_64`; the knob is inert in Singleton mode. The same flag ends the heartbeat
+thread when a compaction abandons its task on an unreadable input or a failed output write.
+
+### JNI / YCSB chain
+
+`libOzoneDB.so` → `src/jni/jni_OzoneDBJNI.cpp` (CMake target `ozonedb_jni` → `libozonedb.so`) →
+`ycsb/ozonedb/src/main/java/jni/OzoneDBJNI.java` → `ycsb/ozonedb/.../OzoneDBClient.java`. YCSB
+selects the config with `-p shared_config=<path>`. Changing the JNI signature means touching all
+three layers — and `jni_OzoneDBJNI.h` is javah-generated and checked in, so keep it in sync.
+
+- The Java class must stay in package `jni`: the exported symbols are `Java_jni_OzoneDBJNI_*`, so
+  renaming the package breaks the lookup at load time with no compile error.
+- `OzoneDBJNI` resolves the shim itself, in order: `-Dozonedb.native.lib`, then
+  `$OZONEDB_HOME/build/libozonedb.so`, then `System.loadLibrary`. Resolution lives in the class
+  rather than the runners because YCSB is launched several ways — the multiproc runners build
+  their own `java` command, while manual runs go through `bin/ycsb`, which builds its own.
+- The shim keeps the DB in a `thread_local`, so YCSB `-threads N` opens N databases in one JVM.
+  The bench runs one thread per process.
+
+## Conventions
+
+- `.clang-format`: Google style, `ColumnLimit: 0` (no wrapping), `int& foo` pointer/ref alignment,
+  **east const** (`std::string const&`, not `const std::string&`).
+- Everything lives in `namespace ozonedb`; the public API returns `Status`
+  (`kSuccess`/`kFailure`/`kSealed`/`kNotFound`) rather than throwing. `Storage` base methods throw
+  `std::runtime_error` for unimplemented operations — new backends override what they support.
+- Non-obvious invariants (lifetime, lock ordering, aliasing) are documented in header comments; keep
+  that density when changing those areas.
+- The paper says **OzoneKV**. Prose and docs use that name; identifiers, library names and result
+  labels keep `ozonedb`, because every plot script parses them.

@@ -1,0 +1,30 @@
+{
+  "version": 3,
+  "configurePresets": [
+    {
+      "name": "default",
+      "displayName": "Local FS + S3",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build",
+      "cacheVariables": {
+        "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
+      }
+    },
+    {
+      "name": "corfu",
+      "displayName": "Adds the CorfuDB shared-log backend",
+      "inherits": "default",
+      "cacheVariables": {
+        "OZONEDB_ENABLE_CORFU": "ON"
+      }
+    },
+    {
+      "name": "profiling",
+      "displayName": "Corfu build with frame pointers for perf/flamegraph",
+      "inherits": "corfu",
+      "cacheVariables": {
+        "OZONEDB_PROFILING": "ON"
+      }
+    }
+  ]
+}

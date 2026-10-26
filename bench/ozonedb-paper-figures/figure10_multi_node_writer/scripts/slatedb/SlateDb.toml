@@ -1,0 +1,30 @@
+flush_interval = "0ms"
+manifest_poll_interval = "1s"
+manifest_update_timeout = "30s"
+min_filter_keys = 1000
+filter_bits_per_key = 10
+l0_sst_size_bytes = 67108864
+l0_max_ssts = 8
+max_unflushed_bytes = 1073741824
+wal_enabled = true
+
+# [object_store_cache_options]
+# root_folder = "/tmp/slatedb-ycsb-cache"
+
+[compactor_options]
+poll_interval = "1s"
+manifest_update_timeout = "300s"
+max_sst_size = 268435456
+max_concurrent_compactions = 4
+
+[garbage_collector_options.manifest_options]
+interval = "60s"
+min_age = "300s"
+
+[garbage_collector_options.wal_options]
+interval = "60s"
+min_age = "300s"
+
+[garbage_collector_options.compacted_options]
+interval = "60s"
+min_age = "300s"

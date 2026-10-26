@@ -1,0 +1,50 @@
+name: build-and-test
+
+on: [push, pull_request]
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    env:
+      VCPKG_ROOT: ${{ github.workspace }}/vcpkg
+      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/vcpkg-cache
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install apt dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y cmake ninja-build build-essential pkg-config git curl zip unzip tar openjdk-17-jdk-headless
+
+      - name: Read the vcpkg baseline
+        id: baseline
+        run: echo "sha=$(python3 -c 'import json;print(json.load(open("vcpkg.json"))["builtin-baseline"])')" >> "$GITHUB_OUTPUT"
+
+      - name: Check out vcpkg at the baseline
+        run: |
+          git clone https://github.com/microsoft/vcpkg.git "$VCPKG_ROOT"
+          git -C "$VCPKG_ROOT" checkout -q ${{ steps.baseline.outputs.sha }}
+          "$VCPKG_ROOT/bootstrap-vcpkg.sh" -disableMetrics
+          mkdir -p "$VCPKG_DEFAULT_BINARY_CACHE"
+
+      # aws-sdk-cpp and protobuf take the better part of an hour from source.
+      # The binary cache is keyed on the manifest and the baseline, so a
+      # second run with the same dependencies restores them in seconds.
+      - name: Restore the vcpkg binary cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+          key: vcpkg-${{ runner.os }}-${{ steps.baseline.outputs.sha }}-${{ hashFiles('vcpkg.json') }}
+
+      - name: Configure
+        run: cmake -B build -G Ninja -DOZONEDB_ENABLE_CORFU=ON
+
+      - name: Build
+        run: cmake --build build
+
+      # CorfuStorageTest.* self-skip without CORFU_TEST_ENDPOINT, S3StorageTest.*
+      # and S3DBTest.* without S3_TEST_ENDPOINT.
+      - name: Test
+        run: cd build && ctest --output-on-failure
+        env:
+          OZONEDB_TEST_ROOT: ${{ runner.temp }}/ozonedb-test

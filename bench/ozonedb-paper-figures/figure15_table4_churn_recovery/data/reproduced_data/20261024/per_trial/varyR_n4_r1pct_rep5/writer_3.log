@@ -1,0 +1,835 @@
+# CMD: /usr/lib/jvm/java-8-openjdk-amd64/bin/java -cp /users/Xinying/ozonedb/ycsb/ozonedb/conf:/users/Xinying/ozonedb/ycsb/ozonedb/target/ozonedb-binding-0.18.0-SNAPSHOT.jar:/users/Xinying/.m2/repository/org/apache/htrace/htrace-core4/4.1.0-incubating/htrace-core4-4.1.0-incubating.jar:/users/Xinying/.m2/repository/org/slf4j/slf4j-api/1.7.25/slf4j-api-1.7.25.jar:/users/Xinying/.m2/repository/org/hdrhistogram/HdrHistogram/2.1.12/HdrHistogram-2.1.12.jar:/users/Xinying/.m2/repository/ch/qos/logback/logback-classic/1.2.3/logback-classic-1.2.3.jar:/users/Xinying/.m2/repository/ozonedbjnimaven/demoproc-jni/1.0/demoproc-jni-1.0.jar:/users/Xinying/.m2/repository/ch/qos/logback/logback-core/1.2.3/logback-core-1.2.3.jar:/users/Xinying/.m2/repository/org/codehaus/jackson/jackson-mapper-asl/1.9.4/jackson-mapper-asl-1.9.4.jar:/users/Xinying/.m2/repository/org/slf4j/slf4j-simple/1.7.25/slf4j-simple-1.7.25.jar:/users/Xinying/.m2/repository/org/codehaus/jackson/jackson-core-asl/1.9.4/jackson-core-asl-1.9.4.jar:/users/Xinying/ozonedb/ycsb/core/target/core-0.18.0-SNAPSHOT.jar site.ycsb.Client -db site.ycsb.db.OzoneDBClient -threads 1 -s -P /users/Xinying/ozonedb/ycsb/workloads/generated_workloads/workloadc_1KB_1000000_1000000 -p status.interval=30 -p requestdistribution=uniform -p operationcount=1000000000 -p maxexecutiontime=660 -p shared_config=/tmp/churn_v4_configs/shared_config_varyR_n4_r1pct_rep5.json -t
+# env OZONEDB_CHURN_ABORT_RATE=0.01
+Command line: -db site.ycsb.db.OzoneDBClient -threads 1 -s -P /users/Xinying/ozonedb/ycsb/workloads/generated_workloads/workloadc_1KB_1000000_1000000 -p status.interval=30 -p requestdistribution=uniform -p operationcount=1000000000 -p maxexecutiontime=660 -p shared_config=/tmp/churn_v4_configs/shared_config_varyR_n4_r1pct_rep5.json -t
+YCSB Client 0.18.0-SNAPSHOT
+
+Loading workload...
+Starting test.
+SLF4J: Class path contains multiple SLF4J bindings.
+SLF4J: Found binding in [jar:file:/users/Xinying/.m2/repository/ch/qos/logback/logback-classic/1.2.3/logback-classic-1.2.3.jar!/org/slf4j/impl/StaticLoggerBinder.class]
+SLF4J: Found binding in [jar:file:/users/Xinying/.m2/repository/org/slf4j/slf4j-simple/1.7.25/slf4j-simple-1.7.25.jar!/org/slf4j/impl/StaticLoggerBinder.class]
+SLF4J: See http://www.slf4j.org/codes.html#multiple_bindings for an explanation.
+SLF4J: Actual binding is of type [ch.qos.logback.classic.util.ContextSelectorStaticBinder]
+Maximum execution time specified as: 660 secs
+2026-10-25 09:41:10:922 0 sec: 0 operations; est completion in 0 second 
+Starting compaction watcher
+DBWrapper: report latency for each error is false and specific error codes to track for latency are: []
+2449224:COMPACT_START sstable=0 input_files: "datalog/5" input_files: "datalog/6" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:10:996 - Compaction started: 
+140336110138944:Compacting datalog/5 datalog/6 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921271115593683.sst
+2026-10-25 09:41:11:139 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/11" input_files: "datalog/12" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:11:237 - Compaction started: 
+140336110138944:Compacting datalog/11 datalog/12 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921271240626071.sst
+2026-10-25 09:41:11:260 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/19" input_files: "datalog/20" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:11:340 - Compaction started: 
+140336110138944:Compacting datalog/19 datalog/20 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921271457189971.sst
+2026-10-25 09:41:11:479 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/33" input_files: "datalog/34" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:11:544 - Compaction started: 
+140336110138944:Compacting datalog/33 datalog/34 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921271547650455.sst
+2026-10-25 09:41:11:566 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/41" input_files: "datalog/42" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:11:646 - Compaction started: 
+140336110138944:Compacting datalog/41 datalog/42 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921271649256000.sst
+2026-10-25 09:41:11:669 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/49" input_files: "datalog/50" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:11:749 - Compaction started: 
+140336110138944:Compacting datalog/49 datalog/50 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921271752656897.sst
+2026-10-25 09:41:11:773 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/57" input_files: "datalog/58" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:11:851 - Compaction started: 
+140336110138944:Compacting datalog/57 datalog/58 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921271941105624.sst
+2026-10-25 09:41:11:962 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/67" input_files: "datalog/68" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:12:053 - Compaction started: 
+140336110138944:Compacting datalog/67 datalog/68 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921272056529264.sst
+2026-10-25 09:41:12:075 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/75" input_files: "datalog/76" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:12:155 - Compaction started: 
+140336110138944:Compacting datalog/75 datalog/76 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921272158537669.sst
+2026-10-25 09:41:12:178 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/83" input_files: "datalog/84" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:12:256 - Compaction started: 
+140336110138944:Compacting datalog/83 datalog/84 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921272260212133.sst
+2026-10-25 09:41:12:279 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/91" input_files: "datalog/92" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:12:358 - Compaction started: 
+140336110138944:Compacting datalog/91 datalog/92 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921272361876199.sst
+2026-10-25 09:41:12:381 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/99" input_files: "datalog/100" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:12:459 - Compaction started: 
+140336110138944:Compacting datalog/99 datalog/100 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921272462943160.sst
+2026-10-25 09:41:12:481 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/107" input_files: "datalog/108" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:12:561 - Compaction started: 
+140336110138944:Compacting datalog/107 datalog/108 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921272564702295.sst
+2026-10-25 09:41:12:584 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/115" input_files: "datalog/116" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:12:662 - Compaction started: 
+140336110138944:Compacting datalog/115 datalog/116 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921272665589877.sst
+2026-10-25 09:41:12:684 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/123" input_files: "datalog/124" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:12:763 - Compaction started: 
+140336110138944:Compacting datalog/123 datalog/124 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921272766653352.sst
+2026-10-25 09:41:12:784 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/131" input_files: "datalog/132" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:12:865 - Compaction started: 
+140336110138944:Compacting datalog/131 datalog/132 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921272868213020.sst
+2026-10-25 09:41:12:887 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/139" input_files: "datalog/140" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:12:966 - Compaction started: 
+140336110138944:Compacting datalog/139 datalog/140 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921272969053715.sst
+2026-10-25 09:41:12:985 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/147" input_files: "datalog/148" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:13:067 - Compaction started: 
+140336110138944:Compacting datalog/147 datalog/148 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921273070061595.sst
+2026-10-25 09:41:13:089 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/155" input_files: "datalog/156" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:13:168 - Compaction started: 
+140336110138944:Compacting datalog/155 datalog/156 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921273171184161.sst
+2026-10-25 09:41:13:189 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/163" input_files: "datalog/164" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:13:269 - Compaction started: 
+140336110138944:Compacting datalog/163 datalog/164 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921273272223159.sst
+2026-10-25 09:41:13:289 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/171" input_files: "datalog/172" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:13:370 - Compaction started: 
+140336110138944:Compacting datalog/171 datalog/172 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921273373704410.sst
+2026-10-25 09:41:13:392 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/175" input_files: "datalog/176" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:13:471 - Compaction started: 
+140336110138944:Compacting datalog/175 datalog/176 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921273474473389.sst
+2026-10-25 09:41:13:534 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/183" input_files: "datalog/184" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:13:572 - Compaction started: 
+140336110138944:Compacting datalog/183 datalog/184 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921273575441204.sst
+2026-10-25 09:41:13:591 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/191" input_files: "datalog/192" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:13:674 - Compaction started: 
+140336110138944:Compacting datalog/191 datalog/192 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921273677085041.sst
+2026-10-25 09:41:13:694 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/199" input_files: "datalog/200" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:13:775 - Compaction started: 
+140336110138944:Compacting datalog/199 datalog/200 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921273778271597.sst
+2026-10-25 09:41:13:795 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/207" input_files: "datalog/208" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:13:876 - Compaction started: 
+140336110138944:Compacting datalog/207 datalog/208 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921273879375037.sst
+2026-10-25 09:41:13:896 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/215" input_files: "datalog/216" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:13:991 - Compaction started: 
+140336110138944:Compacting datalog/215 datalog/216 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921274004410450.sst
+2026-10-25 09:41:14:031 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/223" input_files: "datalog/224" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:14:106 - Compaction started: 
+140336110138944:Compacting datalog/223 datalog/224 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921274109775366.sst
+2026-10-25 09:41:14:128 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/231" input_files: "datalog/232" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:14:209 - Compaction started: 
+140336110138944:Compacting datalog/231 datalog/232 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921274213497918.sst
+2026-10-25 09:41:14:233 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/239" input_files: "datalog/240" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:14:311 - Compaction started: 
+140336110138944:Compacting datalog/239 datalog/240 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921274316285740.sst
+2026-10-25 09:41:14:336 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/247" input_files: "datalog/248" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:14:414 - Compaction started: 
+140336110138944:Compacting datalog/247 datalog/248 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921274417306204.sst
+2026-10-25 09:41:14:436 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/255" input_files: "datalog/256" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:14:517 - Compaction started: 
+140336110138944:Compacting datalog/255 datalog/256 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921274519772590.sst
+2026-10-25 09:41:14:537 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/263" input_files: "datalog/264" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:14:620 - Compaction started: 
+140336110138944:Compacting datalog/263 datalog/264 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921274623040216.sst
+2026-10-25 09:41:14:641 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/271" input_files: "datalog/272" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:14:723 - Compaction started: 
+140336110138944:Compacting datalog/271 datalog/272 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921274725913989.sst
+2026-10-25 09:41:14:743 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/279" input_files: "datalog/280" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:14:824 - Compaction started: 
+140336110138944:Compacting datalog/279 datalog/280 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921274828568811.sst
+2026-10-25 09:41:14:847 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/287" input_files: "datalog/288" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:14:927 - Compaction started: 
+140336110138944:Compacting datalog/287 datalog/288 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921274930729772.sst
+2026-10-25 09:41:14:948 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/295" input_files: "datalog/296" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:15:030 - Compaction started: 
+140336110138944:Compacting datalog/295 datalog/296 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921275033174868.sst
+2026-10-25 09:41:15:051 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/303" input_files: "datalog/304" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:15:132 - Compaction started: 
+140336110138944:Compacting datalog/303 datalog/304 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921275136455428.sst
+2026-10-25 09:41:15:153 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/311" input_files: "datalog/312" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:15:235 - Compaction started: 
+140336110138944:Compacting datalog/311 datalog/312 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921275238965677.sst
+2026-10-25 09:41:15:256 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/319" input_files: "datalog/320" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:15:337 - Compaction started: 
+140336110138944:Compacting datalog/319 datalog/320 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921275340690998.sst
+2026-10-25 09:41:15:357 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/327" input_files: "datalog/328" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:15:440 - Compaction started: 
+140336110138944:Compacting datalog/327 datalog/328 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921275443793843.sst
+2026-10-25 09:41:15:461 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/335" input_files: "datalog/336" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:15:543 - Compaction started: 
+140336110138944:Compacting datalog/335 datalog/336 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921275546842396.sst
+2026-10-25 09:41:15:564 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/343" input_files: "datalog/344" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:15:646 - Compaction started: 
+140336110138944:Compacting datalog/343 datalog/344 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921275650223185.sst
+2026-10-25 09:41:15:670 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/351" input_files: "datalog/352" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:15:749 - Compaction started: 
+140336110138944:Compacting datalog/351 datalog/352 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921275753330078.sst
+2026-10-25 09:41:15:772 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/359" input_files: "datalog/360" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:15:850 - Compaction started: 
+140336110138944:Compacting datalog/359 datalog/360 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921275853577725.sst
+2026-10-25 09:41:15:870 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/367" input_files: "datalog/368" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:15:951 - Compaction started: 
+140336110138944:Compacting datalog/367 datalog/368 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921275955264203.sst
+2026-10-25 09:41:15:972 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/375" input_files: "datalog/376" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:16:057 - Compaction started: 
+140336110138944:Compacting datalog/375 datalog/376 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921276062464425.sst
+2026-10-25 09:41:16:078 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/383" input_files: "datalog/384" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:16:159 - Compaction started: 
+140336110138944:Compacting datalog/383 datalog/384 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921276161991415.sst
+2026-10-25 09:41:16:177 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/391" input_files: "datalog/392" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:16:260 - Compaction started: 
+140336110138944:Compacting datalog/391 datalog/392 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921276263647276.sst
+2026-10-25 09:41:16:279 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/399" input_files: "datalog/400" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:16:361 - Compaction started: 
+140336110138944:Compacting datalog/399 datalog/400 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921276364561408.sst
+2026-10-25 09:41:16:379 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/407" input_files: "datalog/408" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:16:463 - Compaction started: 
+140336110138944:Compacting datalog/407 datalog/408 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921276466200036.sst
+2026-10-25 09:41:16:482 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/415" input_files: "datalog/416" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:16:565 - Compaction started: 
+140336110138944:Compacting datalog/415 datalog/416 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921276568193622.sst
+2026-10-25 09:41:16:585 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/423" input_files: "datalog/424" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:16:666 - Compaction started: 
+140336110138944:Compacting datalog/423 datalog/424 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921276669971041.sst
+2026-10-25 09:41:16:687 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/431" input_files: "datalog/432" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:16:768 - Compaction started: 
+140336110138944:Compacting datalog/431 datalog/432 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921276770858503.sst
+2026-10-25 09:41:16:786 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/439" input_files: "datalog/440" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:16:869 - Compaction started: 
+140336110138944:Compacting datalog/439 datalog/440 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921276872328163.sst
+2026-10-25 09:41:16:888 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/447" input_files: "datalog/448" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:16:970 - Compaction started: 
+140336110138944:Compacting datalog/447 datalog/448 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921276973952944.sst
+2026-10-25 09:41:16:990 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/457" input_files: "datalog/458" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:17:073 - Compaction started: 
+140336110138944:Compacting datalog/457 datalog/458 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921277076002665.sst
+2026-10-25 09:41:17:091 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/465" input_files: "datalog/466" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:17:174 - Compaction started: 
+140336110138944:Compacting datalog/465 datalog/466 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921277177783481.sst
+2026-10-25 09:41:17:193 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/471" input_files: "datalog/472" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:17:275 - Compaction started: 
+140336110138944:Compacting datalog/471 datalog/472 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921277278857855.sst
+2026-10-25 09:41:17:294 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/477" input_files: "datalog/478" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:17:377 - Compaction started: 
+140336110138944:Compacting datalog/477 datalog/478 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921277380169958.sst
+2026-10-25 09:41:17:398 - Compaction completed: 
+2449224:Task input_files: "datalog/245" input_files: "datalog/246" compactIntoNextLevel: true destinationLevel: 1 is dead (hb=30)
+2449224:Found dead task input_files: "datalog/245" input_files: "datalog/246" compactIntoNextLevel: true destinationLevel: 1
+2449224:COMPACT_START sstable=0 input_files: "datalog/245" input_files: "datalog/246" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:17:478 - Compaction started: 
+140336110138944:Compacting datalog/245 datalog/246 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921277482448580.sst
+2026-10-25 09:41:17:500 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/491" input_files: "datalog/492" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:17:580 - Compaction started: 
+140336110138944:Compacting datalog/491 datalog/492 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921277583071826.sst
+2026-10-25 09:41:17:596 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/499" input_files: "datalog/500" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:17:681 - Compaction started: 
+140336110138944:Compacting datalog/499 datalog/500 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921277684847671.sst
+2026-10-25 09:41:17:699 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/507" input_files: "datalog/508" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:17:783 - Compaction started: 
+140336110138944:Compacting datalog/507 datalog/508 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921277786363778.sst
+2026-10-25 09:41:17:801 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/515" input_files: "datalog/516" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:17:884 - Compaction started: 
+140336110138944:Compacting datalog/515 datalog/516 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921277887554842.sst
+2026-10-25 09:41:17:902 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/523" input_files: "datalog/524" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:17:986 - Compaction started: 
+140336110138944:Compacting datalog/523 datalog/524 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921277989717978.sst
+2026-10-25 09:41:18:005 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/531" input_files: "datalog/532" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:18:088 - Compaction started: 
+140336110138944:Compacting datalog/531 datalog/532 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921278091564717.sst
+2026-10-25 09:41:18:105 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/539" input_files: "datalog/540" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:18:190 - Compaction started: 
+140336110138944:Compacting datalog/539 datalog/540 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921278193139284.sst
+2026-10-25 09:41:18:208 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/547" input_files: "datalog/548" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:18:292 - Compaction started: 
+140336110138944:Compacting datalog/547 datalog/548 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921278295307338.sst
+2026-10-25 09:41:18:309 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/555" input_files: "datalog/556" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:18:393 - Compaction started: 
+140336110138944:Compacting datalog/555 datalog/556 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921278396698860.sst
+2026-10-25 09:41:18:409 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/563" input_files: "datalog/564" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:18:495 - Compaction started: 
+140336110138944:Compacting datalog/563 datalog/564 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921278498353378.sst
+2026-10-25 09:41:18:511 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/571" input_files: "datalog/572" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:18:597 - Compaction started: 
+140336110138944:Compacting datalog/571 datalog/572 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921278600047068.sst
+2026-10-25 09:41:18:613 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/579" input_files: "datalog/580" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:18:698 - Compaction started: 
+140336110138944:Compacting datalog/579 datalog/580 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921278701969230.sst
+2026-10-25 09:41:18:716 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/587" input_files: "datalog/588" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:18:800 - Compaction started: 
+140336110138944:Compacting datalog/587 datalog/588 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921278803356143.sst
+2026-10-25 09:41:18:818 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/595" input_files: "datalog/596" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:18:901 - Compaction started: 
+140336110138944:Compacting datalog/595 datalog/596 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921278904965405.sst
+2026-10-25 09:41:18:919 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/603" input_files: "datalog/604" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:19:003 - Compaction started: 
+140336110138944:Compacting datalog/603 datalog/604 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921279006528540.sst
+2026-10-25 09:41:19:021 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/611" input_files: "datalog/612" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:19:104 - Compaction started: 
+140336110138944:Compacting datalog/611 datalog/612 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921279108154534.sst
+2026-10-25 09:41:19:124 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/619" input_files: "datalog/620" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:19:212 - Compaction started: 
+140336110138944:Compacting datalog/619 datalog/620 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921279227101329.sst
+2026-10-25 09:41:19:246 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/627" input_files: "datalog/628" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:19:321 - Compaction started: 
+140336110138944:Compacting datalog/627 datalog/628 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921279324680711.sst
+2026-10-25 09:41:19:339 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/635" input_files: "datalog/636" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:19:424 - Compaction started: 
+140336110138944:Compacting datalog/635 datalog/636 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921279428533819.sst
+2026-10-25 09:41:19:445 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/643" input_files: "datalog/644" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:19:527 - Compaction started: 
+140336110138944:Compacting datalog/643 datalog/644 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921279531148585.sst
+2026-10-25 09:41:19:549 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/651" input_files: "datalog/652" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:19:629 - Compaction started: 
+140336110138944:Compacting datalog/651 datalog/652 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921279633055367.sst
+2026-10-25 09:41:19:647 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/659" input_files: "datalog/660" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:19:731 - Compaction started: 
+140336110138944:Compacting datalog/659 datalog/660 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921279735222390.sst
+2026-10-25 09:41:19:752 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/667" input_files: "datalog/668" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:19:835 - Compaction started: 
+140336110138944:Compacting datalog/667 datalog/668 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921279838198396.sst
+2026-10-25 09:41:19:853 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/675" input_files: "datalog/676" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:19:937 - Compaction started: 
+140336110138944:Compacting datalog/675 datalog/676 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921279941244234.sst
+2026-10-25 09:41:19:958 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/683" input_files: "datalog/684" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:20:040 - Compaction started: 
+140336110138944:Compacting datalog/683 datalog/684 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921280044338272.sst
+2026-10-25 09:41:20:060 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/691" input_files: "datalog/692" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:20:143 - Compaction started: 
+140336110138944:Compacting datalog/691 datalog/692 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921280147397515.sst
+2026-10-25 09:41:20:165 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/699" input_files: "datalog/700" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:20:245 - Compaction started: 
+140336110138944:Compacting datalog/699 datalog/700 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921280248792383.sst
+2026-10-25 09:41:20:264 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/707" input_files: "datalog/708" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:20:347 - Compaction started: 
+140336110138944:Compacting datalog/707 datalog/708 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921280350855911.sst
+2026-10-25 09:41:20:365 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/715" input_files: "datalog/716" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:20:450 - Compaction started: 
+140336110138944:Compacting datalog/715 datalog/716 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921280453512144.sst
+2026-10-25 09:41:20:468 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/723" input_files: "datalog/724" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:20:551 - Compaction started: 
+140336110138944:Compacting datalog/723 datalog/724 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921280554823345.sst
+2026-10-25 09:41:20:569 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/731" input_files: "datalog/732" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:20:653 - Compaction started: 
+140336110138944:Compacting datalog/731 datalog/732 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921280656218574.sst
+2026-10-25 09:41:20:669 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/739" input_files: "datalog/740" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:20:754 - Compaction started: 
+140336110138944:Compacting datalog/739 datalog/740 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921280758636469.sst
+2026-10-25 09:41:20:775 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/747" input_files: "datalog/748" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:20:856 - Compaction started: 
+140336110138944:Compacting datalog/747 datalog/748 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921280859305781.sst
+2026-10-25 09:41:20:873 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/755" input_files: "datalog/756" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:20:958 - Compaction started: 
+140336110138944:Compacting datalog/755 datalog/756 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921280961317230.sst
+2026-10-25 09:41:20:975 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/763" input_files: "datalog/764" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:21:059 - Compaction started: 
+140336110138944:Compacting datalog/763 datalog/764 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921281062881067.sst
+2026-10-25 09:41:21:076 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/771" input_files: "datalog/772" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:21:161 - Compaction started: 
+140336110138944:Compacting datalog/771 datalog/772 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921281164665939.sst
+2026-10-25 09:41:21:178 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/779" input_files: "datalog/780" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:21:263 - Compaction started: 
+140336110138944:Compacting datalog/779 datalog/780 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921281266725088.sst
+2026-10-25 09:41:21:281 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/785" input_files: "datalog/786" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:21:364 - Compaction started: 
+140336110138944:Compacting datalog/785 datalog/786 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921281368216298.sst
+2026-10-25 09:41:21:382 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/793" input_files: "datalog/794" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:21:466 - Compaction started: 
+140336110138944:Compacting datalog/793 datalog/794 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921281469861658.sst
+2026-10-25 09:41:21:484 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/801" input_files: "datalog/802" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:21:568 - Compaction started: 
+140336110138944:Compacting datalog/801 datalog/802 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921281571610052.sst
+2026-10-25 09:41:21:586 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/809" input_files: "datalog/810" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:21:670 - Compaction started: 
+140336110138944:Compacting datalog/809 datalog/810 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921281673494221.sst
+2026-10-25 09:41:21:686 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/817" input_files: "datalog/818" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:21:772 - Compaction started: 
+140336110138944:Compacting datalog/817 datalog/818 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921281776093839.sst
+2026-10-25 09:41:21:793 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/825" input_files: "datalog/826" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:21:874 - Compaction started: 
+140336110138944:Compacting datalog/825 datalog/826 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921281877145310.sst
+2026-10-25 09:41:21:891 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/833" input_files: "datalog/834" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:21:975 - Compaction started: 
+140336110138944:Compacting datalog/833 datalog/834 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921281979392243.sst
+2026-10-25 09:41:21:996 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/841" input_files: "datalog/842" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:22:077 - Compaction started: 
+140336110138944:Compacting datalog/841 datalog/842 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921282080079427.sst
+2026-10-25 09:41:22:093 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/849" input_files: "datalog/850" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:22:179 - Compaction started: 
+140336110138944:Compacting datalog/849 datalog/850 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921282182637336.sst
+2026-10-25 09:41:22:197 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/857" input_files: "datalog/858" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:22:280 - Compaction started: 
+140336110138944:Compacting datalog/857 datalog/858 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921282284132683.sst
+2026-10-25 09:41:22:297 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/867" input_files: "datalog/868" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:22:383 - Compaction started: 
+140336110138944:Compacting datalog/867 datalog/868 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921282386780561.sst
+2026-10-25 09:41:22:403 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/875" input_files: "datalog/876" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:22:484 - Compaction started: 
+140336110138944:Compacting datalog/875 datalog/876 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921282487335958.sst
+2026-10-25 09:41:22:500 - Compaction completed: 
+2449224:COMPACT_START sstable=0 input_files: "datalog/883" input_files: "datalog/884" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:22:586 - Compaction started: 
+140336110138944:Compacting datalog/883 datalog/884 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921282589334874.sst
+2026-10-25 09:41:22:602 - Compaction completed: 
+2449224:COMPACT_START sstable=1 input_files: "sstable1/5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921271301342595.sst" input_files: "sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921271457189971.sst" compactIntoNextLevel: true destinationLevel: 2
+2026-10-25 09:41:22:688 - Compaction started: 
+140336110138944:Compacting sstable1/5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921271301342595.sst sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921271457189971.sst into:sstable2/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921282714259879.sst
+2026-10-25 09:41:22:752 - Compaction completed: 
+2449224:COMPACT_START sstable=1 input_files: "sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921271547650455.sst" input_files: "sstable1/4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921271572983648.sst" compactIntoNextLevel: true destinationLevel: 2
+2026-10-25 09:41:22:790 - Compaction started: 
+140336110138944:Compacting sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921271547650455.sst sstable1/4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921271572983648.sst into:sstable2/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921282812893507.sst
+2026-10-25 09:41:22:852 - Compaction completed: 
+2449224:COMPACT_START sstable=1 input_files: "sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921271752656897.sst" input_files: "sstable1/4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921271777287847.sst" compactIntoNextLevel: true destinationLevel: 2
+2026-10-25 09:41:22:892 - Compaction started: 
+140336110138944:Compacting sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921271752656897.sst sstable1/4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921271777287847.sst into:sstable2/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921282916294152.sst
+2026-10-25 09:41:22:953 - Compaction completed: 
+2449224:COMPACT_START sstable=1 input_files: "sstable1/7aa36ce5-3285-4a98-8acd-ea53f093b576202610250341101792921272048411906.sst" input_files: "sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921272056529264.sst" compactIntoNextLevel: true destinationLevel: 2
+2026-10-25 09:41:22:993 - Compaction started: 
+140336110138944:Compacting sstable1/7aa36ce5-3285-4a98-8acd-ea53f093b576202610250341101792921272048411906.sst sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921272056529264.sst into:sstable2/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921283017817272.sst
+2026-10-25 09:41:23:055 - Compaction completed: 
+2449224:COMPACT_START sstable=1 input_files: "sstable1/5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921272221958476.sst" input_files: "sstable1/4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921272240956677.sst" compactIntoNextLevel: true destinationLevel: 2
+2026-10-25 09:41:23:095 - Compaction started: 
+140336110138944:Compacting sstable1/5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921272221958476.sst sstable1/4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921272240956677.sst into:sstable2/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921283118003514.sst
+2026-10-25 09:41:23:153 - Compaction completed: 
+2449224:COMPACT_START sstable=1 input_files: "sstable1/5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921272426348236.sst" input_files: "sstable1/4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921272444422488.sst" compactIntoNextLevel: true destinationLevel: 2
+2026-10-25 09:41:23:197 - Compaction started: 
+140336110138944:Compacting sstable1/5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921272426348236.sst sstable1/4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921272444422488.sst into:sstable2/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921283222176063.sst
+2026-10-25 09:41:23:261 - Compaction completed: 
+2449224:COMPACT_START sstable=1 input_files: "sstable1/5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921272670308585.sst" input_files: "sstable1/4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921272664567562.sst" compactIntoNextLevel: true destinationLevel: 2
+2026-10-25 09:41:23:298 - Compaction started: 
+140336110138944:Compacting sstable1/5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921272670308585.sst sstable1/4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921272664567562.sst into:sstable2/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921283323542006.sst
+2026-10-25 09:41:23:361 - Compaction completed: 
+2449224:COMPACT_START sstable=1 input_files: "sstable1/5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921272833878975.sst" input_files: "sstable1/4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921272851209836.sst" compactIntoNextLevel: true destinationLevel: 2
+2449224:COMPACT_ABORT input_files: "sstable1/5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921272833878975.sst" input_files: "sstable1/4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921272851209836.sst" compactIntoNextLevel: true destinationLevel: 2
+2449224:COMPACT_START sstable=1 input_files: "sstable1/5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921273036153352.sst" input_files: "sstable1/4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921273053312309.sst" compactIntoNextLevel: true destinationLevel: 2
+2026-10-25 09:41:23:501 - Compaction started: 
+140336110138944:Compacting sstable1/5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921273036153352.sst sstable1/4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921273053312309.sst into:sstable2/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921283524150164.sst
+2026-10-25 09:41:23:560 - Compaction completed: 
+2449224:COMPACT_START sstable=1 input_files: "sstable1/5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921273239455333.sst" input_files: "sstable1/4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921273255764310.sst" compactIntoNextLevel: true destinationLevel: 2
+2026-10-25 09:41:23:603 - Compaction started: 
+140336110138944:Compacting sstable1/5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921273239455333.sst sstable1/4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921273255764310.sst into:sstable2/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921283626573519.sst
+2026-10-25 09:41:23:663 - Compaction completed: 
+2449224:COMPACT_START sstable=1 input_files: "sstable1/5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921273442748228.sst" input_files: "sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921273474473389.sst" compactIntoNextLevel: true destinationLevel: 2
+2026-10-25 09:41:23:705 - Compaction started: 
+140336110138944:Compacting sstable1/5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921273442748228.sst sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921273474473389.sst into:sstable2/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921283728983689.sst
+2026-10-25 09:41:23:764 - Compaction completed: 
+2449224:COMPACT_START sstable=1 input_files: "sstable1/5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921273646678262.sst" input_files: "sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921273677085041.sst" compactIntoNextLevel: true destinationLevel: 2
+2026-10-25 09:41:23:807 - Compaction started: 
+140336110138944:Compacting sstable1/5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921273646678262.sst sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921273677085041.sst into:sstable2/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921283831165029.sst
+2026-10-25 09:41:23:871 - Compaction completed: 
+2449224:COMPACT_START sstable=1 input_files: "sstable1/5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921273849563900.sst" input_files: "sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921273879375037.sst" compactIntoNextLevel: true destinationLevel: 2
+2026-10-25 09:41:23:908 - Compaction started: 
+140336110138944:Compacting sstable1/5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921273849563900.sst sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921273879375037.sst into:sstable2/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921283931805466.sst
+2026-10-25 09:41:23:969 - Compaction completed: 
+2449224:COMPACT_START sstable=1 input_files: "sstable1/7aa36ce5-3285-4a98-8acd-ea53f093b576202610250341101792921274122118393.sst" input_files: "sstable1/4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921274121932293.sst" compactIntoNextLevel: true destinationLevel: 2
+2026-10-25 09:41:24:011 - Compaction started: 
+140336110138944:Compacting sstable1/7aa36ce5-3285-4a98-8acd-ea53f093b576202610250341101792921274122118393.sst sstable1/4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921274121932293.sst into:sstable2/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921284033358191.sst
+2026-10-25 09:41:24:068 - Compaction completed: 
+2449224:COMPACT_START sstable=1 input_files: "sstable1/7aa36ce5-3285-4a98-8acd-ea53f093b576202610250341101792921274326917334.sst" input_files: "sstable1/4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921274327400814.sst" compactIntoNextLevel: true destinationLevel: 2
+2026-10-25 09:41:24:113 - Compaction started: 
+140336110138944:Compacting sstable1/7aa36ce5-3285-4a98-8acd-ea53f093b576202610250341101792921274326917334.sst sstable1/4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921274327400814.sst into:sstable2/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921284141233705.sst
+2026-10-25 09:41:24:180 - Compaction completed: 
+2449224:COMPACT_START sstable=1 input_files: "sstable1/4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921274530509191.sst" input_files: "sstable1/7aa36ce5-3285-4a98-8acd-ea53f093b576202610250341101792921274532060683.sst" compactIntoNextLevel: true destinationLevel: 2
+2026-10-25 09:41:24:215 - Compaction started: 
+140336110138944:Compacting sstable1/4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921274530509191.sst sstable1/7aa36ce5-3285-4a98-8acd-ea53f093b576202610250341101792921274532060683.sst into:sstable2/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921284244867971.sst
+2026-10-25 09:41:24:279 - Compaction completed: 
+2449224:COMPACT_START sstable=1 input_files: "sstable1/5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921274668880732.sst" input_files: "sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921274725913989.sst" compactIntoNextLevel: true destinationLevel: 2
+2026-10-25 09:41:24:331 - Compaction started: 
+140336110138944:Compacting sstable1/5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921274668880732.sst sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921274725913989.sst into:sstable2/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921284384168500.sst
+2026-10-25 09:41:24:421 - Compaction completed: 
+2449224:COMPACT_START sstable=1 input_files: "sstable1/5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921274875686142.sst" input_files: "sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921274930729772.sst" compactIntoNextLevel: true destinationLevel: 2
+2026-10-25 09:41:24:437 - Compaction started: 
+140336110138944:Compacting sstable1/5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921274875686142.sst sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921274930729772.sst into:sstable2/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921284459613103.sst
+2026-10-25 09:41:24:496 - Compaction completed: 
+2449224:COMPACT_START sstable=1 input_files: "sstable1/5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921275081881463.sst" input_files: "sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921275136455428.sst" compactIntoNextLevel: true destinationLevel: 2
+2026-10-25 09:41:24:540 - Compaction started: 
+140336110138944:Compacting sstable1/5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921275081881463.sst sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921275136455428.sst into:sstable2/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921284568792503.sst
+2026-10-25 09:41:24:604 - Compaction completed: 
+2449224:COMPACT_START sstable=1 input_files: "sstable1/5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921275286359129.sst" input_files: "sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921275340690998.sst" compactIntoNextLevel: true destinationLevel: 2
+2026-10-25 09:41:24:643 - Compaction started: 
+140336110138944:Compacting sstable1/5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921275286359129.sst sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921275340690998.sst into:sstable2/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921284664234599.sst
+2026-10-25 09:41:24:697 - Compaction completed: 
+2449224:COMPACT_START sstable=1 input_files: "sstable1/5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921275490578198.sst" input_files: "sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921275546842396.sst" compactIntoNextLevel: true destinationLevel: 2
+2026-10-25 09:41:24:746 - Compaction started: 
+140336110138944:Compacting sstable1/5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921275490578198.sst sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921275546842396.sst into:sstable2/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921284772141322.sst
+2026-10-25 09:41:24:811 - Compaction completed: 
+2449224:COMPACT_START sstable=1 input_files: "sstable1/5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921275697635622.sst" input_files: "sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921275753330078.sst" compactIntoNextLevel: true destinationLevel: 2
+2026-10-25 09:41:24:850 - Compaction started: 
+140336110138944:Compacting sstable1/5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921275697635622.sst sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921275753330078.sst into:sstable2/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921284870731768.sst
+2026-10-25 09:41:24:904 - Compaction completed: 
+2449224:COMPACT_START sstable=1 input_files: "sstable1/5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921275901064663.sst" input_files: "sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921275955264203.sst" compactIntoNextLevel: true destinationLevel: 2
+2026-10-25 09:41:24:953 - Compaction started: 
+140336110138944:Compacting sstable1/5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921275901064663.sst sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921275955264203.sst into:sstable2/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921284979515973.sst
+2026-10-25 09:41:25:015 - Compaction completed: 
+2449224:COMPACT_START sstable=1 input_files: "sstable1/5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921276107900590.sst" input_files: "sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921276161991415.sst" compactIntoNextLevel: true destinationLevel: 2
+2026-10-25 09:41:25:057 - Compaction started: 
+140336110138944:Compacting sstable1/5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921276107900590.sst sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921276161991415.sst into:sstable2/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921285077884321.sst
+2026-10-25 09:41:25:111 - Compaction completed: 
+2449224:Task input_files: "datalog/843" input_files: "datalog/844" compactIntoNextLevel: true destinationLevel: 1 is dead (hb=30)
+2449224:Found dead task input_files: "datalog/843" input_files: "datalog/844" compactIntoNextLevel: true destinationLevel: 1
+2449224:COMPACT_START sstable=0 input_files: "datalog/843" input_files: "datalog/844" compactIntoNextLevel: true destinationLevel: 1
+2026-10-25 09:41:25:161 - Compaction started: 
+140336110138944:Compacting datalog/843 datalog/844 into:sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921285164577520.sst
+2026-10-25 09:41:25:178 - Compaction completed: 
+2449224:COMPACT_START sstable=1 input_files: "sstable1/7aa36ce5-3285-4a98-8acd-ea53f093b576202610250341101792921276469483670.sst" input_files: "sstable1/4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921276475254910.sst" compactIntoNextLevel: true destinationLevel: 2
+2026-10-25 09:41:25:265 - Compaction started: 
+140336110138944:Compacting sstable1/7aa36ce5-3285-4a98-8acd-ea53f093b576202610250341101792921276469483670.sst sstable1/4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921276475254910.sst into:sstable2/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921285286939277.sst
+2026-10-25 09:41:25:320 - Compaction completed: 
+2449224:COMPACT_START sstable=1 input_files: "sstable1/5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921276715437162.sst" input_files: "sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921276770858503.sst" compactIntoNextLevel: true destinationLevel: 2
+2026-10-25 09:41:25:369 - Compaction started: 
+140336110138944:Compacting sstable1/5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921276715437162.sst sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921276770858503.sst into:sstable2/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921285392332165.sst
+2026-10-25 09:41:25:424 - Compaction completed: 
+2449224:COMPACT_START sstable=1 input_files: "sstable1/5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921276917709084.sst" input_files: "sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921276973952944.sst" compactIntoNextLevel: true destinationLevel: 2
+2026-10-25 09:41:25:474 - Compaction started: 
+140336110138944:Compacting sstable1/5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921276917709084.sst sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921276973952944.sst into:sstable2/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921285494682752.sst
+2026-10-25 09:41:25:528 - Compaction completed: 
+2449224:COMPACT_START sstable=1 input_files: "sstable1/5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921277120529277.sst" input_files: "sstable1/7aa36ce5-3285-4a98-8acd-ea53f093b576202610250341101792921277176768539.sst" compactIntoNextLevel: true destinationLevel: 2
+2026-10-25 09:41:25:577 - Compaction started: 
+140336110138944:Compacting sstable1/5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921277120529277.sst sstable1/7aa36ce5-3285-4a98-8acd-ea53f093b576202610250341101792921277176768539.sst into:sstable2/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921285597509046.sst
+2026-10-25 09:41:25:629 - Compaction completed: 
+2449224:COMPACT_START sstable=1 input_files: "sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921277380169958.sst" input_files: "sstable1/4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921277385091367.sst" compactIntoNextLevel: true destinationLevel: 2
+2026-10-25 09:41:25:682 - Compaction started: 
+140336110138944:Compacting sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921277380169958.sst sstable1/4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921277385091367.sst into:sstable2/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921285702360354.sst
+2026-10-25 09:41:25:735 - Compaction completed: 
+2449224:COMPACT_START sstable=1 input_files: "sstable1/4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921277603973252.sst" input_files: "sstable1/7aa36ce5-3285-4a98-8acd-ea53f093b576202610250341101792921277604749854.sst" compactIntoNextLevel: true destinationLevel: 2
+2026-10-25 09:41:25:785 - Compaction started: 
+140336110138944:Compacting sstable1/4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921277603973252.sst sstable1/7aa36ce5-3285-4a98-8acd-ea53f093b576202610250341101792921277604749854.sst into:sstable2/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921285804526014.sst
+2026-10-25 09:41:25:835 - Compaction completed: 
+2449224:COMPACT_START sstable=1 input_files: "sstable1/4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921277806638524.sst" input_files: "sstable1/7aa36ce5-3285-4a98-8acd-ea53f093b576202610250341101792921277807239505.sst" compactIntoNextLevel: true destinationLevel: 2
+2026-10-25 09:41:25:889 - Compaction started: 
+140336110138944:Compacting sstable1/4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921277806638524.sst sstable1/7aa36ce5-3285-4a98-8acd-ea53f093b576202610250341101792921277807239505.sst into:sstable2/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921285910579596.sst
+2026-10-25 09:41:25:944 - Compaction completed: 
+2449224:COMPACT_START sstable=1 input_files: "sstable1/4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921278009167599.sst" input_files: "sstable1/7aa36ce5-3285-4a98-8acd-ea53f093b576202610250341101792921278009345314.sst" compactIntoNextLevel: true destinationLevel: 2
+2026-10-25 09:41:25:991 - Compaction started: 
+140336110138944:Compacting sstable1/4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921278009167599.sst sstable1/7aa36ce5-3285-4a98-8acd-ea53f093b576202610250341101792921278009345314.sst into:sstable2/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921286011570794.sst
+2026-10-25 09:41:26:043 - Compaction completed: 
+2449224:COMPACT_START sstable=1 input_files: "sstable1/7aa36ce5-3285-4a98-8acd-ea53f093b576202610250341101792921278211262307.sst" input_files: "sstable1/4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921278211590445.sst" compactIntoNextLevel: true destinationLevel: 2
+2026-10-25 09:41:26:094 - Compaction started: 
+140336110138944:Compacting sstable1/7aa36ce5-3285-4a98-8acd-ea53f093b576202610250341101792921278211262307.sst sstable1/4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921278211590445.sst into:sstable2/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921286114099347.sst
+2026-10-25 09:41:26:145 - Compaction completed: 
+2449224:COMPACT_START sstable=1 input_files: "sstable1/7aa36ce5-3285-4a98-8acd-ea53f093b576202610250341101792921278413512777.sst" input_files: "sstable1/4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921278413754102.sst" compactIntoNextLevel: true destinationLevel: 2
+2026-10-25 09:41:26:197 - Compaction started: 
+140336110138944:Compacting sstable1/7aa36ce5-3285-4a98-8acd-ea53f093b576202610250341101792921278413512777.sst sstable1/4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921278413754102.sst into:sstable2/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921286215110703.sst
+2026-10-25 09:41:26:244 - Compaction completed: 
+2449224:COMPACT_START sstable=1 input_files: "sstable1/7aa36ce5-3285-4a98-8acd-ea53f093b576202610250341101792921278615997039.sst" input_files: "sstable1/4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921278616536685.sst" compactIntoNextLevel: true destinationLevel: 2
+2026-10-25 09:41:26:300 - Compaction started: 
+140336110138944:Compacting sstable1/7aa36ce5-3285-4a98-8acd-ea53f093b576202610250341101792921278615997039.sst sstable1/4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921278616536685.sst into:sstable2/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921286320058402.sst
+2026-10-25 09:41:26:352 - Compaction completed: 
+2449224:COMPACT_START sstable=1 input_files: "sstable1/7aa36ce5-3285-4a98-8acd-ea53f093b576202610250341101792921278818442897.sst" input_files: "sstable1/4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921278819123920.sst" compactIntoNextLevel: true destinationLevel: 2
+2026-10-25 09:41:26:402 - Compaction started: 
+140336110138944:Compacting sstable1/7aa36ce5-3285-4a98-8acd-ea53f093b576202610250341101792921278818442897.sst sstable1/4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921278819123920.sst into:sstable2/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921286422079158.sst
+2026-10-25 09:41:26:453 - Compaction completed: 
+2449224:COMPACT_START sstable=1 input_files: "sstable1/5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921278942150730.sst" input_files: "sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921279006528540.sst" compactIntoNextLevel: true destinationLevel: 2
+2026-10-25 09:41:26:505 - Compaction started: 
+140336110138944:Compacting sstable1/5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921278942150730.sst sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921279006528540.sst into:sstable2/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921286524958512.sst
+2026-10-25 09:41:26:557 - Compaction completed: 
+2449224:COMPACT_START sstable=1 input_files: "sstable1/5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921279144042085.sst" input_files: "sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921279227101329.sst" compactIntoNextLevel: true destinationLevel: 2
+2026-10-25 09:41:26:607 - Compaction started: 
+140336110138944:Compacting sstable1/5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921279144042085.sst sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921279227101329.sst into:sstable2/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921286629832193.sst
+2026-10-25 09:41:26:660 - Compaction completed: 
+2449224:COMPACT_START sstable=1 input_files: "sstable1/5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921279349654768.sst" input_files: "sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921279428533819.sst" compactIntoNextLevel: true destinationLevel: 2
+2026-10-25 09:41:26:711 - Compaction started: 
+140336110138944:Compacting sstable1/5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921279349654768.sst sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921279428533819.sst into:sstable2/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921286734691024.sst
+2026-10-25 09:41:26:764 - Compaction completed: 
+2449224:COMPACT_START sstable=1 input_files: "sstable1/5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921279553962202.sst" input_files: "sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921279633055367.sst" compactIntoNextLevel: true destinationLevel: 2
+2026-10-25 09:41:26:813 - Compaction started: 
+140336110138944:Compacting sstable1/5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921279553962202.sst sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921279633055367.sst into:sstable2/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921286837613209.sst
+2026-10-25 09:41:26:869 - Compaction completed: 
+2449224:COMPACT_START sstable=1 input_files: "sstable1/5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921279758024446.sst" input_files: "sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921279838198396.sst" compactIntoNextLevel: true destinationLevel: 2
+2026-10-25 09:41:26:916 - Compaction started: 
+140336110138944:Compacting sstable1/5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921279758024446.sst sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921279838198396.sst into:sstable2/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921286938461618.sst
+2026-10-25 09:41:26:968 - Compaction completed: 
+2449224:COMPACT_START sstable=1 input_files: "sstable1/5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921279961804197.sst" input_files: "sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921280044338272.sst" compactIntoNextLevel: true destinationLevel: 2
+2026-10-25 09:41:27:018 - Compaction started: 
+140336110138944:Compacting sstable1/5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921279961804197.sst sstable1/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921280044338272.sst into:sstable2/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921287036212452.sst
+2026-10-25 09:41:27:064 - Compaction completed: 
+2449224:COMPACT_START sstable=1 input_files: "sstable1/4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921280256296597.sst" input_files: "sstable1/7aa36ce5-3285-4a98-8acd-ea53f093b576202610250341101792921280257311488.sst" compactIntoNextLevel: true destinationLevel: 2
+2026-10-25 09:41:27:121 - Compaction started: 
+140336110138944:Compacting sstable1/4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921280256296597.sst sstable1/7aa36ce5-3285-4a98-8acd-ea53f093b576202610250341101792921280257311488.sst into:sstable2/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921287143833777.sst
+2026-10-25 09:41:27:174 - Compaction completed: 
+2449224:COMPACT_START sstable=1 input_files: "sstable1/4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921280459724084.sst" input_files: "sstable1/7aa36ce5-3285-4a98-8acd-ea53f093b576202610250341101792921280461222566.sst" compactIntoNextLevel: true destinationLevel: 2
+2026-10-25 09:41:27:223 - Compaction started: 
+140336110138944:Compacting sstable1/4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921280459724084.sst sstable1/7aa36ce5-3285-4a98-8acd-ea53f093b576202610250341101792921280461222566.sst into:sstable2/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921287242078802.sst
+2026-10-25 09:41:27:272 - Compaction completed: 
+2449224:COMPACT_START sstable=1 input_files: "sstable1/4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921280662437547.sst" input_files: "sstable1/7aa36ce5-3285-4a98-8acd-ea53f093b576202610250341101792921280663420368.sst" compactIntoNextLevel: true destinationLevel: 2
+2026-10-25 09:41:27:326 - Compaction started: 
+140336110138944:Compacting sstable1/4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921280662437547.sst sstable1/7aa36ce5-3285-4a98-8acd-ea53f093b576202610250341101792921280663420368.sst into:sstable2/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921287346484141.sst
+2026-10-25 09:41:27:373 - Compaction completed: 
+2449224:COMPACT_START sstable=1 input_files: "sstable1/7aa36ce5-3285-4a98-8acd-ea53f093b576202610250341101792921280866217458.sst" input_files: "sstable1/4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921280866613755.sst" compactIntoNextLevel: true destinationLevel: 2
+2026-10-25 09:41:27:428 - Compaction started: 
+140336110138944:Compacting sstable1/7aa36ce5-3285-4a98-8acd-ea53f093b576202610250341101792921280866217458.sst sstable1/4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921280866613755.sst into:sstable2/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921287446886258.sst
+2026-10-25 09:41:27:477 - Compaction completed: 
+2449224:COMPACT_START sstable=1 input_files: "sstable1/7aa36ce5-3285-4a98-8acd-ea53f093b576202610250341101792921281068708853.sst" input_files: "sstable1/4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921281069364518.sst" compactIntoNextLevel: true destinationLevel: 2
+2026-10-25 09:41:27:530 - Compaction started: 
+140336110138944:Compacting sstable1/7aa36ce5-3285-4a98-8acd-ea53f093b576202610250341101792921281068708853.sst sstable1/4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921281069364518.sst into:sstable2/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921287551826263.sst
+2026-10-25 09:41:27:580 - Compaction completed: 
+2449224:COMPACT_START sstable=1 input_files: "sstable1/7aa36ce5-3285-4a98-8acd-ea53f093b576202610250341101792921281271733511.sst" input_files: "sstable1/4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921281272188538.sst" compactIntoNextLevel: true destinationLevel: 2
+2026-10-25 09:41:27:632 - Compaction started: 
+140336110138944:Compacting sstable1/7aa36ce5-3285-4a98-8acd-ea53f093b576202610250341101792921281271733511.sst sstable1/4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921281272188538.sst into:sstable2/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921287651194675.sst
+2026-10-25 09:41:27:681 - Compaction completed: 
+2449224:COMPACT_START sstable=1 input_files: "sstable1/4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921281474462373.sst" input_files: "sstable1/5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921281485889134.sst" compactIntoNextLevel: true destinationLevel: 2
+2026-10-25 09:41:27:735 - Compaction started: 
+140336110138944:Compacting sstable1/4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921281474462373.sst sstable1/5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921281485889134.sst into:sstable2/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921287758391029.sst
+2026-10-25 09:41:27:789 - Compaction completed: 
+2449224:COMPACT_START sstable=1 input_files: "sstable1/4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921281679934331.sst" input_files: "sstable1/5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921281687992367.sst" compactIntoNextLevel: true destinationLevel: 2
+2026-10-25 09:41:27:837 - Compaction started: 
+140336110138944:Compacting sstable1/4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921281679934331.sst sstable1/5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921281687992367.sst into:sstable2/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921287853900823.sst
+2026-10-25 09:41:27:881 - Compaction completed: 
+2449224:COMPACT_START sstable=1 input_files: "sstable1/4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921281880679927.sst" input_files: "sstable1/5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921281891257269.sst" compactIntoNextLevel: true destinationLevel: 2
+2026-10-25 09:41:27:939 - Compaction started: 
+140336110138944:Compacting sstable1/4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921281880679927.sst sstable1/5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921281891257269.sst into:sstable2/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921287959822837.sst
+2026-10-25 09:41:27:994 - Compaction completed: 
+2449224:COMPACT_START sstable=1 input_files: "sstable1/4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921282082565840.sst" input_files: "sstable1/5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921282093573743.sst" compactIntoNextLevel: true destinationLevel: 2
+2026-10-25 09:41:28:041 - Compaction started: 
+140336110138944:Compacting sstable1/4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921282082565840.sst sstable1/5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921282093573743.sst into:sstable2/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921288058911932.sst
+2026-10-25 09:41:28:086 - Compaction completed: 
+2449224:COMPACT_START sstable=1 input_files: "sstable1/4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921282286590232.sst" input_files: "sstable1/5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921282297387918.sst" compactIntoNextLevel: true destinationLevel: 2
+2026-10-25 09:41:28:143 - Compaction started: 
+140336110138944:Compacting sstable1/4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921282286590232.sst sstable1/5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921282297387918.sst into:sstable2/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921288168052258.sst
+2026-10-25 09:41:28:206 - Compaction completed: 
+2449224:COMPACT_START sstable=1 input_files: "sstable2/7aa36ce5-3285-4a98-8acd-ea53f093b576202610250341101792921282712369429.sst" input_files: "sstable2/4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921282711637290.sst" compactIntoNextLevel: false destinationLevel: 2
+2026-10-25 09:41:28:246 - Compaction started: 
+140336110138944:Compacting sstable2/7aa36ce5-3285-4a98-8acd-ea53f093b576202610250341101792921282712369429.sst sstable2/4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921282711637290.sst into:sstable2/0_33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921288301691866.sst
+2026-10-25 09:41:28:425 - Compaction completed: 
+2449224:COMPACT_START sstable=1 input_files: "sstable2/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921282812893507.sst" input_files: "sstable2/5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921282822560764.sst" compactIntoNextLevel: false destinationLevel: 2
+2026-10-25 09:41:28:453 - Compaction started: 
+140336110138944:Compacting sstable2/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921282812893507.sst sstable2/5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921282822560764.sst into:sstable2/0_33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921288499653458.sst
+2026-10-25 09:41:28:577 - Compaction completed: 
+2449224:COMPACT_START sstable=1 input_files: "sstable2/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921282916294152.sst" input_files: "sstable2/5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921282926948379.sst" compactIntoNextLevel: false destinationLevel: 2
+2026-10-25 09:41:28:659 - Compaction started: 
+140336110138944:Compacting sstable2/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921282916294152.sst sstable2/5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921282926948379.sst into:sstable2/0_33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921288710325028.sst
+2026-10-25 09:41:28:789 - Compaction completed: 
+2449224:COMPACT_START sstable=1 input_files: "sstable2/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921283017817272.sst" input_files: "sstable2/5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921283028772445.sst" compactIntoNextLevel: false destinationLevel: 2
+2026-10-25 09:41:28:866 - Compaction started: 
+140336110138944:Compacting sstable2/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921283017817272.sst sstable2/5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921283028772445.sst into:sstable2/0_33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921288921634420.sst
+2026-10-25 09:41:29:003 - Compaction completed: 
+2449224:COMPACT_START sstable=1 input_files: "sstable2/4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921283121982638.sst" input_files: "sstable2/5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921283129147212.sst" compactIntoNextLevel: false destinationLevel: 2
+2026-10-25 09:41:29:074 - Compaction started: 
+140336110138944:Compacting sstable2/4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921283121982638.sst sstable2/5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921283129147212.sst into:sstable2/0_33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921289124182049.sst
+2026-10-25 09:41:29:203 - Compaction completed: 
+2449224:COMPACT_START sstable=1 input_files: "sstable2/7aa36ce5-3285-4a98-8acd-ea53f093b576202610250341101792921283218653509.sst" input_files: "sstable2/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921283222176063.sst" compactIntoNextLevel: false destinationLevel: 2
+2026-10-25 09:41:29:282 - Compaction started: 
+140336110138944:Compacting sstable2/7aa36ce5-3285-4a98-8acd-ea53f093b576202610250341101792921283218653509.sst sstable2/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921283222176063.sst into:sstable2/0_33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921289332952329.sst
+2026-10-25 09:41:29:409 - Compaction completed: 
+2449224:COMPACT_START sstable=1 input_files: "sstable2/7aa36ce5-3285-4a98-8acd-ea53f093b576202610250341101792921283319296480.sst" input_files: "sstable2/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921283323542006.sst" compactIntoNextLevel: false destinationLevel: 2
+2026-10-25 09:41:29:490 - Compaction started: 
+140336110138944:Compacting sstable2/7aa36ce5-3285-4a98-8acd-ea53f093b576202610250341101792921283319296480.sst sstable2/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921283323542006.sst into:sstable2/0_33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921289539986128.sst
+2026-10-25 09:41:29:614 - Compaction completed: 
+2449224:COMPACT_START sstable=1 input_files: "sstable2/7aa36ce5-3285-4a98-8acd-ea53f093b576202610250341101792921283421217870.sst" input_files: "sstable2/5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921286518957179.sst" compactIntoNextLevel: false destinationLevel: 2
+2026-10-25 09:41:29:700 - Compaction started: 
+140336110138944:Compacting sstable2/7aa36ce5-3285-4a98-8acd-ea53f093b576202610250341101792921283421217870.sst sstable2/5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921286518957179.sst into:sstable2/0_33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921289750576926.sst
+2026-10-25 09:41:29:827 - Compaction completed: 
+2449224:COMPACT_START sstable=1 input_files: "sstable2/1_4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921289353652075.sst" input_files: "sstable2/1_7aa36ce5-3285-4a98-8acd-ea53f093b576202610250341101792921289661943133.sst" compactIntoNextLevel: false destinationLevel: 2
+2026-10-25 09:41:29:906 - Compaction started: 
+140336110138944:Compacting sstable2/1_4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921289353652075.sst sstable2/1_7aa36ce5-3285-4a98-8acd-ea53f093b576202610250341101792921289661943133.sst into:sstable2/2_33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921290128006449.sst
+2026-10-25 09:41:30:513 - Compaction completed: 
+2449224:COMPACT_START sstable=1 input_files: "sstable2/4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921283526013393.sst" input_files: "sstable2/5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921283534938382.sst" compactIntoNextLevel: false destinationLevel: 2
+2026-10-25 09:41:30:523 - Compaction started: 
+140336110138944:Compacting sstable2/4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921283526013393.sst sstable2/5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921283534938382.sst into:sstable2/0_33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921290572992669.sst
+2026-10-25 09:41:30:650 - Compaction completed: 
+2449224:COMPACT_START sstable=1 input_files: "sstable2/4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921283627461672.sst" input_files: "sstable2/5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921283636107575.sst" compactIntoNextLevel: false destinationLevel: 2
+2026-10-25 09:41:30:728 - Compaction started: 
+140336110138944:Compacting sstable2/4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921283627461672.sst sstable2/5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921283636107575.sst into:sstable2/0_33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921290777025927.sst
+2026-10-25 09:41:30:856 - Compaction completed: 
+2449224:COMPACT_START sstable=1 input_files: "sstable2/7aa36ce5-3285-4a98-8acd-ea53f093b576202610250341101792921283727236028.sst" input_files: "sstable2/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921283728983689.sst" compactIntoNextLevel: false destinationLevel: 2
+2026-10-25 09:41:30:932 - Compaction started: 
+140336110138944:Compacting sstable2/7aa36ce5-3285-4a98-8acd-ea53f093b576202610250341101792921283727236028.sst sstable2/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921283728983689.sst into:sstable2/0_33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921290980580783.sst
+2026-10-25 09:41:31:056 - Compaction completed: 
+2449224:COMPACT_START sstable=1 input_files: "sstable2/0_33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921290777025927.sst" input_files: "sstable2/0_33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921290980580783.sst" compactIntoNextLevel: false destinationLevel: 2
+2026-10-25 09:41:31:136 - Compaction started: 
+140336110138944:Compacting sstable2/0_33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921290777025927.sst sstable2/0_33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921290980580783.sst into:sstable2/1_33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921291224183787.sst
+2026-10-25 09:41:31:420 - Compaction completed: 
+2449224:COMPACT_START sstable=1 input_files: "sstable2/0_7aa36ce5-3285-4a98-8acd-ea53f093b576202610250341101792921291053397396.sst" input_files: "sstable2/0_7aa36ce5-3285-4a98-8acd-ea53f093b576202610250341101792921291258896645.sst" compactIntoNextLevel: false destinationLevel: 2
+2026-10-25 09:41:31:447 - Compaction started: 
+140336110138944:Compacting sstable2/0_7aa36ce5-3285-4a98-8acd-ea53f093b576202610250341101792921291053397396.sst sstable2/0_7aa36ce5-3285-4a98-8acd-ea53f093b576202610250341101792921291258896645.sst into:sstable2/1_33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921291543058948.sst
+2026-10-25 09:41:31:705 - Compaction completed: 
+2449224:COMPACT_START sstable=1 input_files: "sstable2/1_33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921291224183787.sst" input_files: "sstable2/1_33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921291543058948.sst" compactIntoNextLevel: false destinationLevel: 2
+2026-10-25 09:41:31:754 - Compaction started: 
+140336110138944:Compacting sstable2/1_33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921291224183787.sst sstable2/1_33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921291543058948.sst into:sstable2/2_33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921291948004315.sst
+2026-10-25 09:41:32:262 - Compaction completed: 
+2449224:COMPACT_START sstable=1 input_files: "sstable2/2_5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921291284070818.sst" input_files: "sstable2/2_33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921291948004315.sst" compactIntoNextLevel: false destinationLevel: 2
+2026-10-25 09:41:32:270 - Compaction started: 
+140336110138944:Compacting sstable2/2_5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921291284070818.sst sstable2/2_33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921291948004315.sst into:sstable2/3_33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921292738198531.sst
+2026-10-25 09:41:33:391 - Compaction completed: 
+2449224:COMPACT_START sstable=1 input_files: "sstable2/7aa36ce5-3285-4a98-8acd-ea53f093b576202610250341101792921284455905280.sst" input_files: "sstable2/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921284459613103.sst" compactIntoNextLevel: false destinationLevel: 2
+2026-10-25 09:41:33:403 - Compaction started: 
+140336110138944:Compacting sstable2/7aa36ce5-3285-4a98-8acd-ea53f093b576202610250341101792921284455905280.sst sstable2/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921284459613103.sst into:sstable2/0_33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921293456970961.sst
+2026-10-25 09:41:33:553 - Compaction completed: 
+2449224:COMPACT_START sstable=1 input_files: "sstable2/0_4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921293250385547.sst" input_files: "sstable2/0_33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921293456970961.sst" compactIntoNextLevel: false destinationLevel: 2
+2026-10-25 09:41:33:607 - Compaction started: 
+140336110138944:Compacting sstable2/0_4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921293250385547.sst sstable2/0_33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921293456970961.sst into:sstable2/1_33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921293701605788.sst
+2026-10-25 09:41:33:859 - Compaction completed: 
+2449224:COMPACT_START sstable=1 input_files: "sstable2/0_4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921293740936453.sst" input_files: "sstable2/0_5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921293752474904.sst" compactIntoNextLevel: false destinationLevel: 2
+2026-10-25 09:41:33:914 - Compaction started: 
+140336110138944:Compacting sstable2/0_4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921293740936453.sst sstable2/0_5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921293752474904.sst into:sstable2/1_33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921294046277704.sst
+2026-10-25 09:41:34:209 - Compaction completed: 
+2449224:COMPACT_START sstable=1 input_files: "sstable2/5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921284672472324.sst" input_files: "sstable2/4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921284686161777.sst" compactIntoNextLevel: false destinationLevel: 2
+2026-10-25 09:41:34:223 - Compaction started: 
+140336110138944:Compacting sstable2/5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921284672472324.sst sstable2/4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921284686161777.sst into:sstable2/0_33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921294274806136.sst
+2026-10-25 09:41:34:354 - Compaction completed: 
+2449224:COMPACT_START sstable=1 input_files: "sstable2/0_4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921293984791280.sst" input_files: "sstable2/0_4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921294152714318.sst" compactIntoNextLevel: false destinationLevel: 2
+2026-10-25 09:41:34:429 - Compaction started: 
+140336110138944:Compacting sstable2/0_4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921293984791280.sst sstable2/0_4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921294152714318.sst into:sstable2/1_33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921294520586670.sst
+2026-10-25 09:41:34:676 - Compaction completed: 
+2449224:COMPACT_START sstable=1 input_files: "sstable2/1_33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921294046277704.sst" input_files: "sstable2/1_33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921294520586670.sst" compactIntoNextLevel: false destinationLevel: 2
+2026-10-25 09:41:34:738 - Compaction started: 
+140336110138944:Compacting sstable2/1_33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921294046277704.sst sstable2/1_33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921294520586670.sst into:sstable2/2_33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921294933677838.sst
+2026-10-25 09:41:35:243 - Compaction completed: 
+2449224:COMPACT_START sstable=1 input_files: "sstable2/0_5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921294930237719.sst" input_files: "sstable2/0_5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921295137570109.sst" compactIntoNextLevel: false destinationLevel: 2
+2026-10-25 09:41:35:255 - Compaction started: 
+140336110138944:Compacting sstable2/0_5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921294930237719.sst sstable2/0_5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921295137570109.sst into:sstable2/1_33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921295343691770.sst
+2026-10-25 09:41:35:492 - Compaction completed: 
+2449224:COMPACT_START sstable=1 input_files: "sstable2/0_5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921295348546754.sst" input_files: "sstable2/0_4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921295402414839.sst" compactIntoNextLevel: false destinationLevel: 2
+2026-10-25 09:41:35:568 - Compaction started: 
+140336110138944:Compacting sstable2/0_5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921295348546754.sst sstable2/0_4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921295402414839.sst into:sstable2/1_33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921295661211618.sst
+2026-10-25 09:41:35:805 - Compaction completed: 
+2449224:COMPACT_START sstable=1 input_files: "sstable2/5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921285388596719.sst" input_files: "sstable2/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921285392332165.sst" compactIntoNextLevel: false destinationLevel: 2
+2026-10-25 09:41:35:881 - Compaction started: 
+140336110138944:Compacting sstable2/5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921285388596719.sst sstable2/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921285392332165.sst into:sstable2/0_33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921295928711619.sst
+2026-10-25 09:41:35:997 - Compaction completed: 
+2449224:COMPACT_START sstable=1 input_files: "sstable2/0_5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921295775889553.sst" input_files: "sstable2/0_33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921295928711619.sst" compactIntoNextLevel: false destinationLevel: 2
+2026-10-25 09:41:36:090 - Compaction started: 
+140336110138944:Compacting sstable2/0_5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921295775889553.sst sstable2/0_33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921295928711619.sst into:sstable2/1_33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921296171635753.sst
+2026-10-25 09:41:36:314 - Compaction completed: 
+2449224:COMPACT_START sstable=1 input_files: "sstable2/4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921285508284430.sst" input_files: "sstable2/7aa36ce5-3285-4a98-8acd-ea53f093b576202610250341101792921285581380309.sst" compactIntoNextLevel: false destinationLevel: 2
+2026-10-25 09:41:36:402 - Compaction started: 
+140336110138944:Compacting sstable2/4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921285508284430.sst sstable2/7aa36ce5-3285-4a98-8acd-ea53f093b576202610250341101792921285581380309.sst into:sstable2/0_33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921296448152536.sst
+2026-10-25 09:41:36:515 - Compaction completed: 
+2449224:COMPACT_START sstable=1 input_files: "sstable2/5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921285700479402.sst" input_files: "sstable2/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921285702360354.sst" compactIntoNextLevel: false destinationLevel: 2
+2026-10-25 09:41:36:619 - Compaction started: 
+140336110138944:Compacting sstable2/5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921285700479402.sst sstable2/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921285702360354.sst into:sstable2/0_33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921296664243743.sst
+2026-10-25 09:41:36:736 - Compaction completed: 
+2449224:COMPACT_START sstable=1 input_files: "sstable2/4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921285815226758.sst" input_files: "sstable2/7aa36ce5-3285-4a98-8acd-ea53f093b576202610250341101792921285889262167.sst" compactIntoNextLevel: false destinationLevel: 2
+2026-10-25 09:41:36:838 - Compaction started: 
+140336110138944:Compacting sstable2/4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921285815226758.sst sstable2/7aa36ce5-3285-4a98-8acd-ea53f093b576202610250341101792921285889262167.sst into:sstable2/0_33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921296882071911.sst
+2026-10-25 09:41:36:992 - Compaction completed: 
+2449224:COMPACT_START sstable=1 input_files: "sstable2/4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921286019018320.sst" input_files: "sstable2/7aa36ce5-3285-4a98-8acd-ea53f093b576202610250341101792921286093106890.sst" compactIntoNextLevel: false destinationLevel: 2
+2026-10-25 09:41:37:065 - Compaction started: 
+140336110138944:Compacting sstable2/4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921286019018320.sst sstable2/7aa36ce5-3285-4a98-8acd-ea53f093b576202610250341101792921286093106890.sst into:sstable2/0_33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921297107629889.sst
+2026-10-25 09:41:37:174 - Compaction completed: 
+2449224:COMPACT_START sstable=1 input_files: "sstable2/5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921286309551614.sst" input_files: "sstable2/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921286320058402.sst" compactIntoNextLevel: false destinationLevel: 2
+2026-10-25 09:41:37:297 - Compaction started: 
+140336110138944:Compacting sstable2/5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921286309551614.sst sstable2/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921286320058402.sst into:sstable2/0_33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921297340356266.sst
+2026-10-25 09:41:37:408 - Compaction completed: 
+2449224:COMPACT_START sstable=1 input_files: "sstable2/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921286524958512.sst" input_files: "sstable2/4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921286531650196.sst" compactIntoNextLevel: false destinationLevel: 2
+2026-10-25 09:41:37:537 - Compaction started: 
+140336110138944:Compacting sstable2/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921286524958512.sst sstable2/4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921286531650196.sst into:sstable2/0_33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921297581336669.sst
+2026-10-25 09:41:37:648 - Compaction completed: 
+2449224:COMPACT_START sstable=1 input_files: "sstable2/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921286734691024.sst" input_files: "sstable2/4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921286733394422.sst" compactIntoNextLevel: false destinationLevel: 2
+2026-10-25 09:41:37:782 - Compaction started: 
+140336110138944:Compacting sstable2/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921286734691024.sst sstable2/4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921286733394422.sst into:sstable2/0_33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921297838377010.sst
+2026-10-25 09:41:37:902 - Compaction completed: 
+2449224:COMPACT_START sstable=1 input_files: "sstable2/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921286938461618.sst" input_files: "sstable2/4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921286935700778.sst" compactIntoNextLevel: false destinationLevel: 2
+2026-10-25 09:41:38:033 - Compaction started: 
+140336110138944:Compacting sstable2/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921286938461618.sst sstable2/4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921286935700778.sst into:sstable2/0_33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921298073798243.sst
+2026-10-25 09:41:38:136 - Compaction completed: 
+2449224:COMPACT_START sstable=1 input_files: "sstable2/4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921287139069604.sst" input_files: "sstable2/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921287143833777.sst" compactIntoNextLevel: false destinationLevel: 2
+2026-10-25 09:41:38:194 - Compaction started: 
+140336110138944:Compacting sstable2/4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921287139069604.sst sstable2/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921287143833777.sst into:sstable2/0_33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921298235856253.sst
+2026-10-25 09:41:38:300 - Compaction completed: 
+2449224:COMPACT_START sstable=1 input_files: "sstable2/7aa36ce5-3285-4a98-8acd-ea53f093b576202610250341101792921287321659315.sst" input_files: "sstable2/5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921287334486193.sst" compactIntoNextLevel: false destinationLevel: 2
+2026-10-25 09:41:38:361 - Compaction started: 
+140336110138944:Compacting sstable2/7aa36ce5-3285-4a98-8acd-ea53f093b576202610250341101792921287321659315.sst sstable2/5e604b5e-82a2-4c94-bdf5-53636b3d5c81202610250341101792921287334486193.sst into:sstable2/0_33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921298402484512.sst
+2026-10-25 09:41:38:467 - Compaction completed: 
+2449224:COMPACT_START sstable=1 input_files: "sstable2/4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921287444003298.sst" input_files: "sstable2/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921287446886258.sst" compactIntoNextLevel: false destinationLevel: 2
+2026-10-25 09:41:38:531 - Compaction started: 
+140336110138944:Compacting sstable2/4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921287444003298.sst sstable2/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921287446886258.sst into:sstable2/0_33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921298573111411.sst
+2026-10-25 09:41:38:640 - Compaction completed: 
+2449224:COMPACT_START sstable=1 input_files: "sstable2/4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921287748093995.sst" input_files: "sstable2/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921287758391029.sst" compactIntoNextLevel: false destinationLevel: 2
+2026-10-25 09:41:38:806 - Compaction started: 
+140336110138944:Compacting sstable2/4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921287748093995.sst sstable2/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921287758391029.sst into:sstable2/0_33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921298847753563.sst
+2026-10-25 09:41:38:917 - Compaction completed: 
+2449224:COMPACT_START sstable=1 input_files: "sstable2/4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921287949876895.sst" input_files: "sstable2/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921287959822837.sst" compactIntoNextLevel: false destinationLevel: 2
+2026-10-25 09:41:39:083 - Compaction started: 
+140336110138944:Compacting sstable2/4ce42624-fef4-440c-98f9-5f100975e764202610250341101792921287949876895.sst sstable2/33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921287959822837.sst into:sstable2/0_33070be9-adfa-41a2-a4d6-e59477ea5fd5202610250341101792921299128637591.sst
+2026-10-25 09:41:39:194 - Compaction completed: 
+2026-10-25 09:41:40:923 30 sec: 123816 operations; 4127.06 current ops/sec; est completion in 2 days 19 hours [READ: Count=123835, Max=1661951, Min=26, Avg=239.96, 90=353, 99=462, 99.9=3837, 99.99=41471] 

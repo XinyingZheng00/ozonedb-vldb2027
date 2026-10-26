@@ -1,0 +1,328 @@
+// Copyright (c) 2011 The LevelDB Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file. See the AUTHORS file for names of contributors.
+
+#include "read_profile.h"
+#include "sstable/table_reader.h"
+#include "cache.h"
+#include "protobuf/sstable.pb.h"
+#include "protobuf_serializer.h"
+#include "sstable/block_handler.h"
+#include "sstable/filter_block.h"
+#include "sstable/filter_policy.h"
+#include <vector>
+namespace ozonedb {
+#define FOOTER_BLOCK_SIZE 50
+struct Table::Rep {
+  Status status = Status::kSuccess;
+  Storage* storage = nullptr;
+  LRUCache* lru_cache = nullptr;
+  Comparator* comparator = nullptr;
+  std::string fileName;
+  uint64_t file_size = 0;  // storage->size() at open; bounds the reads of scanBlocks
+  // Index block, owned by index_iter. scanBlocks copies it into a private
+  // iterator, because index_iter is shared by every reader of the Table.
+  BlockData* index_block = nullptr;
+  Iterator* index_iter = nullptr;
+  FilterPolicy const* filter_policy = nullptr;
+  filterBlockReader* filter_block_reader = nullptr;
+  filterBlockReader* filter_block_for_file_reader = nullptr;
+};
+
+void Table::setCache(LRUCache* cache) {
+  rep_->lru_cache = cache;
+}
+
+Status Table::open(Storage* storage,
+                   std::string const& fileName,
+                   Table*& table) {
+  // Read the footer
+  size_t size = storage->size(fileName);
+  // A file shorter than the footer would underflow the offset below.
+  if (size < FOOTER_BLOCK_SIZE) return Status::kFailure;
+  unsigned char* footer_vector = nullptr;
+  Status s = storage->read(fileName, footer_vector, size - FOOTER_BLOCK_SIZE, FOOTER_BLOCK_SIZE);
+  if (s != Status::kSuccess) return s;
+  // Deserialize the footer
+  std::vector<google::protobuf::Message*> footer;
+  s = protobuf::deserializeMessages(footer_vector, FOOTER_BLOCK_SIZE, footer, []() { return new FooterBlock(); });
+  delete[] footer_vector;
+  footer_vector = nullptr;
+  if (s != Status::kSuccess) return s;
+  if (footer.empty()) return Status::kFailure;
+  auto* footer_block = static_cast<FooterBlock*>(footer[0]);
+  // Read the index block named by the footer
+  BlockData* index_block = nullptr;
+  s = readBlock(storage, fileName, footer_block->index_identifier(), index_block);
+  if (s != Status::kSuccess || index_block == nullptr) {
+    // The footer owns the index identifier; free it on failure too.
+    delete footer_block;
+    return s == Status::kSuccess ? Status::kFailure : s;
+  }
+  {
+    Rep* rep = new Table::Rep;
+    rep->storage = storage;
+    rep->fileName = fileName;
+    rep->file_size = size;
+    rep->comparator = newBytewiseComparator();
+    rep->index_block = index_block;
+    rep->index_iter = newIterator(index_block, rep->comparator);
+    rep->filter_policy = newBloomFilterPolicy(10);
+    table = new Table(rep);
+    table->readMeta(*footer_block);
+    delete footer_block;
+  }
+
+  return s;
+}
+
+void Table::readMeta(FooterBlock const& footer) {
+  if (rep_->filter_policy == nullptr) {
+    return;  // Do not need any metadata
+  }
+
+  BlockData* meta_index_block;
+  Status s = readBlock(rep_->storage, rep_->fileName, footer.metaindex_identifier(), meta_index_block);
+  if (s != Status::kSuccess) {
+    // The metaindex block is optional; ignore the error.
+    return;
+  }
+  Iterator* miiter = newIterator(meta_index_block, rep_->comparator);
+  std::string key = "filter.";
+  key.append(rep_->filter_policy->name());
+  miiter->seek(key);
+  if (miiter->valid() && miiter->key() == std::string(key)) {
+    readFilter(miiter->value());
+  }
+  key = "filterFile.";
+  key.append(rep_->filter_policy->name());
+  miiter->seek(key);
+  if (miiter->valid() && miiter->key() == std::string(key)) {
+    readFileFilter(miiter->value());
+  }
+  delete miiter;
+}
+
+void Table::readFilter(std::string const& filter_handle_value) {
+  BlockIdentifier identifier;
+  bool s = identifier.ParseFromString(filter_handle_value);
+  if (s) {
+    FilterBlock* filter_block;
+    readFilterBlock(rep_->storage, rep_->fileName, identifier, filter_block);
+    rep_->filter_block_reader = new filterBlockReader(rep_->filter_policy, filter_block);
+  }
+}
+
+void Table::readFileFilter(std::string const& filter_handle_value) {
+  BlockIdentifier identifier;
+  bool s = identifier.ParseFromString(filter_handle_value);
+  if (s) {
+    FilterBlock* filter_block;
+    readFilterBlock(rep_->storage, rep_->fileName, identifier, filter_block);
+    rep_->filter_block_for_file_reader = new filterBlockReader(rep_->filter_policy, filter_block);
+  }
+}
+
+Table::~Table() {
+  delete rep_->index_iter;
+  delete rep_->filter_policy;
+  delete rep_->filter_block_reader;
+  delete rep_->filter_block_for_file_reader;
+  deleteBytewiseComparator();
+  delete rep_;
+}
+
+void Table::setFilterReaderToNull() {
+  rep_->filter_block_reader = nullptr;
+  rep_->filter_block_for_file_reader = nullptr;
+}
+
+// Read the block named by an index entry value (an encoded BlockIdentifier)
+// and return an iterator over it. The caller deletes the iterator; null on failure.
+Iterator* Table::blockReader(Table* table,
+                             std::string const& index_value) {
+  BlockIdentifier identiifer;
+  bool s = identiifer.ParseFromString(index_value);
+
+  BlockData* block_data = nullptr;
+  Iterator* iter = nullptr;
+  if (s) {
+    Status status = readBlock(table->rep_->storage, table->rep_->fileName, identiifer, block_data);
+    if (status == Status::kSuccess) {
+      if (block_data != NULL) {
+        iter = newIterator(block_data, table->rep_->comparator);
+      }
+    }
+  }
+  return iter;
+}
+
+Status Table::get(std::string const& key, std::shared_ptr<Record>& record) {
+  // A Table without an index iterator or a cache cannot answer.
+  if (rep_ == nullptr || rep_->index_iter == nullptr || rep_->lru_cache == nullptr) {
+    return Status::kNotFound;
+  }
+  this->rep_->lru_cache->noteProbe(rep_->fileName, 0);
+  // check file filter first
+  if (rep_->filter_block_for_file_reader != nullptr && !rep_->filter_block_for_file_reader->keyMayMatch(0, key)) {
+    this->rep_->lru_cache->noteProbe(rep_->fileName, 1);
+    OZONEDB_PROFILE_COUNT(read_profile::tbl_file_filter_reject);
+    return Status::kNotFound;
+  }
+  Status s;
+  this->rep_->index_iter->seek(key);
+  if (this->rep_->index_iter->valid()) {
+    std::string identifier_value = this->rep_->index_iter->value();
+    BlockIdentifier identifier;
+    bool s = identifier.ParseFromString(identifier_value);
+    if (rep_->filter_block_reader != nullptr && !rep_->filter_block_reader->keyMayMatch(identifier.offset(), key)) {
+      this->rep_->lru_cache->noteProbe(rep_->fileName, 1);
+      OZONEDB_PROFILE_COUNT(read_profile::tbl_block_filter_reject);
+      return Status::kNotFound;
+    }
+    Status status;
+    if (s) {
+      bool read_more = true;
+      this->rep_->lru_cache->needReadBlock(rep_->fileName, read_more, identifier_value);
+      if (read_more) {
+        OZONEDB_PROFILE_COUNT(read_profile::tbl_block_read);
+        this->rep_->lru_cache->readDataBlocks(rep_->fileName, identifier_value, this);
+      } else {
+        OZONEDB_PROFILE_COUNT(read_profile::tbl_block_cached);
+      }
+      this->rep_->lru_cache->get(rep_->fileName, key, record, identifier_value);
+      if (record) {
+        OZONEDB_PROFILE_COUNT(read_profile::tbl_found);
+        return Status::kSuccess;
+      }
+      // The block was read and does not hold the key: a filter false
+      // positive, or a file without a filter.
+      this->rep_->lru_cache->noteProbe(rep_->fileName, 2);
+      OZONEDB_PROFILE_COUNT(read_profile::tbl_miss_after_read);
+      return Status::kNotFound;
+    }
+  }
+  // No block touched: key past the last index entry, or an unparseable
+  // identifier. Counted as pruned.
+  this->rep_->lru_cache->noteProbe(rep_->fileName, 1);
+  OZONEDB_PROFILE_COUNT(read_profile::tbl_index_invalid);
+  return Status::kNotFound;
+}
+
+void Table::setFileSizeForTesting(uint64_t size) {
+  rep_->file_size = size;
+}
+
+Status Table::scanBlocks(size_t max_read_bytes,
+                         std::function<Status(std::string const&, Iterator*)> const& visit) {
+  if (rep_ == nullptr || rep_->index_block == nullptr || rep_->storage == nullptr) {
+    return Status::kFailure;
+  }
+
+  // 1. Collect the block identifiers in index order and validate them:
+  //    ascending, non-overlapping, inside the file. The raw index value
+  //    is kept as the cache key. The iterator is a private copy, because
+  //    rep_->index_iter is shared with concurrent Table::get callers.
+  std::vector<BlockIdentifier> blocks;
+  std::vector<std::string> index_values;
+  {
+    Iterator* index = newIterator(new BlockData(*rep_->index_block), rep_->comparator);
+    uint64_t prev_end = 0;
+    for (index->seekToFirst(); index->valid(); index->next()) {
+      BlockIdentifier id;
+      if (!id.ParseFromString(index->value()) || id.length() == 0 || id.offset() < prev_end ||
+          id.offset() + id.length() > rep_->file_size) {
+        delete index;
+        return Status::kFailure;
+      }
+      prev_end = id.offset() + id.length();
+      blocks.push_back(id);
+      index_values.push_back(index->value());
+    }
+    delete index;
+  }
+
+  // 2. Read block-aligned chunks of at most max_read_bytes and parse
+  //    each block out of its chunk.
+  size_t i = 0;
+  while (i < blocks.size()) {
+    uint64_t const base = blocks[i].offset();
+    size_t j = i + 1;
+    while (j < blocks.size() && blocks[j].offset() + blocks[j].length() - base <= max_read_bytes) {
+      ++j;
+    }
+    size_t const len = static_cast<size_t>(blocks[j - 1].offset() + blocks[j - 1].length() - base);
+    unsigned char* buf = nullptr;
+    Status s = rep_->storage->read(rep_->fileName, buf, static_cast<size_t>(base), len);
+    if (s != Status::kSuccess || buf == nullptr) {
+      delete[] buf;
+      return s == Status::kSuccess ? Status::kFailure : s;
+    }
+    for (size_t k = i; k < j; ++k) {
+      std::vector<google::protobuf::Message*> parsed;
+      s = protobuf::deserializeMessages(buf + (blocks[k].offset() - base), blocks[k].length(), parsed,
+                                        []() { return new BlockData(); });
+      // A block is one BlockData; free anything past [0].
+      for (size_t m = 1; m < parsed.size(); ++m) delete parsed[m];
+      if (s != Status::kSuccess || parsed.empty() || parsed[0] == nullptr) {
+        if (!parsed.empty()) delete parsed[0];
+        delete[] buf;
+        return Status::kFailure;
+      }
+      // The iterator owns the BlockData (BlockIter::~BlockIter deletes it).
+      Iterator* block_iter = newIterator(static_cast<BlockData*>(parsed[0]), rep_->comparator);
+      Status v = visit(index_values[k], block_iter);
+      delete block_iter;
+      if (v != Status::kSuccess) {
+        delete[] buf;
+        return v;
+      }
+    }
+    delete[] buf;
+    i = j;
+  }
+  return Status::kSuccess;
+}
+
+Status Table::getAll(std::unordered_map<std::string, std::shared_ptr<Record>>& out,
+                     size_t max_read_bytes) {
+  out.clear();
+  Status s = scanBlocks(max_read_bytes, [&out](std::string const&, Iterator* block_iter) {
+    for (block_iter->seekToFirst(); block_iter->valid(); block_iter->next()) {
+      auto record = std::make_shared<Record>();
+      if (!record->ParseFromString(block_iter->value())) return Status::kFailure;
+      out[block_iter->key()] = std::move(record);
+    }
+    return Status::kSuccess;
+  });
+  if (s != Status::kSuccess) out.clear();
+  return s;
+}
+
+Status Table::warm(LRUCache* cache, size_t max_read_bytes, size_t& blocks, size_t& bytes) {
+  blocks = 0;
+  bytes = 0;
+  if (cache == nullptr || rep_ == nullptr) return Status::kFailure;
+  std::string const& file_name = rep_->fileName;
+  return scanBlocks(max_read_bytes, [&](std::string const& index_value, Iterator* block_iter) {
+    // Same shape as TableBuilder::flush: a heap map the cache owns, sized
+    // by Record::ByteSizeLong, keyed by the index entry's bytes.
+    auto* records = new std::unordered_map<std::string, std::shared_ptr<Record>>();
+    size_t size = 0;
+    for (block_iter->seekToFirst(); block_iter->valid(); block_iter->next()) {
+      auto record = std::make_shared<Record>();
+      if (!record->ParseFromString(block_iter->value())) {
+        delete records;
+        return Status::kFailure;
+      }
+      size += record->ByteSizeLong();
+      (*records)[block_iter->key()] = std::move(record);
+    }
+    cache->putSSTableRecords(file_name, records, index_value, size, /*warmed=*/true);
+    ++blocks;
+    bytes += size;
+    return Status::kSuccess;
+  });
+}
+
+}  // namespace ozonedb

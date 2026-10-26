@@ -1,0 +1,219 @@
+#include "storage.h"
+#include <filesystem>
+#include <fstream>
+#include <thread>
+namespace ozonedb {
+std::ifstream* FileStorage::getReadStream(std::string const& name) {
+  std::unique_lock<std::shared_mutex> lock(read_mtx);
+  if (this->read_streams.find(name) == this->read_streams.end()) {
+    // The stream opens the file on construction.
+    this->read_streams[name] = std::make_unique<std::ifstream>(this->storage_path + name, std::ios::binary);
+  }
+  return this->read_streams[name].get();
+}
+
+std::ofstream* FileStorage::getWriteStream(std::string const& name) {
+  std::unique_lock<std::shared_mutex> lock(write_mtx);
+  if (this->write_streams.find(name) == this->write_streams.end()) {
+    try {
+      this->write_streams[name] = std::make_unique<std::ofstream>(this->storage_path + name, std::ios::binary | std::ios::app);
+    } catch (std::exception const& e) {
+      std::cerr << "Failed to open output file1." << std::endl;
+      return this->write_streams[name].get();
+    }
+  }
+  return this->write_streams[name].get();
+}
+
+void FileStorage::createDirectory(std::string name) {
+  std::string directory_path = storage_path + name;
+  if (!std::filesystem::exists(directory_path)) {
+    try {
+      std::filesystem::create_directories(directory_path);
+    } catch (std::exception const& e) {
+      if (std::filesystem::exists(directory_path)) {
+        // A concurrent process created it.
+        std::cout << "Failed to create directory due to race condition, it's normal." << std::endl;
+      } else {
+        // Real error.
+        std::cerr << "Failed to create directory for unknown reason." << std::endl;
+      }
+    }
+  }
+}
+
+// One mutex per file name, created on first use and never erased.
+// append_map_mtx_ guards only the map lookup.
+std::mutex& FileStorage::appendMutexFor(std::string const& name) {
+  std::lock_guard<std::mutex> lk(append_map_mtx_);
+  auto it = append_mtx_.find(name);
+  if (it == append_mtx_.end()) {
+    it = append_mtx_.emplace(name, std::make_unique<std::mutex>()).first;
+  }
+  return *it->second;
+}
+
+std::mutex& FileStorage::readMutexFor(std::string const& name) {
+  std::lock_guard<std::mutex> lk(read_map_mtx_);
+  auto it = read_file_mtx_.find(name);
+  if (it == read_file_mtx_.end()) {
+    it = read_file_mtx_.emplace(name, std::make_unique<std::mutex>()).first;
+  }
+  return *it->second;
+}
+
+Status FileStorage::append(std::string const& fileName, unsigned char* const& data, int length) {
+  std::ofstream* output_file = getWriteStream(fileName);
+  if (isSealed(fileName)) {
+    return Status::kSealed;
+  } else if (!output_file->is_open()) {
+    std::cerr << "Failed to open output file: " << fileName << std::endl;
+    return Status::kFailure;
+  }
+  // Hold the per-file lock across write + flush + fsync.
+  std::lock_guard<std::mutex> lk(appendMutexFor(fileName));
+  output_file->write(reinterpret_cast<char const*>(data), length);
+  output_file->flush();
+  fsync(GetFileDescriptor(*output_file->rdbuf()));
+  if (output_file->good()) {
+    return Status::kSuccess;
+  } else
+    return Status::kFailure;
+}
+
+Status FileStorage::appendNoFlush(std::string const& fileName, unsigned char* const& data, int length) {
+  std::ofstream* output_file = getWriteStream(fileName);
+  if (isSealed(fileName)) {
+    return Status::kSealed;
+  } else if (!output_file->is_open()) {
+    std::cerr << "Failed to open output file: " << fileName << std::endl;
+    return Status::kFailure;
+  }
+  std::lock_guard<std::mutex> lk(appendMutexFor(fileName));
+  output_file->write(reinterpret_cast<char const*>(data), length);
+  if (output_file->good()) {
+    return Status::kSuccess;
+  } else
+    return Status::kFailure;
+}
+
+Status FileStorage::flush(std::string const& fileName) {
+  std::ofstream* output_file = getWriteStream(fileName);
+  if (!output_file->is_open()) {
+    std::cerr << "Failed to open output file." << std::endl;
+    return Status::kFailure;
+  }
+  std::lock_guard<std::mutex> lk(appendMutexFor(fileName));
+  output_file->flush();
+  if (output_file->good()) {
+    return Status::kSuccess;
+  } else
+    return Status::kFailure;
+}
+
+Status FileStorage::read(std::string const& fileName, unsigned char*& data, size_t& size) {
+  // Hold the per-file lock across seek + read: every thread that reads
+  // this file shares the ifstream.
+  std::lock_guard<std::mutex> lk(readMutexFor(fileName));
+  std::ifstream* input_file = getReadStream(fileName);
+  if (!input_file->is_open()) {
+    if (!exist(fileName)) {
+      std::cerr << getpid() << ":The file does not exist: " << fileName << std::endl;
+      return Status::kNotFound;
+    }
+    std::cerr << "Failed to open input file: " << fileName
+              << ". Error: " << std::strerror(errno) << std::endl;
+    return Status::kFailure;
+  }
+  size = this->size(fileName);
+  seek(*input_file, 0);
+  data = new unsigned char[size];
+  input_file->read(reinterpret_cast<char*>(data), size);
+  return Status::kSuccess;
+}
+
+Status FileStorage::read(std::string const& fileName, unsigned char*& data, size_t a, size_t length) {
+  // Read length bytes from position a. Same lock rule as read() above.
+  std::lock_guard<std::mutex> lk(readMutexFor(fileName));
+  std::ifstream* input_file = getReadStream(fileName);
+  if (!input_file->is_open()) {
+    if (!exist(fileName)) {
+      std::cerr << getpid() << ":The file does not exist:" << fileName << std::endl;
+      return Status::kNotFound;
+    }
+    std::cerr << "Failed to open input file: " << fileName
+              << ". Error: " << std::strerror(errno) << std::endl;
+    return Status::kFailure;
+  }
+  seek(*input_file, a);
+  data = new unsigned char[length];
+  input_file->read(reinterpret_cast<char*>(data), length);
+  // Test the stream and the byte count. A short read (file truncated or
+  // removed under the reader) returns kFailure and no buffer.
+  if (!*input_file || static_cast<size_t>(input_file->gcount()) != length) {
+    if (input_file->eof()) {
+      std::cerr << "End of file reached prematurely while reading from: " << fileName << std::endl;
+    } else if (input_file->bad()) {
+      std::cerr << "Critical I/O error occurred while reading from: " << fileName << std::endl;
+    } else {
+      std::cerr << "Failed to read data correctly from: " << fileName << std::endl;
+    }
+    delete[] data;
+    data = nullptr;
+    return Status::kFailure;
+  }
+  return Status::kSuccess;
+}
+
+size_t FileStorage::size(std::string fileName) {
+  std::filesystem::path full_path = this->storage_path + fileName;
+  std::error_code ec;  // No exceptions.
+  auto file_size = std::filesystem::file_size(full_path, ec);
+  if (ec) {
+    return 0;
+  }
+  return file_size;
+}
+
+void FileStorage::seal(std::string fileName) {
+  // Sealed means read-only.
+  std::filesystem::permissions(
+      this->storage_path + fileName,
+      std::filesystem::perms::owner_read | std::filesystem::perms::others_read);
+}
+
+bool FileStorage::isSealed(std::string fileName) {
+  std::filesystem::path full_path = this->storage_path + fileName;
+  std::error_code ec;  // No exceptions.
+  auto sealed = std::filesystem::status(this->storage_path + fileName, ec).permissions() ==
+                (std::filesystem::perms::owner_read | std::filesystem::perms::others_read);
+  if (ec) {
+    return false;
+  }
+  return sealed;
+}
+
+void FileStorage::remove(std::string fileName) {
+  try {
+    std::filesystem::remove(this->storage_path + fileName);
+  } catch (const std::filesystem::filesystem_error &e) {
+    std::cerr << "Error deleting file: " << e.what() << '\n';
+    std::cerr << "Error code: " << e.code().message() << '\n';
+  }
+}
+
+bool FileStorage::exist(std::string fileName) {
+  return std::filesystem::exists(this->storage_path + fileName);
+}
+
+void FileStorage::seek(std::ifstream& file, int position) {
+  // Clear a failed state before the seek.
+  if (file.tellg() == -1) {
+    file.clear();
+  }
+  file.seekg(position, std::ios::beg);
+  if (!file) {
+    std::cerr << "Failed to seek to position: " << position << std::endl;
+  }
+}
+}  // namespace ozonedb

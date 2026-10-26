@@ -1,0 +1,53 @@
+# CMD: /users/Xinying/ozonedb/ycsb/bin/ycsb run ozonedb -threads 1 -s -P /users/Xinying/ozonedb/ycsb/workloads/generated_workloads/workloadc_1KB_1000000_1000000 -p status.interval=10 -p requestdistribution=sequential -p operationcount=1000000 -p maxexecutiontime=0 -p shared_config=/tmp/churn_v4_configs/shared_config_varyW_n1_r0pct.json
+[WARN]  Running against a source checkout. In order to get our runtime dependencies we'll have to invoke Maven. Depending on the state of your system, this may take ~30-45 seconds
+[DEBUG]  Running 'mvn -pl site.ycsb:ozonedb-binding -am package -DskipTests dependency:build-classpath -DincludeScope=compile -Dmdep.outputFilterFile=true'
+/usr/lib/jvm/java-8-openjdk-amd64/bin/java -cp /users/Xinying/ozonedb/ycsb/ozonedb/conf:/users/Xinying/ozonedb/ycsb/ozonedb/target/ozonedb-binding-0.18.0-SNAPSHOT.jar:/users/Xinying/.m2/repository/org/apache/htrace/htrace-core4/4.1.0-incubating/htrace-core4-4.1.0-incubating.jar:/users/Xinying/.m2/repository/org/slf4j/slf4j-api/1.7.25/slf4j-api-1.7.25.jar:/users/Xinying/.m2/repository/org/hdrhistogram/HdrHistogram/2.1.12/HdrHistogram-2.1.12.jar:/users/Xinying/.m2/repository/ch/qos/logback/logback-classic/1.2.3/logback-classic-1.2.3.jar:/users/Xinying/.m2/repository/ozonedbjnimaven/demoproc-jni/1.0/demoproc-jni-1.0.jar:/users/Xinying/.m2/repository/ch/qos/logback/logback-core/1.2.3/logback-core-1.2.3.jar:/users/Xinying/.m2/repository/org/codehaus/jackson/jackson-mapper-asl/1.9.4/jackson-mapper-asl-1.9.4.jar:/users/Xinying/.m2/repository/org/slf4j/slf4j-simple/1.7.25/slf4j-simple-1.7.25.jar:/users/Xinying/.m2/repository/org/codehaus/jackson/jackson-core-asl/1.9.4/jackson-core-asl-1.9.4.jar:/users/Xinying/ozonedb/ycsb/core/target/core-0.18.0-SNAPSHOT.jar site.ycsb.Client -db site.ycsb.db.OzoneDBClient -threads 1 -s -P /users/Xinying/ozonedb/ycsb/workloads/generated_workloads/workloadc_1KB_1000000_1000000 -p status.interval=10 -p requestdistribution=sequential -p operationcount=1000000 -p maxexecutiontime=0 -p shared_config=/tmp/churn_v4_configs/shared_config_varyW_n1_r0pct.json -t
+Command line: -db site.ycsb.db.OzoneDBClient -threads 1 -s -P /users/Xinying/ozonedb/ycsb/workloads/generated_workloads/workloadc_1KB_1000000_1000000 -p status.interval=10 -p requestdistribution=sequential -p operationcount=1000000 -p maxexecutiontime=0 -p shared_config=/tmp/churn_v4_configs/shared_config_varyW_n1_r0pct.json -t
+YCSB Client 0.18.0-SNAPSHOT
+
+Loading workload...
+Starting test.
+SLF4J: Class path contains multiple SLF4J bindings.
+SLF4J: Found binding in [jar:file:/users/Xinying/.m2/repository/ch/qos/logback/logback-classic/1.2.3/logback-classic-1.2.3.jar!/org/slf4j/impl/StaticLoggerBinder.class]
+SLF4J: Found binding in [jar:file:/users/Xinying/.m2/repository/org/slf4j/slf4j-simple/1.7.25/slf4j-simple-1.7.25.jar!/org/slf4j/impl/StaticLoggerBinder.class]
+SLF4J: See http://www.slf4j.org/codes.html#multiple_bindings for an explanation.
+SLF4J: Actual binding is of type [ch.qos.logback.classic.util.ContextSelectorStaticBinder]
+2026-10-25 09:21:33:323 0 sec: 0 operations; est completion in 0 second 
+Starting compaction watcher
+DBWrapper: report latency for each error is false and specific error codes to track for latency are: []
+2026-10-25 09:21:43:324 10 sec: 110224 operations; 11022.4 current ops/sec; est completion in 1 minute [READ: Count=110249, Max=11463, Min=45, Avg=84.97, 90=105, 99=124, 99.9=160, 99.99=633] 
+2026-10-25 09:21:53:325 20 sec: 231032 operations; 12079.59 current ops/sec; est completion in 1 minute [READ: Count=120792, Max=8663, Min=46, Avg=81.63, 90=103, 99=118, 99.9=146, 99.99=425] 
+2026-10-25 09:22:03:324 30 sec: 351850 operations; 12083.01 current ops/sec; est completion in 56 seconds [READ: Count=120817, Max=16335, Min=46, Avg=81.69, 90=103, 99=117, 99.9=147, 99.99=420] 
+2026-10-25 09:22:13:324 40 sec: 471684 operations; 11983.4 current ops/sec; est completion in 45 seconds [READ: Count=119835, Max=3635, Min=47, Avg=82.38, 90=104, 99=119, 99.9=149, 99.99=426] 
+2026-10-25 09:22:23:325 50 sec: 594766 operations; 12306.97 current ops/sec; est completion in 35 seconds [READ: Count=123081, Max=4171, Min=46, Avg=80.26, 90=101, 99=117, 99.9=145, 99.99=422] 
+2026-10-25 09:22:33:324 60 sec: 787175 operations; 19242.82 current ops/sec; est completion in 17 seconds [READ: Count=192410, Max=6975, Min=24, Avg=50.98, 90=74, 99=101, 99.9=124, 99.99=200] 
+[OZONEDB-PROFILE] reads=1000000  avg_total=63.48us  view=2.62us(4.1%)  log=0.75us(1.2%)  sst=59.99us_per_call x 998651_calls(94.4%_of_total)
+[OZONEDB-SST-PROFILE] level | time_total_ms | enters | range_rejects | table_gets | hits
+[OZONEDB-SST-PROFILE] L1  |      3569.45 |  5964852 |         9110 |    5955742 |  10876
+[OZONEDB-SST-PROFILE] L2  |     55995.47 |  4416732 |          194 |    4416538 | 987775
+[OZONEDB-TBL-PROFILE] file_filter_reject=9284236  block_filter_reject=88460  index_invalid=0  block_read_more=746897  hit_from_cache=252687  miss_after_read=933  found=998651
+2026-10-25 09:22:40:531 67 sec: 1000000 operations; 29526.22 current ops/sec; [READ: Count=212816, Max=4287, Min=3, Avg=32.97, 90=56, 99=63, 99.9=77, 99.99=152] [CLEANUP: Count=1, Max=150, Min=150, Avg=150, 90=150, 99=150, 99.9=150, 99.99=150] 
+[OVERALL], RunTime(ms), 67209
+[OVERALL], Throughput(ops/sec), 14878.959663140353
+[TOTAL_GCS_PS_Scavenge], Count, 5
+[TOTAL_GC_TIME_PS_Scavenge], Time(ms), 35
+[TOTAL_GC_TIME_%_PS_Scavenge], Time(%), 0.052076358820991236
+[TOTAL_GCS_PS_MarkSweep], Count, 0
+[TOTAL_GC_TIME_PS_MarkSweep], Time(ms), 0
+[TOTAL_GC_TIME_%_PS_MarkSweep], Time(%), 0.0
+[TOTAL_GCs], Count, 5
+[TOTAL_GC_TIME], Time(ms), 35
+[TOTAL_GC_TIME_%], Time(%), 0.052076358820991236
+[READ], Operations, 1000000
+[READ], AverageLatency(us), 65.673505
+[READ], MinLatency(us), 3
+[READ], MaxLatency(us), 16335
+[READ], 95thPercentileLatency(us), 105
+[READ], 99thPercentileLatency(us), 114
+[READ], Return=OK, 1000000
+[CLEANUP], Operations, 1
+[CLEANUP], AverageLatency(us), 150.0
+[CLEANUP], MinLatency(us), 150
+[CLEANUP], MaxLatency(us), 150
+[CLEANUP], 95thPercentileLatency(us), 150
+[CLEANUP], 99thPercentileLatency(us), 150
