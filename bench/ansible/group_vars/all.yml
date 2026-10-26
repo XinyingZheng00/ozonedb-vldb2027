@@ -1,0 +1,28 @@
+# Shared by sync.yml and bootstrap.yml.remote_repo_path: ""
+
+repo_dest_name: ozonedb
+
+rsync_excludes_base:
+  - --exclude=build/
+  - --exclude=**/build/
+  - --exclude=target/
+  - --exclude=**/target/
+  - --exclude=**/__pycache__/
+  - --exclude=/vcpkg/
+  - --exclude=/ycsb/workloads/generated_workloads/
+  - --exclude=bench/results/
+  - --exclude=src/include/ozonedb/protobuf/
+  - --exclude=.claude/
+  - --exclude=.DS_Store
+  - --exclude=.idea/
+  - --exclude=.vscode/
+  - --exclude=.env
+  - --exclude=tmp/
+  - --exclude=*.pyc
+  - --exclude=*.so
+  - --exclude=*.o
+  - --exclude=*.a
+
+rsync_excludes_incremental: "{{ rsync_excludes_base + ['--exclude=.git'] }}"
+
+rsync_excludes_bootstrap: "{{ rsync_excludes_base }}"

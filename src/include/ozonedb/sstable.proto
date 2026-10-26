@@ -1,0 +1,71 @@
+syntax = "proto2";
+
+// One client writes an SSTable; no synchronization between clients is needed.
+/* SSTable format
+<beginning_of_file>
+[data block 1]
+...
+[data block N]
+[meta block 1]
+...
+[meta block K]
+[metaindex block]
+[index block]
+[Footer]
+<end_of_file>
+
+Data blocks hold the key/value pairs in sorted order (BlockData).
+Meta blocks hold the per-block filter and the file filter (FilterBlock).
+The metaindex block maps each meta block name to its BlockIdentifier.
+The index block has one entry per data block: a key >= the last key of
+that block and < the first key of the next block, and the data block's BlockIdentifier.
+The footer has a fixed size. It holds the BlockIdentifiers of the metaindex
+and index blocks and a magic number.
+*/
+
+message BlockIdentifier {
+  required fixed64 offset = 1;
+  required fixed64 length = 2;
+}
+
+message BlockEntry {
+  // Length of shared bytes (0 for restart points).
+  required uint32 shared_bytes = 1;
+  // Length of unshared bytes.
+  required uint32 unshared_bytes = 2;
+  // Key delta (unshared bytes).
+  required bytes key_delta = 3;
+  // Data block: the value. Index block: the serialized BlockIdentifier of the data block.
+  required bytes value = 4;
+}
+
+message BlockData {
+  // A data block or an index block.
+  repeated BlockEntry entries = 1;
+  // Offsets within the block of restart points.
+  repeated fixed32 restarts = 2;
+  required fixed32 num_restarts = 3;
+}
+
+message FilterBlock {
+  // One filter per 2^lg_base bytes of data block offset.
+  repeated bytes filters = 1;
+  // lg(base), where base is the range size.
+  required uint32 lg_base = 2;
+}
+
+message MetaIndexBlock {
+  message MetaIndexBlockEntry {
+    // key: meta block name. value: its BlockIdentifier.
+    required bytes key = 1;
+    required BlockIdentifier value = 2;
+  }
+  repeated MetaIndexBlockEntry entries = 1;
+}
+
+message FooterBlock {
+  // Fixed size, so the reader can read it from the end of the file.
+  required BlockIdentifier index_identifier = 1;
+  required BlockIdentifier metaindex_identifier = 2;
+  required fixed64 magic = 3;
+}

@@ -1,0 +1,19 @@
+# Yahoo! Cloud System Benchmark
+# Workload AI: workload A with blind inserts in place of read-modify-write updates
+#
+#   Read/insert ratio: 50/50
+#   Default data size: 1 KB records (10 fields, 100 bytes each, plus key)
+#   Request distribution: zipfian (scrambled, as in workload a)
+
+recordcount=1000
+operationcount=1000
+workload=site.ycsb.workloads.CoreWorkload
+
+readallfields=true
+
+readproportion=0.5
+updateproportion=0
+scanproportion=0
+insertproportion=0.5
+
+requestdistribution=zipfian

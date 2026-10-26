@@ -1,0 +1,46 @@
+--- a/analyse_time_share.py
++++ b/analyse_time_share.py
+@@ -35,6 +35,9 @@
+     "rocksdb::DB::~DB",
+     "~DBImpl",
+     "~DB",
++    "__close",
++    "__x64_sys_close",
++    "filp_close",
+ ]
+ OPS_PATTERNS = [
+     # Put/Get are usually the leaves for this workload
+@@ -49,9 +52,9 @@
+ 
+ def compute_group_pcts_from_folded(path):
+     """
+-    Use the folded call-graph output and classify by the *leaf* symbol (last frame).
+-    This avoids the double-count problems of "Children%". It also counts open/close
+-    that happens outside UpdateRandom.
++    Use the folded call-graph output and classify by the *entire call chain*, not
++    only the leaf frame. The baseline (no reopen) run samples close work whose leaf
++    is kernel or syscall code; the chain still names the close.
+     """
+ 
+     cmd = [
+@@ -97,16 +100,12 @@
+         if not chain:
+             continue
+ 
+-        frames = [f.strip() for f in chain.split(";") if f.strip()]
+-        if not frames:
+-            continue
+-        leaf = frames[-1]
+-
+-        if any(pat in leaf for pat in CLOSE_PATTERNS):
++        # Match against whole chain so we can catch patterns that are not at leaf.
++        if any(pat in chain for pat in CLOSE_PATTERNS):
+             close_pct += pct
+-        elif any(pat in leaf for pat in OPEN_PATTERNS):
++        elif any(pat in chain for pat in OPEN_PATTERNS):
+             open_pct += pct
+-        elif any(pat in leaf for pat in OPS_PATTERNS):
++        elif any(pat in chain for pat in OPS_PATTERNS):
+             ops_pct += pct
+ 
+     p.wait()

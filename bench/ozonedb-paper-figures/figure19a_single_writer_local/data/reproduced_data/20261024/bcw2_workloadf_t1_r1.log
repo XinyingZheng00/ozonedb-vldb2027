@@ -1,0 +1,42 @@
+# CMD: /usr/bin/time -v /users/Xinying/YCSB-cpp/ycsb -db sqlite -run -P /users/Xinying/YCSB-cpp/workloads/workloadf -P /users/Xinying/YCSB-cpp/sqlite/sqlite-bcw.properties -p sqlite.dbpath=/tank/ycsb_data/bcw2_ycsb/bcw_ycsb.db -p threadcount=1 -p recordcount=1000000 -p maxexecutiontime=120
+# devices=['sdb'] sectors_before=1187090563 sectors_after=1202315203
+# elapsed_s=131.20 returncode=0
+
+=== STDOUT ===
+[Thread 140673644287552] SqliteDB::Init at 2026-10-24 23:34:08
+Opening database with URL: file:///tank/ycsb_data/bcw2_ycsb/bcw_ycsb.db?vfs=unix-excl
+PRAGMA journal_mode: wal2
+PRAGMA mmap_size: 0
+PRAGMA page_size: 4096
+PRAGMA cache_size: -131072
+PRAGMA synchronous: 2
+[HCTree] busy_snapshot aborts (discarded, not retried): 0
+[Thread 140673644287552] SqliteDB::Cleanup (last) at 2026-10-24 23:36:19
+Run runtime(sec): 131.132
+Run operations(ops): 909093
+Run throughput(ops/sec): 6932.64
+
+=== STDERR ===
+	Command being timed: "/users/Xinying/YCSB-cpp/ycsb -db sqlite -run -P /users/Xinying/YCSB-cpp/workloads/workloadf -P /users/Xinying/YCSB-cpp/sqlite/sqlite-bcw.properties -p sqlite.dbpath=/tank/ycsb_data/bcw2_ycsb/bcw_ycsb.db -p threadcount=1 -p recordcount=1000000 -p maxexecutiontime=120"
+	User time (seconds): 17.13
+	System time (seconds): 73.62
+	Percent of CPU this job got: 69%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 2:11.19
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 159360
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 139
+	Minor (reclaiming a frame) page faults: 427560
+	Voluntary context switches: 1362204
+	Involuntary context switches: 159
+	Swaps: 0
+	File system inputs: 10477520
+	File system outputs: 5161932
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0
